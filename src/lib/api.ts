@@ -93,6 +93,8 @@ export interface ChartSpec {
   turnoverUnit: string;
   /** Seconds east of UTC at which daily candles open, for their date labels. */
   dayOffset: number;
+  /** Price steps the book can be grouped by, finest first. Empty: the book comes as it is. */
+  bookSteps: number[];
   link: { label: string; url: string } | null;
 }
 
@@ -145,7 +147,8 @@ export type FeedState = "connecting" | "live" | "offline";
 export type LiveEvent =
   | { kind: "state"; state: FeedState }
   | { kind: "stats"; stats: Stats }
-  | { kind: "book"; book: Book }
+  /** The book grouped by each of ChartSpec.bookSteps in turn, or just the book when there are none. */
+  | { kind: "book"; books: Book[] }
   /** New trades, oldest first. */
   | { kind: "trades"; trades: Trade[] };
 

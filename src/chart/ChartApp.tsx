@@ -64,7 +64,10 @@ export default function ChartApp() {
   const [visible, setVisible] = useState<VisibleStats | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
   const [lastDirection, setLastDirection] = useState<1 | -1 | 0>(0);
-  const [book, setBook] = useState<Book | null>(null);
+  /** The book grouped each way the provider offers; null until the first arrives. */
+  const [books, setBooks] = useState<Book[] | null>(null);
+  /** Which of the provider's book steps to show, finest first. */
+  const [bookStep, setBookStep] = useState(() => load("chart.bookStep", (raw) => Number(raw) || undefined, 0));
   /** null until the first list arrives. */
   const [trades, setTrades] = useState<Trade[] | null>(null);
   const [feed, setFeed] = useState<FeedState>("connecting");
@@ -86,6 +89,9 @@ export default function ChartApp() {
   const volumeUnit = chartSpec?.volumeUnit ?? "";
   const priceUnit = chartSpec?.turnoverUnit ?? "";
   const decimals = priceDecimals(stats?.last ?? 0, instrument?.decimals ?? null);
+  const bookSteps = chartSpec?.bookSteps ?? [];
+  const step = Math.min(Math.max(bookStep, 0), Math.max(bookSteps.length - 1, 0));
+  const book = books?.[Math.min(step, books.length - 1)] ?? null;
   const scheme = settings?.colorScheme ?? "greenUp";
 
   // Settings, the tray switching instruments, and showing the window.
@@ -152,7 +158,7 @@ export default function ChartApp() {
   // One feed per instrument; interval and tab changes reuse its stream.
   useEffect(() => {
     setStats(null);
-    setBook(null);
+    setBooks(null);
     setTrades(null);
     setLastDirection(0);
     const start = chartSpec && pickInterval(chartSpec.intervals, currentInterval.current);
@@ -169,7 +175,7 @@ export default function ChartApp() {
         previousLast = next.last;
         setStats(next);
       },
-      book: setBook,
+      book: setBooks,
       trades: setTrades,
       state: setFeed,
     });
@@ -216,6 +222,11 @@ export default function ChartApp() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [market]);
+
+  const pickBookStep = (next: number) => {
+    setBookStep(next);
+    store("chart.bookStep", String(next));
+  };
 
   const setMode = (next: ChartMode) => {
     if (!interval) return;
@@ -298,6 +309,9 @@ export default function ChartApp() {
           {tab === "book" ? (
             <OrderBook
               book={book}
+              steps={bookSteps}
+              step={step}
+              onStep={pickBookStep}
               last={stats?.last ?? null}
               lastDirection={lastDirection}
               decimals={decimals}

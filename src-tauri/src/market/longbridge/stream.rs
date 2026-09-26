@@ -49,7 +49,7 @@ pub(super) async fn run(
                         day = Some(fresh_day);
                         depth = Some(fresh_depth);
                         send(&events, LiveEvent::Stats { stats })
-                            && send(&events, LiveEvent::Book { book })
+                            && send(&events, LiveEvent::Book { books: vec![book] })
                             && send(&events, LiveEvent::State { state: FeedState::Live })
                     }
                     Err(e) => {
@@ -81,7 +81,7 @@ pub(super) async fn run(
                     Some(Push::Depth(push)) => match &mut depth {
                         Some(depth) => {
                             depth.apply(&push.ask, &push.bid);
-                            send(&events, LiveEvent::Book { book: depth.book() })
+                            send(&events, LiveEvent::Book { books: vec![depth.book()] })
                         }
                         None => true,
                     },

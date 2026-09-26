@@ -1,5 +1,6 @@
 //! Binance spot: public market data, no account or key.
 
+mod depth;
 mod stream;
 mod ticker;
 
@@ -106,6 +107,7 @@ impl Provider for Binance {
             turnover_unit: instrument.quote.clone(),
             // Daily candles open at 00:00 UTC.
             day_offset: 0,
+            book_steps: depth::steps(instrument.decimals).into_iter().map(depth::price).collect(),
             link: Some(Link {
                 label: "在币安打开",
                 url: format!(
@@ -431,27 +433,6 @@ impl RawTrade {
             sell: self.buyer_maker,
             extended: false,
         }
-    }
-}
-
-/// Top of the book as `[price, qty]` pairs, best first.
-#[derive(Deserialize)]
-struct RawBook {
-    bids: Vec<(String, String)>,
-    asks: Vec<(String, String)>,
-}
-
-impl RawBook {
-    fn book(&self) -> super::Book {
-        let levels = |side: &[(String, String)]| {
-            side.iter()
-                .map(|(price, qty)| super::Level {
-                    price: price.parse().unwrap_or(f64::NAN),
-                    qty: qty.parse().unwrap_or(f64::NAN),
-                })
-                .collect()
-        };
-        super::Book { bids: levels(&self.bids), asks: levels(&self.asks) }
     }
 }
 

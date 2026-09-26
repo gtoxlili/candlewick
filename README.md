@@ -27,7 +27,7 @@ Candlewick is a free, open-source macOS menu bar app that shows live prices of c
 - Crypto and stocks side by side, up to 30 entries: any Binance spot pair, and US, Hong Kong and China A-share stocks by code (AAPL, 700, 600519)
 - US stocks follow pre-market, post-market and overnight trading, with the session marked in the dropdown
 - A live chart: line or candlesticks, from 1 second to 1 day for crypto and 1 minute to 1 week for stocks, updated by every trade and animated by [Liveline](https://github.com/benjitaylor/liveline); drag to scroll back through history, scroll or pinch to zoom
-- The order book with buy and sell pressure (20 levels for crypto; for stocks, as many as your Longbridge quote access gives), and a live list of recent trades
+- The order book with buy and sell pressure (20 levels for crypto, grouped by the price step you pick; for stocks, as many as your Longbridge quote access gives), and a live list of recent trades
 - Green-up or red-up colors, and launch at login
 - Pauses while the Mac or its display sleeps, and reconnects on its own
 

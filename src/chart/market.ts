@@ -27,7 +27,8 @@ export interface ChartData {
 
 export interface MarketEvents {
   stats(stats: Stats): void;
-  book(book: Book): void;
+  /** One per ChartSpec.bookSteps entry, or just the one. */
+  book(books: Book[]): void;
   /** Newest first. */
   trades(list: Trade[]): void;
   state(state: FeedState): void;
@@ -351,7 +352,7 @@ export class Market {
         this.on.stats(event.stats);
         break;
       case "book":
-        this.on.book(event.book);
+        this.on.book(event.books);
         break;
       case "trades":
         this.trades(event.trades);

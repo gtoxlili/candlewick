@@ -153,6 +153,9 @@ pub struct ChartSpec {
     pub turnover_unit: String,
     /// Seconds east of UTC at which daily candles open, for their date labels.
     pub day_offset: i64,
+    /// Price steps the order book can be grouped by, finest first; book events
+    /// carry it grouped by each. Empty: the book comes as it is.
+    pub book_steps: Vec<f64>,
     pub link: Option<Link>,
 }
 
@@ -250,8 +253,10 @@ pub enum LiveEvent {
     Stats {
         stats: Stats,
     },
+    /// The book grouped by each of the chart spec's `book_steps` in turn, or
+    /// just the book when there are none.
     Book {
-        book: Book,
+        books: Vec<Book>,
     },
     /// New trades, oldest first.
     Trades {

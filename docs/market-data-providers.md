@@ -19,6 +19,7 @@
 
 - `IntervalSpec.aligned`：K 线是否与时钟对齐（`time % secs == 0`），前端据此自己分桶；不对齐的周期由前端每 30 秒或成交越界时向数据源补拉最新几根。`regular_only`：盘前盘后成交不计入该周期。
 - `ChartSpec.day_offset`：日线开盘时刻相对 UTC 的秒数，用于日期标签。
+- `ChartSpec.book_steps`：盘口可选的合并档位，从细到粗；`LiveEvent::Book.books` 按同样顺序各给一份合并好的盘口。留空表示不合并，`books` 只放一份原样的盘口。
 - `Trade.id` 必须随时间递增且对同一笔成交稳定（查询和推送会各来一次，前端按 id 去重）。
 - 需要账户的数据源：凭证放在 `credentials.rs` 管理的 `credentials.json`（0600），缺凭证时用 `Status::Unavailable` 提示，不要重试空转。
 - `Quote.open` 是涨跌幅的参考价：币是 24 小时前的价格，股票是最近一次收盘价；`Quote.session` 标注盘前、盘后、夜盘。
@@ -28,7 +29,8 @@
 ### 币安（公开行情，无需账号）
 
 - REST：`api.binance.com`，备用 `data-api.binance.vision`；WS：`stream.binance.com`，备用 `data-stream.binance.vision`。
-- 菜单栏用 `<symbol>@miniTicker`；行情窗口用 `@aggTrade`、`@depth20`、`@ticker`，连上后用 REST 补一次 24hr 统计和 20 档盘口。
+- 菜单栏用 `<symbol>@miniTicker`；行情窗口用 `@aggTrade`、`@depth`（增量）、`@ticker`，连上后用 REST 补一次 24hr 统计。
+- 盘口按币安的 "How to manage a local order book correctly" 在本地维护：`/api/v3/depth?limit=5000`（权重 250）做快照，增量按 `U`/`u` 衔接，断档后退避重拉。快照之外的价位只有变动时才知道，所以合并时每边只算到快照覆盖的范围，价格走到快照边缘也重拉。合并档位是 tick 的 1、10、100、1000 倍。
 - 交易对列表来自 `exchangeInfo`（数 MB），只在搜索时下载，设置窗口关闭即释放。
 
 ### 长桥 OpenAPI（自写客户端，`src-tauri/src/market/longbridge/`）

@@ -145,6 +145,9 @@ impl Provider for Longbridge {
             turnover_unit: instrument.quote.clone(),
             // Daily candles open at the exchange's midnight; labels read its date.
             day_offset: market.map_or(0, |m| m.utc_offset(api::now())),
+            // Ten levels at most, and tick sizes that change with the price:
+            // nothing worth grouping.
+            book_steps: Vec::new(),
             link: Some(Link {
                 label: "在长桥打开",
                 url: format!("https://longbridge.com/zh-CN/quote/{}", instrument.symbol),
