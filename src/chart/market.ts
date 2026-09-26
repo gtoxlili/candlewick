@@ -21,6 +21,8 @@ export interface ChartData {
   price: number | null;
   /** Nothing older can be paged in. */
   exhausted: boolean;
+  /** History has loaded, even if it had no candles. */
+  loaded: boolean;
 }
 
 export interface MarketEvents {
@@ -422,6 +424,7 @@ export class Market {
       line: s.line(),
       price: this.price ?? s.live?.close ?? null,
       exhausted: s.exhausted || s.candles.length >= MAX_CANDLES,
+      loaded: s.ready,
     };
     for (const listener of this.listeners) listener();
   }

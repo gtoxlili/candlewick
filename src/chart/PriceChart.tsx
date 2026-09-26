@@ -247,7 +247,7 @@ export function PriceChart(props: {
         lineValue={price}
         theme={props.colors.dark ? "dark" : "light"}
         color={props.colors.accent}
-        loading={!ready}
+        loading={!ready && !current?.loaded}
         scrub={!dragging}
         cursor={dragging ? "grabbing" : "crosshair"}
         formatValue={(v) => fmtPrice(v, props.decimals)}
@@ -273,6 +273,10 @@ export function PriceChart(props: {
           回到最新
           <ChevronsRight className="size-3.5 text-muted-foreground" />
         </button>
+      )}
+
+      {!ready && current?.loaded && (
+        <p className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">暂无 K 线数据</p>
       )}
 
       {!ready && props.offline && (

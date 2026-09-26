@@ -65,7 +65,8 @@ export default function ChartApp() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [lastDirection, setLastDirection] = useState<1 | -1 | 0>(0);
   const [book, setBook] = useState<Book | null>(null);
-  const [trades, setTrades] = useState<Trade[]>([]);
+  /** null until the first list arrives. */
+  const [trades, setTrades] = useState<Trade[] | null>(null);
   const [feed, setFeed] = useState<FeedState>("connecting");
   const [appearance, setAppearance] = useState(0);
   const [colors, setColors] = useState<ChartColors>(() => {
@@ -152,7 +153,7 @@ export default function ChartApp() {
   useEffect(() => {
     setStats(null);
     setBook(null);
-    setTrades([]);
+    setTrades(null);
     setLastDirection(0);
     const start = chartSpec && pickInterval(chartSpec.intervals, currentInterval.current);
     if (!start) {

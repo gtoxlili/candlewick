@@ -382,6 +382,8 @@ async fn history(
             low: decimal(&c.low),
             close: decimal(&c.close),
         })
+        // A candle without prices (seen for indexes) can't be drawn.
+        .filter(|c| c.low > 0.0 && c.high > 0.0)
         .filter(|c| end.is_none_or(|end| c.time < end))
         .collect();
     candles.sort_by(|a, b| a.time.total_cmp(&b.time));

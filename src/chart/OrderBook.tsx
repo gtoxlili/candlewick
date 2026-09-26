@@ -38,6 +38,8 @@ export function OrderBook(props: {
   const deepest = Math.max(asks.at(-1)?.total ?? 0, bids.at(-1)?.total ?? 0) || 1;
   const spread = book?.asks[0] && book.bids[0] ? book.asks[0].price - book.bids[0].price : null;
   const share = bidShare(book);
+  // Closed markets, halted stocks and indexes have no resting orders.
+  const empty = book !== null && asks.length === 0 && bids.length === 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col text-xs tabular">
@@ -64,6 +66,7 @@ export function OrderBook(props: {
           <BookRow key={row.price} row={row} side="ask" decimals={decimals} deepest={deepest} />
         ))}
       </div>
+      {empty && <p className="shrink-0 px-3 pb-1 text-center text-muted-foreground">暂无挂单</p>}
       <div className="flex h-10 shrink-0 items-center gap-1 px-3">
         <span
           className={cn(
