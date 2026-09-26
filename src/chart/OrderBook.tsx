@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, LoaderCircle } from "lucide-react";
 import { cn } from "cn";
 
 import type { Book, Level } from "@/lib/api";
@@ -60,7 +60,11 @@ export function OrderBook(props: {
         <span className="text-right">{props.quote ? `数量(${props.base})` : "数量"}</span>
         <span className="text-right">累计</span>
       </div>
-      {empty ? (
+      {book === null ? (
+        <div className="flex flex-1 items-center justify-center text-muted-foreground">
+          <LoaderCircle className="size-4 animate-spin" />
+        </div>
+      ) : empty ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">暂无挂单</div>
       ) : (
         <>
