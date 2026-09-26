@@ -1,0 +1,122 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..d5f2c087c1e818ba284c262b6fcf0a2148aa1f04 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -129,4 +129,16 @@ interface LivelineTransitionProps {
+  */
+ declare function LivelineTransition({ active, children, duration, className, style, }: LivelineTransitionProps): react_jsx_runtime.JSX.Element;
+ 
+-export { type BadgeVariant, type CandlePoint, type DegenOptions, type HoverPoint, Liveline, type LivelinePoint, type LivelineProps, type LivelineSeries, LivelineTransition, type LivelineTransitionProps, type Momentum, type OrderbookData, type Padding, type ReferenceLine, type ThemeMode, type WindowOption, type WindowStyle };
++/**
++ * coin-tray patch: sets the rising/falling colors (RGB) used for candles,
++ * the live dot, momentum and the orderbook stream. Charts pick them up on
++ * their next theme resolve (remount to apply immediately).
++ */
++declare function setTrendColors(up: [number, number, number], down: [number, number, number]): void;
++/**
++ * coin-tray patch: caps how often charts redraw (frames per second; 0 lifts
++ * the cap). Animation is time-based, so a lower rate only drops frames.
++ */
++declare function setFrameRate(fps: number): void;
++
++export { type BadgeVariant, type CandlePoint, type DegenOptions, type HoverPoint, Liveline, type LivelinePoint, type LivelineProps, type LivelineSeries, LivelineTransition, type LivelineTransitionProps, setFrameRate, setTrendColors, type Momentum, type OrderbookData, type Padding, type ReferenceLine, type ThemeMode, type WindowOption, type WindowStyle };
+diff --git a/dist/index.js b/dist/index.js
+index fd0506272e9a54432a0882c3a389ee74302e4718..2db9cc6a3176b078b8a43eeeaf74a902f820b532 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -16,6 +16,17 @@ function parseColorRgb(color) {
+ function rgba(r, g, b, a) {
+   return `rgba(${r}, ${g}, ${b}, ${a})`;
+ }
++// coin-tray patch: rising/falling colors are configurable (red-up markets,
++// platform palettes) through setTrendColors().
++var TREND_UP = [34, 197, 94];
++var TREND_DOWN = [239, 68, 68];
++function trendHex(rgb) {
++  return "#" + rgb.map((c) => c.toString(16).padStart(2, "0")).join("");
++}
++// coin-tray patch: optional frame-rate cap for the draw loop (0 = uncapped).
++// The per-frame delta clamp widens with it, so capped frames still advance
++// animations at full speed.
++var FRAME_GAP_MS = 0;
+ function resolveTheme(color, mode) {
+   const [r, g, b] = parseColorRgb(color);
+   const isDark = mode === "dark";
+@@ -30,11 +41,11 @@ function resolveTheme(color, mode) {
+     gridLine: isDark ? "rgba(255, 255, 255, 0.06)" : "rgba(0, 0, 0, 0.06)",
+     gridLabel: isDark ? "rgba(255, 255, 255, 0.4)" : "rgba(0, 0, 0, 0.35)",
+     // Dot — always semantic
+-    dotUp: "#22c55e",
+-    dotDown: "#ef4444",
++    dotUp: trendHex(TREND_UP),
++    dotDown: trendHex(TREND_DOWN),
+     dotFlat: color,
+-    glowUp: "rgba(34, 197, 94, 0.18)",
+-    glowDown: "rgba(239, 68, 68, 0.18)",
++    glowUp: rgba(...TREND_UP, 0.18),
++    glowDown: rgba(...TREND_DOWN, 0.18),
+     glowFlat: rgba(r, g, b, 0.12),
+     // Badge
+     badgeOuterBg: isDark ? "rgba(40, 40, 40, 0.95)" : "rgba(255, 255, 255, 0.95)",
+@@ -1003,7 +1014,7 @@ function drawOrderbook(ctx, layout, palette, orderbook, dt, state, swingMagnitud
+     const yRatio = (l.y - topY) / chartH;
+     const fadeOut = yRatio < 0.45 ? yRatio / 0.45 : 1;
+     const colorStrength = l.intensity * fadeIn * fadeOut;
+-    const baseColor = l.green ? GREEN : RED;
++    const baseColor = l.green ? TREND_UP : TREND_DOWN;
+     const fillColor = mixColor(baseColor, bg, 1 - colorStrength);
+     ctx.strokeStyle = outlineColor;
+     ctx.lineWidth = 4;
+@@ -2471,6 +2482,10 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+       rafRef.current = 0;
+       return;
+     }
++    if (FRAME_GAP_MS > 0 && lastFrameRef.current && performance.now() - lastFrameRef.current < FRAME_GAP_MS) {
++      rafRef.current = requestAnimationFrame(draw);
++      return;
++    }
+     const canvas = canvasRef.current;
+     const { w, h } = sizeRef.current;
+     if (!canvas || w === 0 || h === 0) {
+@@ -2480,7 +2495,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+     const cfg = configRef.current;
+     const dpr = getDpr();
+     const now_ms = performance.now();
+-    const dt = lastFrameRef.current ? Math.min(now_ms - lastFrameRef.current, MAX_DELTA_MS) : 16.67;
++    const dt = lastFrameRef.current ? Math.min(now_ms - lastFrameRef.current, Math.max(MAX_DELTA_MS, FRAME_GAP_MS + 10)) : 16.67;
+     lastFrameRef.current = now_ms;
+     const targetW = Math.round(w * dpr);
+     const targetH = Math.round(h * dpr);
+@@ -3463,7 +3478,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+         const displayVal = cfg.valueMomentumColor ? Math.abs(smoothValue) : smoothValue;
+         valEl.textContent = cfg.formatValue(displayVal);
+         if (cfg.valueMomentumColor) {
+-          const mc = momentum === "up" ? "#22c55e" : momentum === "down" ? "#ef4444" : "";
++          const mc = momentum === "up" ? trendHex(TREND_UP) : momentum === "down" ? trendHex(TREND_DOWN) : "";
+           if (mc) valEl.style.color = mc;
+           else valEl.style.removeProperty("color");
+         }
+@@ -4008,7 +4023,22 @@ function LivelineTransition({
+     );
+   }) });
+ }
++function setFrameRate(fps) {
++  FRAME_GAP_MS = fps > 0 ? 1e3 / fps - 1 : 0;
++}
++function setTrendColors(up, down) {
++  TREND_UP = up;
++  TREND_DOWN = down;
++  BULL = trendHex(up);
++  BEAR = trendHex(down);
++  BULL_RGB = up;
++  BEAR_RGB = down;
++  MOMENTUM_GREEN = up;
++  MOMENTUM_RED = down;
++}
+ export {
+   Liveline,
+-  LivelineTransition
++  LivelineTransition,
++  setFrameRate,
++  setTrendColors
+ };

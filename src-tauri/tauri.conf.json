@@ -12,9 +12,10 @@
   "app": {
     "windows": [],
     "withGlobalTauri": false,
+    "macOSPrivateApi": true,
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://api.binance.com https://data-api.binance.vision; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
-      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420 https://api.binance.com https://data-api.binance.vision; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; object-src 'none'; base-uri 'self'",
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost https://api.binance.com https://data-api.binance.vision wss://stream.binance.com:9443 wss://data-stream.binance.vision; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420 https://api.binance.com https://data-api.binance.vision wss://stream.binance.com:9443 wss://data-stream.binance.vision; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; object-src 'none'; base-uri 'self'",
       "freezePrototype": true
     }
   },

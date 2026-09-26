@@ -221,6 +221,10 @@ pub struct Model {
     /// Prices on screen may be old: set when a connection fails, cleared on
     /// the next successful connection.
     pub stale: bool,
+    /// The pair the chart window shows (or last showed). The page reads it on
+    /// load, since a switch requested while it was still loading can't reach
+    /// it as an event.
+    pub chart_symbol: Option<String>,
 }
 
 pub struct Shared {
@@ -239,6 +243,7 @@ impl Shared {
                 quotes: HashMap::new(),
                 status: Status::Connecting,
                 stale: false,
+                chart_symbol: None,
             }),
             control,
             render_pending: AtomicBool::new(false),

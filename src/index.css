@@ -5,22 +5,21 @@
 /* Follow the macOS appearance setting. */
 @custom-variant dark (@media (prefers-color-scheme: dark));
 
+/* macOS type sizes: 13 pt body, 11 pt secondary. */
+@theme {
+    --text-xs: 0.6875rem;
+    --text-xs--line-height: 1.35;
+    --text-sm: 0.8125rem;
+    --text-sm--line-height: 1.4;
+    --text-base: 0.8125rem;
+    --text-base--line-height: 1.4;
+}
+
 @theme inline {
     --font-heading: var(--font-sans);
     --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif;
-    --color-sidebar-ring: var(--sidebar-ring);
-    --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
+    --color-up: var(--up);
+    --color-down: var(--down);
     --color-ring: var(--ring);
     --color-input: var(--input);
     --color-border: var(--border);
@@ -44,94 +43,113 @@
     --radius-lg: var(--radius);
     --radius-xl: calc(var(--radius) * 1.4);
     --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * The windows sit on macOS vibrancy, so surfaces are translucent fills over
+ * it rather than opaque paint. Text, separators, accent and red/green come
+ * from the system (WebKit's -apple-system-* colors, below) so they match
+ * native controls in both appearances; the values here are fallbacks for
+ * previewing the pages in other browsers.
+ */
 :root {
-    --background: oklch(0.955 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    --background: oklch(1 0 0);
+    --foreground: oklch(0 0 0 / 0.85);
+    --card: oklch(1 0 0 / 0.55);
+    --card-foreground: var(--foreground);
+    --popover: oklch(0.99 0 0 / 0.9);
+    --popover-foreground: var(--foreground);
+    --primary: oklch(0.6 0.2 255);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0 0 0 / 0.05);
+    --secondary-foreground: var(--foreground);
+    --muted: oklch(0 0 0 / 0.05);
+    --muted-foreground: oklch(0 0 0 / 0.5);
+    --accent: oklch(0 0 0 / 0.06);
+    --accent-foreground: var(--foreground);
+    --destructive: oklch(0.63 0.24 25);
+    --border: oklch(0 0 0 / 0.1);
+    --input: oklch(0 0 0 / 0.1);
+    --ring: oklch(0.6 0.2 255 / 0.5);
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --green: rgb(52 199 89);
+    --red: rgb(255 56 60);
+    --orange: rgb(255 141 40);
+    --purple: rgb(203 48 224);
 }
 
 @media (prefers-color-scheme: dark) {
-:root {
-    --background: oklch(0.17 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.225 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    :root {
+        --background: oklch(0.2 0 0);
+        --foreground: oklch(1 0 0 / 0.85);
+        --card: oklch(1 0 0 / 0.06);
+        --popover: oklch(0.26 0 0 / 0.92);
+        --secondary: oklch(1 0 0 / 0.08);
+        --muted: oklch(1 0 0 / 0.08);
+        --muted-foreground: oklch(1 0 0 / 0.55);
+        --accent: oklch(1 0 0 / 0.1);
+        --destructive: oklch(0.7 0.19 22);
+        --border: oklch(1 0 0 / 0.1);
+        --input: oklch(1 0 0 / 0.12);
+        --green: rgb(48 209 88);
+        --red: rgb(255 66 69);
+        --orange: rgb(255 146 48);
+        --purple: rgb(219 52 242);
+    }
 }
+
+@supports (color: -apple-system-label) {
+    :root {
+        --foreground: -apple-system-label;
+        --muted-foreground: -apple-system-secondary-label;
+        --border: -apple-system-separator;
+        --input: -apple-system-separator;
+        --primary: AccentColor;
+        --ring: color-mix(in oklab, AccentColor 50%, transparent);
+        --green: -apple-system-green;
+        --red: -apple-system-red;
+        --orange: -apple-system-orange;
+        --purple: -apple-system-purple;
+    }
+}
+
+/* Price colors follow the user's convention (settings → 红涨绿跌). */
+:root {
+    --up: var(--green);
+    --down: var(--red);
+}
+:root[data-scheme="redUp"] {
+    --up: var(--red);
+    --down: var(--green);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
     }
-  body {
-    @apply bg-background text-foreground;
-    }
   html {
     @apply font-sans;
     color-scheme: light dark;
+    -webkit-font-smoothing: antialiased;
     }
   html, body {
+    /* Let the window's vibrancy show through. */
+    background: transparent;
     overscroll-behavior: none;
     cursor: default;
+    }
+  body {
+    @apply text-sm text-foreground;
+    }
+}
+
+@utility tabular {
+    font-variant-numeric: tabular-nums;
+}
+
+/* A new price briefly takes the color of its move, then settles. */
+@keyframes price-flash {
+    from {
+        color: var(--flash);
     }
 }

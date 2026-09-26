@@ -33,5 +33,13 @@ export default defineConfig({
     minify: "oxc",
     cssMinify: "lightningcss",
     sourcemap: false,
+    // One page per window; each loads only its own code (the chart library
+    // stays out of the settings window).
+    rolldownOptions: {
+      input: {
+        settings: path.resolve(import.meta.dirname, "index.html"),
+        chart: path.resolve(import.meta.dirname, "chart.html"),
+      },
+    },
   },
 });

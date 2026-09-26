@@ -24,7 +24,7 @@ use crate::{
     format::{self, Direction},
     macos,
     model::{Coin, ColorScheme, Quote, Settings, Shared},
-    net, window,
+    window,
 };
 
 const ID_SETTINGS: &str = "settings";
@@ -439,33 +439,18 @@ fn rows(coins: &[Coin], quotes: &HashMap<String, Quote>) -> Vec<Row> {
 }
 
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
-    match event.id().as_ref() {
-        ID_SETTINGS => {
-            if let Err(e) = window::open(app) {
-                log::error!("cannot open settings: {e}");
-            }
+    let result = match event.id().as_ref() {
+        ID_SETTINGS => window::open_settings(app),
+        ID_QUIT => {
+            app.exit(0);
+            Ok(())
         }
-        ID_QUIT => app.exit(0),
-        id => {
-            if let Some(symbol) = id.strip_prefix(COIN_PREFIX) {
-                open_trade_page(app, symbol);
-            }
-        }
-    }
-}
-
-fn open_trade_page(app: &AppHandle, symbol: &str) {
-    let url = {
-        let shared = app.state::<Shared>();
-        let model = shared.model();
-        let Some(coin) = model.settings.coins.iter().find(|c| c.symbol == symbol) else {
-            return;
-        };
-        format!(
-            "https://www.binance.com/zh-CN/trade/{}_{}?type=spot",
-            net::percent_encode(&coin.base),
-            net::percent_encode(&coin.quote)
-        )
+        id => match id.strip_prefix(COIN_PREFIX) {
+            Some(symbol) => window::open_chart(app, symbol),
+            None => Ok(()),
+        },
     };
-    macos::open_url(&url);
+    if let Err(e) = result {
+        log::error!("menu action failed: {e}");
+    }
 }

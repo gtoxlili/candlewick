@@ -38,7 +38,10 @@ fn main() {
             commands::get_status,
             commands::get_login_item,
             commands::set_login_item,
-            commands::settings_ready,
+            commands::window_ready,
+            commands::get_chart_symbol,
+            commands::open_chart,
+            commands::open_in_binance,
         ])
         .setup(|app| {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -83,8 +86,8 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if matches!(event, WindowEvent::Destroyed) && window.label() == window::LABEL {
-                window::on_destroyed(window.app_handle());
+            if matches!(event, WindowEvent::Destroyed) {
+                window::on_destroyed(window.app_handle(), window.label());
             }
         })
         .build(tauri::generate_context!())
@@ -97,7 +100,7 @@ fn main() {
             // item can be hidden (notch, crowded menu bar), so this is the way
             // back in.
             RunEvent::Reopen { .. } => {
-                if let Err(e) = window::open(app) {
+                if let Err(e) = window::open_settings(app) {
                     log::error!("cannot open settings: {e}");
                 }
             }
