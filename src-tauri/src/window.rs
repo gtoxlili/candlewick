@@ -3,7 +3,8 @@
 
 use serde::Serialize;
 use tauri::{
-    ActivationPolicy, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, Wry,
+    ActivationPolicy, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    Wry,
     menu::{AboutMetadata, Menu, PredefinedMenuItem, Submenu},
 };
 
@@ -27,12 +28,27 @@ impl From<&Status> for StatusView {
 pub fn open(app: &AppHandle) -> tauri::Result<()> {
     // A regular app while the window is open: Dock icon, Cmd-Tab, app menu.
     app.set_activation_policy(ActivationPolicy::Regular)?;
-    // Now, while still handling the click; see `activate_app`.
-    macos::activate_app();
+    // macOS ignores activation requested in the same turn as the policy
+    // switch, and one requested much later (after the page loads) no longer
+    // counts as a response to the click. ~100 ms after the click works.
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let main = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            macos::activate_app();
+            if let Some(window) = main.get_webview_window(LABEL)
+                && window.is_visible().unwrap_or(false)
+            {
+                bring_to_front(&window);
+            }
+        });
+    });
     if let Some(window) = app.get_webview_window(LABEL) {
         window.unminimize()?;
         window.show()?;
-        return window.set_focus();
+        bring_to_front(&window);
+        return Ok(());
     }
     WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
         .title("Coin Tray 设置")
@@ -40,10 +56,36 @@ pub fn open(app: &AppHandle) -> tauri::Result<()> {
         .min_inner_size(420.0, 480.0)
         .maximizable(false)
         .center()
-        // Shown by the page once it has rendered, to avoid a blank flash.
+        // Shown by `settings_ready` once the page has its data, to avoid a
+        // blank flash; the fallback below covers a page that never reports.
         .visible(false)
         .build()?;
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        let main = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            if let Some(window) = main.get_webview_window(LABEL)
+                && !window.is_visible().unwrap_or(true)
+            {
+                log::warn!("settings page did not report ready; showing anyway");
+                let _ = window.show();
+                bring_to_front(&window);
+            }
+        });
+    });
     Ok(())
+}
+
+/// Key window and above other apps' windows, whether or not activation has
+/// gone through yet.
+pub fn bring_to_front(window: &WebviewWindow) {
+    if let Err(e) = window.set_focus() {
+        log::error!("cannot focus settings: {e}");
+    }
+    if let Ok(ns_window) = window.ns_window() {
+        macos::order_front_regardless(ns_window);
+    }
 }
 
 /// Back to a menu-bar-only app once the window is gone.

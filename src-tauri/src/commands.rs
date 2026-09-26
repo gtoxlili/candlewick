@@ -80,6 +80,6 @@ pub fn set_login_item(enabled: bool) -> CmdResult<bool> {
 #[tauri::command]
 pub fn settings_ready(window: WebviewWindow) -> CmdResult<()> {
     window.show()?;
-    window.set_focus()?;
+    crate::window::bring_to_front(&window);
     Ok(())
 }

@@ -46,8 +46,10 @@ export default function App() {
         setLoginItem(login);
       })
       .catch((e: unknown) => setError(String(e)))
-      // Show the (initially hidden) window once there is something to paint.
-      .finally(() => requestAnimationFrame(() => void api.ready()));
+      // Show the (initially hidden) window now that there is content. Not via
+      // requestAnimationFrame: WebKit doesn't render a hidden window, so that
+      // callback would never fire.
+      .finally(() => void api.ready());
     return () => {
       disposed = true;
       unlisten?.();

@@ -5,7 +5,7 @@ use std::{path::Path, ptr::NonNull, sync::Arc};
 use block2::RcBlock;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
-    NSApplication, NSFont, NSFontWeightRegular, NSStatusItem, NSWorkspace,
+    NSApplication, NSFont, NSFontWeightRegular, NSStatusItem, NSWindow, NSWorkspace,
     NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidSleepNotification,
     NSWorkspaceScreensDidWakeNotification, NSWorkspaceSessionDidBecomeActiveNotification,
     NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillSleepNotification,
@@ -50,14 +50,27 @@ pub fn observe_pauses(on_change: impl Fn(Pause, bool) + Send + Sync + 'static) {
     }
 }
 
-/// Brings the app to the front. Must run while handling the user's action
-/// (menu click, reopen): since macOS 14 activation is cooperative, and a
-/// request made later — e.g. once the settings page has loaded — is ignored,
-/// leaving the window behind whatever app was frontmost.
+/// Asks to make this the active app. Call it shortly after the user's click
+/// (not in the same turn as switching to the regular activation policy,
+/// which macOS silently ignores) — see `window::open`.
 pub fn activate_app() {
     if let Some(mtm) = MainThreadMarker::new() {
-        NSApplication::sharedApplication(mtm).activate();
+        let app = NSApplication::sharedApplication(mtm);
+        #[allow(deprecated)] // still the more forceful request on macOS 14+
+        app.activateIgnoringOtherApps(true);
+        app.activate();
     }
+}
+
+/// Orders the window above other apps' windows even when this app is not
+/// (yet) active; `makeKeyAndOrderFront` alone leaves it behind them.
+pub fn order_front_regardless(ns_window: *mut std::ffi::c_void) {
+    if ns_window.is_null() || MainThreadMarker::new().is_none() {
+        return;
+    }
+    // SAFETY: a live NSWindow pointer from Tauri, used on the main thread.
+    let window: &NSWindow = unsafe { &*ns_window.cast() };
+    window.orderFrontRegardless();
 }
 
 /// Tabular digits keep the status item from changing width every tick.
