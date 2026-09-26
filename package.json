@@ -2,6 +2,10 @@
   "name": "coin-tray",
   "private": true,
   "version": "0.3.0",
+  "description": "Live Binance crypto prices in the macOS menu bar",
+  "keywords": ["macos", "menu-bar", "crypto", "bitcoin", "binance", "price-ticker", "tauri"],
+  "homepage": "https://github.com/gtoxlili/coin-tray",
+  "repository": "github:gtoxlili/coin-tray",
   "type": "module",
   "sideEffects": [
     "**/*.css"

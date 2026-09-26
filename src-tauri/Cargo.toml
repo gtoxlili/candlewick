@@ -1,7 +1,10 @@
 [package]
 name = "coin-tray"
 version = "0.3.0"
-description = "Live crypto prices in the macOS menu bar"
+description = "Live Binance crypto prices in the macOS menu bar"
+repository = "https://github.com/gtoxlili/coin-tray"
+homepage = "https://github.com/gtoxlili/coin-tray"
+keywords = ["macos", "menu-bar", "crypto", "binance", "tauri"]
 edition = "2024"
 rust-version = "1.98"
 publish = false
