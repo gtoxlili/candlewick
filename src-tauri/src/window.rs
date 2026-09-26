@@ -17,6 +17,7 @@ use tauri::{
 
 use crate::{
     macos,
+    market::ProviderId,
     model::{Model, Settings, Shared, Status},
     net,
 };
@@ -284,6 +285,11 @@ pub fn on_destroyed(app: &AppHandle, label: &str) {
     if label == CHART {
         // Dropping the senders stops the streams feeding the page.
         app.state::<Shared>().streams.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+    if label == SETTINGS {
+        for provider in ProviderId::ALL {
+            provider.provider().drop_search_cache();
+        }
     }
     if app.webview_windows().keys().any(|other| other != label) {
         return;

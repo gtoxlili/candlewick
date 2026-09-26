@@ -73,6 +73,10 @@ pub trait Provider: Send + Sync {
     /// needs, and finds nothing.
     fn search<'a>(&'a self, query: &'a str) -> BoxFuture<'a, Search>;
 
+    /// Frees whatever `search` keeps between calls: the settings window
+    /// closed, so nobody is searching.
+    fn drop_search_cache(&self) {}
+
     /// Keeps the quotes and feed status of this provider's watchlist entries
     /// current for as long as the app runs, following `control`.
     fn watch(

@@ -5,7 +5,10 @@ mod ticker;
 
 use std::{
     fmt,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{
+        Arc, LazyLock, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -70,6 +73,11 @@ impl Provider for Binance {
 
     fn search<'a>(&'a self, query: &'a str) -> BoxFuture<'a, Search> {
         Box::pin(search(query))
+    }
+
+    fn drop_search_cache(&self) {
+        GENERATION.fetch_add(1, Ordering::AcqRel);
+        *PAIRS.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     fn watch(
@@ -204,6 +212,9 @@ const EXCHANGE_INFO: &str =
 const PAIRS_TTL: Duration = Duration::from_secs(30 * 60);
 
 static PAIRS: Mutex<Option<(Instant, Arc<Vec<Pair>>)>> = Mutex::new(None);
+/// Moves on when the cache is dropped, so a download still running then
+/// doesn't fill it again for nobody.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 /// One download at a time: searches typed meanwhile wait for it.
 static DOWNLOAD: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(Default::default);
 
@@ -219,9 +230,13 @@ async fn pairs() -> Result<Arc<Vec<Pair>>, Error> {
     if let Some(list) = cached() {
         return Ok(list);
     }
+    let generation = GENERATION.load(Ordering::Acquire);
     let info: ExchangeInfo = get(EXCHANGE_INFO).await?;
     let list: Arc<Vec<Pair>> = Arc::new(info.symbols.into_iter().map(RawSymbol::pair).collect());
-    *PAIRS.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), list.clone()));
+    let mut cached = PAIRS.lock().unwrap_or_else(|e| e.into_inner());
+    if GENERATION.load(Ordering::Acquire) == generation {
+        *cached = Some((Instant::now(), list.clone()));
+    }
     Ok(list)
 }
 
