@@ -76,7 +76,7 @@ pub fn register(instance: HINSTANCE) -> windows::core::Result<()> {
     };
     // SAFETY: a class with a static procedure and name.
     if unsafe { RegisterClassExW(&class) } == 0 {
-        return Err(windows::core::Error::from_win32());
+        return Err(windows::core::Error::from_thread());
     }
     Ok(())
 }

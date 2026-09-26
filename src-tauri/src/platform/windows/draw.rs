@@ -385,7 +385,7 @@ impl Surface {
         unsafe {
             let dc = CreateCompatibleDC(None);
             if dc.is_invalid() {
-                return Err(Error::from_win32());
+                return Err(Error::from_thread());
             }
             let (bitmap, _) = match dib(width, height, dc) {
                 Ok(dib) => dib,
