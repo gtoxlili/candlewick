@@ -1,7 +1,7 @@
-//! The menu bar title for the pinned pair: plain text on one line, or, with
-//! the 24h change shown, the symbol beside a two-row block (price over
-//! change) that takes about half the width. A status item title is a single
-//! line, so that layout is drawn into an image.
+//! The two-row ticker: with the change shown, the menu bar title is the
+//! symbol beside a block of price over change that takes about half the
+//! width. A status item title is a single line, so that layout is drawn into
+//! an image.
 
 use block2::RcBlock;
 use objc2::{AnyThread, rc::Retained, runtime::Bool};
@@ -11,7 +11,11 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSMutableAttributedString, NSPoint, NSRange, NSRect, NSSize, NSString};
 
-use crate::{format::Direction, model::ColorScheme};
+use crate::{
+    bar::{self, Hue, Ticker},
+    format::Direction,
+    model::ColorScheme,
+};
 
 /// The symbol is set like other menu bar text. The rows are sized against
 /// other two-row menu bar items (network and CPU meters): one small size, with
@@ -25,54 +29,12 @@ const MARKER_GAP: f64 = 3.0;
 /// or down at a glance.
 const TREND_TINT: f64 = 0.45;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Ticker {
-    /// `BTC`, or `ETH/BTC` for a non-USD quote; `None` when symbols are hidden.
-    pub symbol: Option<String>,
-    /// `—` until the first quote arrives.
-    pub price: String,
-    /// The 24h change; set once there is a quote, if the change is shown.
-    pub change: Option<(String, Direction)>,
-    pub two_rows: bool,
-    /// Prices may be old: the feed is reconnecting.
-    pub stale: bool,
-}
-
-impl Ticker {
-    /// The one-line title, e.g. `BTC 84,050`.
-    pub fn line(&self) -> String {
-        let mut line = String::new();
-        if self.stale {
-            line.push_str("⚠︎ ");
-        }
-        if let Some(symbol) = &self.symbol {
-            line.push_str(symbol);
-            line.push(' ');
-        }
-        line.push_str(&self.price);
-        line
-    }
-
-    /// What VoiceOver reads for the drawn layout.
-    fn spoken(&self) -> String {
-        match &self.change {
-            Some((change, _)) => format!("{} {change}", self.line()),
-            None => self.line(),
-        }
-    }
-}
-
 /// The color of a rising or falling number under the user's convention.
 pub fn trend_color(direction: Direction, scheme: ColorScheme) -> Option<Retained<NSColor>> {
-    match (direction, scheme) {
-        (Direction::Up, ColorScheme::GreenUp) | (Direction::Down, ColorScheme::RedUp) => {
-            Some(NSColor::systemGreenColor())
-        }
-        (Direction::Down, ColorScheme::GreenUp) | (Direction::Up, ColorScheme::RedUp) => {
-            Some(NSColor::systemRedColor())
-        }
-        (Direction::Flat, _) => None,
-    }
+    bar::hue(direction, scheme).map(|hue| match hue {
+        Hue::Green => NSColor::systemGreenColor(),
+        Hue::Red => NSColor::systemRedColor(),
+    })
 }
 
 /// The symbol, vertically centered, then the price over the change, both

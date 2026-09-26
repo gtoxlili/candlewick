@@ -5,6 +5,11 @@ import { defineConfig } from "vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
+// Each platform builds its own pages: the Tauri CLI names the target for its
+// before-build and before-dev commands; a plain `vite` builds for this machine.
+const target = process.env.TAURI_ENV_PLATFORM ?? process.platform;
+const platform = target === "windows" || target === "win32" ? "windows" : "macos";
+
 // https://v2.tauri.app/start/frontend/vite/
 export default defineConfig({
   plugins: [
@@ -27,9 +32,16 @@ export default defineConfig({
     watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
+  define: {
+    // A literal in every module, so the other platform's code, and modules
+    // only it imports, are gone before bundling. An exported constant would
+    // be folded too late to keep those imports out.
+    __WINDOWS__: JSON.stringify(platform === "windows"),
+  },
   build: {
-    // Only ever runs in this Mac's WKWebView (macOS 27).
-    target: "safari26",
+    // WKWebView on macOS 27; WebView2 on Windows, whose installer requires
+    // the Chromium 125 runtime or later.
+    target: platform === "windows" ? "chrome125" : "safari26",
     minify: "oxc",
     cssMinify: "lightningcss",
     sourcemap: false,

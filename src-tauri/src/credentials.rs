@@ -1,10 +1,11 @@
 //! Account credentials for market-data providers, in `credentials.json` next
 //! to the settings, readable by the user only.
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     fmt, fs,
     io::{self, Write},
-    os::unix::fs::OpenOptionsExt,
     path::Path,
 };
 
@@ -51,7 +52,8 @@ pub fn load(path: &Path) -> Credentials {
 }
 
 /// Writes through a temp file created with mode 0600, so the secrets are
-/// never readable by other users, not even halfway.
+/// never readable by other users, not even halfway. On Windows the user's
+/// profile folder is theirs alone already.
 pub fn save(path: &Path, credentials: &Credentials) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -59,8 +61,42 @@ pub fn save(path: &Path, credentials: &Credentials) -> io::Result<()> {
     let tmp = path.with_extension("json.tmp");
     // A leftover would keep its own permissions.
     let _ = fs::remove_file(&tmp);
-    let mut file = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&tmp)?;
     file.write_all(&serde_json::to_vec_pretty(credentials)?)?;
     drop(file);
     fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saves_and_loads() {
+        let dir =
+            std::env::temp_dir().join(format!("candlewick-credentials-{}", std::process::id()));
+        let path = dir.join("credentials.json");
+        let credentials = Credentials {
+            longbridge: Some(LongbridgeKeys {
+                app_key: "key".into(),
+                app_secret: "secret".into(),
+                access_token: "token".into(),
+            }),
+        };
+        save(&path, &credentials).unwrap();
+        // Replacing an existing file goes through the same temp file.
+        save(&path, &credentials).unwrap();
+        assert_eq!(load(&path), credentials);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(load(&path), Credentials::default());
+    }
 }

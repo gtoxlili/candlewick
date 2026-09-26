@@ -17,9 +17,8 @@ use tauri::{AppHandle, Manager, ipc::Channel};
 use tokio::sync::{oneshot, watch};
 
 use crate::{
-    http,
+    bar, http,
     model::{FeedControl, Instrument, Shared, Status},
-    tray,
     window::{self, StatusView},
 };
 
@@ -304,7 +303,7 @@ pub fn set_status(app: &AppHandle, provider: ProviderId, status: Status) {
         feed.status = status;
         StatusView::from(&*model)
     };
-    tray::request_render(app);
+    bar::request_render(app);
     window::emit_status(app, &view);
 }
 

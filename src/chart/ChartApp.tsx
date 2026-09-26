@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { ChartCandlestick, ChartLine, ChevronsUpDown, ExternalLink } from "lucide-react";
+import { ChartCandlestick, ChartLine, ExternalLink } from "lucide-react";
 import { setFrameRate, setTrendColors } from "liveline";
 import { cn } from "cn";
 
+import { Picker } from "@/components/Picker";
 import { PillTabs } from "@/components/PillTabs";
-import { TRAFFIC_LIGHTS_INSET, TitleBar } from "@/components/TitleBar";
+import { TITLE_INSET, TitleBar } from "@/components/TitleBar";
 import { Button } from "@/components/ui/button";
 import {
   api,
@@ -22,6 +23,7 @@ import {
   type Trade,
 } from "@/lib/api";
 import { direction, fmtCompact, fmtPct, fmtPrice, priceDecimals } from "@/lib/format";
+import { SYSTEM_COLORS_EVENT } from "@/lib/platform";
 import { Market } from "./market";
 import { bidShare, OrderBook } from "./OrderBook";
 import { readChartColors, sameColors, type ChartColors } from "./palette";
@@ -123,7 +125,12 @@ export default function ChartApp() {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => setAppearance((n) => n + 1);
     media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
+    // Windows reports accent changes through the app.
+    window.addEventListener(SYSTEM_COLORS_EVENT, onChange);
+    return () => {
+      media.removeEventListener("change", onChange);
+      window.removeEventListener(SYSTEM_COLORS_EVENT, onChange);
+    };
   }, []);
 
   // Accent, appearance or the red/green convention changed: recolor the chart
@@ -237,7 +244,7 @@ export default function ChartApp() {
 
   return (
     <main className="flex h-screen flex-col select-none">
-      <TitleBar className={cn(TRAFFIC_LIGHTS_INSET, "gap-2 pr-2")}>
+      <TitleBar className={cn(TITLE_INSET, "gap-2", !__WINDOWS__ && "pr-2")} maximizable>
         <InstrumentPicker
           watchlist={settings?.watchlist ?? []}
           instrument={instrument}
@@ -436,7 +443,7 @@ function LiveBadge(props: { state: FeedState }) {
   );
 }
 
-/** Instrument name that opens the native pop-up menu of the watchlist. */
+/** Instrument name that opens the watchlist, to switch the chart to another entry. */
 function InstrumentPicker(props: {
   watchlist: Instrument[];
   instrument: Instrument | undefined;
@@ -444,35 +451,31 @@ function InstrumentPicker(props: {
   onPick: (id: string) => void;
 }) {
   const label = props.instrument && instrumentLabel(props.instrument);
-  return (
-    <label className="relative -ml-1.5 flex h-6 items-center gap-1 rounded-full px-2 hover:bg-accent">
-      <span className="text-sm">
-        <span className="font-semibold">{label?.name}</span>
-        {label?.detail && (
-          <span className="text-muted-foreground">
-            {props.instrument?.provider === "binance" ? label.detail : ` ${label.detail}`}
-          </span>
-        )}
-      </span>
-      {props.watchlist.length > 1 && <ChevronsUpDown className="size-3 text-muted-foreground" />}
-      {props.watchlist.length > 1 && (
-        <select
-          aria-label="切换"
-          className="absolute inset-0 appearance-none opacity-0"
-          value={props.id}
-          onChange={(e) => props.onPick(e.target.value)}
-        >
-          {props.watchlist.map((i) => {
-            const { name, detail } = instrumentLabel(i);
-            return (
-              <option key={instrumentId(i)} value={instrumentId(i)}>
-                {i.provider === "binance" ? `${name}${detail}` : `${name} ${detail}`.trim()}
-              </option>
-            );
-          })}
-        </select>
+  const name = (
+    <span className="text-sm">
+      <span className="font-semibold">{label?.name}</span>
+      {label?.detail && (
+        <span className="text-muted-foreground">
+          {props.instrument?.provider === "binance" ? label.detail : ` ${label.detail}`}
+        </span>
       )}
-    </label>
+    </span>
+  );
+  const look = "-ml-1.5 flex h-6 items-center gap-1 rounded-full px-2 hover:bg-accent";
+  if (props.watchlist.length < 2) {
+    return <label className={cn("relative", look)}>{name}</label>;
+  }
+  const options = props.watchlist.map((i) => {
+    const { name, detail } = instrumentLabel(i);
+    return {
+      value: instrumentId(i),
+      label: i.provider === "binance" ? `${name}${detail}` : `${name} ${detail}`.trim(),
+    };
+  });
+  return (
+    <Picker label="切换" value={props.id} options={options} onChange={props.onPick} className={look}>
+      {name}
+    </Picker>
   );
 }
 
@@ -488,7 +491,7 @@ function StatsGrid(props: { stats: Stats | null; span: string; decimals: number;
     <dl className="grid grid-cols-4 gap-2 px-4">
       {items.map((item) => (
         <div key={item.label} className="min-w-0 rounded-xl bg-black/[0.035] px-3 py-2 dark:bg-white/5">
-          <dt className="text-[11px] text-muted-foreground">{item.label}</dt>
+          <dt className="text-2xs text-muted-foreground">{item.label}</dt>
           <dd className="mt-0.5 truncate font-medium tabular">{item.value ?? "—"}</dd>
         </div>
       ))}

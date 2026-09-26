@@ -4,17 +4,18 @@
 
 <h1 align="center">Candlewick</h1>
 
-<p align="center">Live crypto and stock prices in the macOS menu bar, with a real-time chart, order book and trades.</p>
+<p align="center">Live crypto and stock prices in the macOS menu bar and the Windows taskbar, with a real-time chart, order book and trades.</p>
 
 <p align="center">
   <a href="https://github.com/gtoxlili/candlewick/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/gtoxlili/candlewick"></a>
   <img alt="macOS 15 or later on Apple silicon" src="https://img.shields.io/badge/macOS-15%2B%20%C2%B7%20Apple%20silicon-black">
+  <img alt="Windows 10 or 11" src="https://img.shields.io/badge/Windows-10%20%C2%B7%2011-0078d4">
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/github/license/gtoxlili/candlewick"></a>
 </p>
 
 <p align="center"><a href="README.zh-CN.md">简体中文</a></p>
 
-Candlewick is a free, open-source macOS menu bar app that shows live prices of cryptocurrencies and stocks. Crypto comes from Binance's public market data: any spot pair, with no account or key. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI credentials. Pin one entry to the menu bar, and click any in the dropdown to open a chart that moves with every trade. The interface is in Simplified Chinese.
+Candlewick shows live crypto and stock prices in the macOS menu bar, or in the Windows taskbar next to the clock. Crypto comes from Binance's public market data, so any spot pair works without an account. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI keys. Click an entry in the dropdown to open a chart that moves with every trade. The interface is in Simplified Chinese.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/chart-dark.png">
@@ -23,73 +24,76 @@ Candlewick is a free, open-source macOS menu bar app that shows live prices of c
 
 ## Features
 
-- The price in the menu bar: the pinned entry shows its last price, optionally with its name and change stacked in two compact rows, and the dropdown lists your whole watchlist
-- Crypto and stocks side by side, up to 30 entries: any Binance spot pair, and US, Hong Kong and China A-share stocks by code (AAPL, 700, 600519)
-- US stocks follow pre-market, post-market and overnight trading, with the session marked in the dropdown
-- A live chart: line or candlesticks, from 1 second to 1 day for crypto and 1 minute to 1 week for stocks, updated by every trade and animated by [Liveline](https://github.com/benjitaylor/liveline); drag to scroll back through history, scroll or pinch to zoom
-- The order book with buy and sell pressure (20 levels for crypto, grouped by the price step you pick; for stocks, as many as your Longbridge quote access gives), and a live list of recent trades
+- One pinned entry in the menu bar or taskbar, with its name and change if you like, and your whole watchlist in the dropdown
+- Up to 30 entries, crypto and stocks side by side: any Binance spot pair, plus stocks by code (AAPL, 700, 600519)
+- A line or candlestick chart that updates with every trade, with intervals from 1 second to 1 day for crypto and 1 minute to 1 week for stocks. Drag to scroll back, pinch or scroll to zoom
+- The order book with buy and sell pressure, and a live list of recent trades
+- US pre-market, after-hours and overnight sessions
 - Green-up or red-up colors, and launch at login
-- Pauses while the Mac or its display sleeps, and reconnects on its own
 
 ## Install
 
-Download `Candlewick_<version>_aarch64.dmg` from the [latest release](https://github.com/gtoxlili/candlewick/releases/latest), open it and drag Candlewick into Applications. It needs macOS 15 or later on a Mac with Apple silicon. The app is signed with a Developer ID and notarized by Apple, so macOS opens it normally.
+### macOS
 
-Candlewick lives in the menu bar and has no Dock icon; open its settings from the dropdown menu.
+Download `Candlewick_<version>_aarch64.dmg` from the [latest release](https://github.com/gtoxlili/candlewick/releases/latest), open it and drag Candlewick into Applications. It needs macOS 15 or later on Apple silicon, and it is signed and notarized by Apple. Candlewick lives in the menu bar and has no Dock icon.
+
+### Windows
+
+Download `Candlewick_<version>_x64-setup.exe` from the [latest release](https://github.com/gtoxlili/candlewick/releases/latest) and run it. It needs Windows 10 or 11, and no administrator rights. The installer isn't code-signed yet, so SmartScreen may stop it the first time. Click More info, then Run anyway.
+
+The price appears in the taskbar beside the clock. Click it for your watchlist and settings.
 
 ## Stocks with Longbridge
 
-Stock prices need a Longbridge account with OpenAPI access:
+Stock prices need a Longbridge account with OpenAPI access.
 
 1. Sign in at [open.longbridge.com](https://open.longbridge.com/) and copy the App Key, App Secret and Access Token from the user center.
 2. Paste them into Settings → 长桥 (Longbridge) and save. Candlewick logs in and lists your quote access for each market.
 3. Add stocks by code in the search field, such as AAPL, 700 or 600519.
 
-The credentials stay on your Mac, in `~/Library/Application Support/com.influo.candlewick/credentials.json`, readable only by your user account. The access token is renewed automatically before it expires.
+Candlewick keeps the keys on your computer only, and renews the access token before it expires.
 
 ## FAQ
 
-### Do I need an account or an API key?
+### Do I need an account?
 
-Not for crypto: Candlewick reads Binance's public spot market data, over WebSocket and REST, and never trades. Stocks need your own Longbridge OpenAPI credentials (see above), which Candlewick only uses to read quotes.
-
-### What can I track?
-
-Any Binance spot trading pair, such as BTC/USDT, ETH/USDT or ETH/BTC, and with Longbridge, US, Hong Kong and China A-share stocks and ETFs. Up to 30 entries at a time.
+Not for crypto. Stocks need your own Longbridge keys, which Candlewick only uses to read quotes. It never trades.
 
 ### Does it work where binance.com is blocked?
 
-It follows the macOS system proxy settings (HTTPS and SOCKS). When `binance.com` cannot be reached, it switches to Binance's public market data hosts on `binance.vision`. Longbridge is reached through its mainland China hosts where those answer.
+Yes. It goes through your system proxy, and when `binance.com` is unreachable it switches to Binance's public data hosts on `binance.vision`.
 
 ### How much memory and CPU does it use?
 
-Sitting in the menu bar with prices streaming, about 19 MB of memory and under 1% of one CPU core. The chart and settings windows exist only while they are open.
+On a Mac, about 19 MB of memory and under 1% of one CPU core while prices stream. The chart and settings windows exist only while they are open.
 
 ### Does it collect any data?
 
-No. There is no telemetry; the app only talks to Binance's market data endpoints and, once you add credentials, to Longbridge's OpenAPI. Your settings and credentials stay on your Mac.
+No. It talks to Binance and, once you add keys, to Longbridge. Nothing else.
 
 ### Is there an English interface, or a build for Intel Macs?
 
-Not yet. The interface is in Simplified Chinese, and releases are built for Apple silicon.
+Not yet.
 
 ## Build from source
 
-Requires macOS 15 or later, Rust 1.98+, Node.js and pnpm.
+You need Rust 1.98+, Node.js and pnpm, plus macOS 15 or later on a Mac, or the Visual Studio C++ build tools on Windows.
 
 ```sh
 pnpm install
 pnpm tauri dev     # run in development
-pnpm tauri build   # the .app and .dmg land in src-tauri/target/release/bundle/
+pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
 ```
+
+[docs/windows.md](docs/windows.md) explains how the Windows version works. Every push to main that changes the app becomes a release, and [docs/release.md](docs/release.md) has the details.
 
 ## Project structure
 
-- `src-tauri/src/`: the Rust side: the menu bar item, windows and settings
+- `src-tauri/src/`: the Rust side, with what the bar shows, the windows and settings
+- `src-tauri/src/platform/`: the parts that differ between macOS and Windows
 - `src-tauri/src/market/`: market data behind one interface, with a provider for Binance and one for Longbridge
-- `src/settings/`: the settings window
-- `src/chart/`: the chart window, built on [Liveline](https://github.com/benjitaylor/liveline)
-- `patches/liveline@0.0.7.patch`: adds dragging and zooming to Liveline, makes it follow the color setting, and lowers its frame rate while the window is in the background
+- `src/settings/` and `src/chart/`: the settings and chart windows, the chart built on [Liveline](https://github.com/benjitaylor/liveline)
+- `patches/liveline@0.0.7.patch`: dragging, zooming and the color setting for Liveline
 
 Built with [Tauri 2](https://tauri.app), Rust, React 19 and Tailwind CSS.
 

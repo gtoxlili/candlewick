@@ -7,7 +7,7 @@ import { fmtClock, fmtPrice, fmtQty } from "@/lib/format";
 export function TradeList(props: { trades: Trade[] | null; decimals: number; base: string; quote: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col text-xs tabular">
-      <div className="grid h-6 shrink-0 grid-cols-[1.1fr_1fr_0.9fr] items-center px-3 text-[11px] text-muted-foreground">
+      <div className="grid h-6 shrink-0 grid-cols-[1.1fr_1fr_0.9fr] items-center px-3 text-2xs text-muted-foreground">
         <span>{props.quote ? `价格(${props.quote})` : "价格"}</span>
         <span className="text-right">{props.quote ? `数量(${props.base})` : "数量"}</span>
         <span className="text-right">时间</span>

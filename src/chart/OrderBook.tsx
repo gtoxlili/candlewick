@@ -1,6 +1,7 @@
-import { ArrowDown, ArrowUp, ChevronsUpDown, LoaderCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, LoaderCircle } from "lucide-react";
 import { cn } from "cn";
 
+import { Picker } from "@/components/Picker";
 import type { Book, Level } from "@/lib/api";
 import { fmtPrice, fmtQty } from "@/lib/format";
 
@@ -53,7 +54,7 @@ export function OrderBook(props: {
     <div className="flex min-h-0 flex-1 flex-col text-xs tabular">
       {share !== null && (
         <div className="shrink-0 px-3 pb-2">
-          <div className="mb-1 flex justify-between text-[11px]">
+          <div className="mb-1 flex justify-between text-2xs">
             <span className="text-up">买 {share.toFixed(0)}%</span>
             <span className="text-down">{(100 - share).toFixed(0)}% 卖</span>
           </div>
@@ -63,7 +64,7 @@ export function OrderBook(props: {
           </div>
         </div>
       )}
-      <div className="grid h-6 shrink-0 grid-cols-[1.1fr_1fr_1fr] items-center px-3 text-[11px] text-muted-foreground">
+      <div className="grid h-6 shrink-0 grid-cols-[1.1fr_1fr_1fr] items-center px-3 text-2xs text-muted-foreground">
         <span>{props.quote ? `价格(${props.quote})` : "价格"}</span>
         <span className="text-right">{props.quote ? `数量(${props.base})` : "数量"}</span>
         <span className="text-right">累计</span>
@@ -98,7 +99,7 @@ export function OrderBook(props: {
               <StepPicker steps={props.steps} step={props.step} onStep={props.onStep} />
             ) : (
               spread !== null && (
-                <span className="ml-auto rounded-full bg-black/5 px-2 py-0.5 text-[11px] text-muted-foreground dark:bg-white/8">
+                <span className="ml-auto rounded-full bg-black/5 px-2 py-0.5 text-2xs text-muted-foreground dark:bg-white/8">
                   价差 {fmtPrice(spread, decimals)}
                 </span>
               )
@@ -118,22 +119,15 @@ export function OrderBook(props: {
 /** The step the book is grouped by, opening the native pop-up menu of the others. */
 function StepPicker(props: { steps: number[]; step: number; onStep: (step: number) => void }) {
   return (
-    <label className="relative ml-auto flex items-center gap-0.5 rounded-full bg-black/5 py-0.5 pr-1.5 pl-2 text-[11px] text-muted-foreground hover:bg-black/8 dark:bg-white/8 dark:hover:bg-white/12">
+    <Picker
+      label="合并深度"
+      value={String(props.step)}
+      options={props.steps.map((step, i) => ({ value: String(i), label: fmtStep(step) }))}
+      onChange={(value) => props.onStep(Number(value))}
+      className="ml-auto flex items-center gap-0.5 rounded-full bg-black/5 py-0.5 pr-1.5 pl-2 text-2xs text-muted-foreground hover:bg-black/8 dark:bg-white/8 dark:hover:bg-white/12"
+    >
       {fmtStep(props.steps[props.step])}
-      <ChevronsUpDown className="size-3" />
-      <select
-        aria-label="合并深度"
-        className="absolute inset-0 appearance-none opacity-0"
-        value={props.step}
-        onChange={(e) => props.onStep(Number(e.target.value))}
-      >
-        {props.steps.map((step, i) => (
-          <option key={step} value={i}>
-            {fmtStep(step)}
-          </option>
-        ))}
-      </select>
-    </label>
+    </Picker>
   );
 }
 

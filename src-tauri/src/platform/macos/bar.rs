@@ -1,10 +1,10 @@
 //! The menu bar status item and its native dropdown.
 //!
-//! Everything here runs on the main thread. Other threads call
-//! [`request_render`], which collapses any burst of updates into one
-//! main-thread pass; that pass only touches AppKit for strings that changed.
+//! Everything here runs on the main thread: `bar::request_render` schedules
+//! one pass there per burst of updates, and that pass only touches AppKit for
+//! strings that changed.
 
-use std::{cell::RefCell, collections::HashMap, sync::atomic::Ordering};
+use std::cell::RefCell;
 
 use objc2::{AnyThread, MainThreadMarker, rc::Retained};
 use objc2_app_kit::{
@@ -14,18 +14,16 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSDictionary, NSMutableAttributedString, NSRange, NSString};
 use tauri::{
-    AppHandle, Manager, Wry,
+    ActivationPolicy, AppHandle, Wry,
     image::Image,
     menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     tray::{TrayIcon, TrayIconBuilder},
 };
 
+use super::ticker;
 use crate::{
-    format::{self, Direction},
-    macos,
-    model::{ColorScheme, Instrument, Model, Quote, Session, Shared},
-    ticker::{self, Ticker},
-    window,
+    bar::{self, Action, Row, Ticker, View},
+    model::{ColorScheme, Instrument},
 };
 
 const ID_SETTINGS: &str = "settings";
@@ -73,19 +71,10 @@ struct Columns {
     change: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct Row {
-    name: String,
-    /// Shown dimmed after the name, e.g. `/USDT`.
-    detail: String,
-    price: String,
-    /// Shown dimmed before the change, e.g. `盘后`.
-    session: Option<&'static str>,
-    change: Option<(String, Direction)>,
-}
-
-/// Creates the status item. Must run on the main thread (Tauri's `setup`).
+/// Creates the status item and makes this a menu bar app: no Dock icon or app
+/// menu until a window opens. Must run on the main thread (Tauri's `setup`).
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
+    app.set_activation_policy(ActivationPolicy::Accessory)?;
     let tray = TrayIconBuilder::new()
         .icon(template_icon())
         .icon_as_template(true)
@@ -116,7 +105,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     tray.with_inner_tray_icon(|inner| {
         let item = inner.ns_status_item();
         if let Some(item) = &item {
-            macos::use_tabular_digits(item);
+            use_tabular_digits(item);
         }
         UI.with_borrow_mut(|ui| {
             if let Some(ui) = ui {
@@ -128,42 +117,17 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Schedules a redraw on the main thread unless one is already pending.
-pub fn request_render(app: &AppHandle) {
-    let shared = app.state::<Shared>();
-    if shared.render_pending.swap(true, Ordering::AcqRel) {
-        return;
-    }
+/// Queues a render on the main thread; false if the event loop is gone.
+pub fn schedule_render(app: &AppHandle) -> bool {
     let handle = app.clone();
-    let scheduled = app.run_on_main_thread(move || {
-        handle.state::<Shared>().render_pending.store(false, Ordering::Release);
-        render(&handle);
-    });
-    if scheduled.is_err() {
-        shared.render_pending.store(false, Ordering::Release);
-    }
+    app.run_on_main_thread(move || render(&handle)).is_ok()
 }
 
-struct View {
-    watchlist: Vec<Instrument>,
-    rows: Vec<Row>,
-    ticker: Option<Ticker>,
-    caption: String,
-    scheme: ColorScheme,
-}
+/// Nothing to tear down: the status item goes with the process.
+pub fn shutdown() {}
 
 fn render(app: &AppHandle) {
-    let view = {
-        let shared = app.state::<Shared>();
-        let model = shared.model();
-        View {
-            watchlist: model.settings.watchlist.clone(),
-            rows: rows(&model.settings.watchlist, &model.quotes),
-            ticker: ticker(&model),
-            caption: caption(&model),
-            scheme: model.settings.color_scheme,
-        }
-    };
+    let view = bar::view(app);
     UI.with_borrow_mut(|ui| {
         if let Some(ui) = ui
             && let Err(e) = ui.apply(app, view)
@@ -325,6 +289,17 @@ impl Columns {
     }
 }
 
+/// Tabular digits keep the status item from changing width every tick.
+fn use_tabular_digits(item: &NSStatusItem) {
+    let Some(button) = MainThreadMarker::new().and_then(|mtm| item.button(mtm)) else {
+        return;
+    };
+    let size = NSFont::menuBarFontOfSize(0.0).pointSize();
+    // SAFETY: reading an immutable AppKit constant.
+    let font = NSFont::monospacedDigitSystemFontOfSize_weight(size, unsafe { NSFontWeightRegular });
+    button.setFont(Some(&font));
+}
+
 /// Right-aligned stops at the end of the price and change columns.
 fn tab_stops(columns: Columns, font_size: f64) -> Retained<NSMutableParagraphStyle> {
     let price_end = columns.label + font_size * 2.0 + columns.price;
@@ -414,76 +389,14 @@ fn build_menu(app: &AppHandle, watchlist: &[Instrument]) -> tauri::Result<Menu<W
     Ok(menu)
 }
 
-/// The pinned entry as the menu bar shows it; `None` when nothing is pinned.
-fn ticker(model: &Model) -> Option<Ticker> {
-    let settings = &model.settings;
-    let pinned = settings.pinned()?;
-    let quote = model.quotes.get(&pinned.id());
-    Some(Ticker {
-        symbol: settings.show_symbol.then(|| pinned.short_label()),
-        price: quote.map_or_else(
-            || "—".to_owned(),
-            |q| format::price(q.last, format::compact_decimals(q.last, pinned.decimals)),
-        ),
-        change: quote
-            .filter(|_| settings.show_change)
-            .and_then(|q| format::change_pct(q.last, q.open))
-            .map(|pct| (format::change_signed(pct), format::direction(pct))),
-        two_rows: settings.show_change,
-        stale: model.stale(pinned.provider),
-    })
-}
-
-/// The first feed that isn't live explains itself; empty while all are.
-fn caption(model: &Model) -> String {
-    model
-        .settings
-        .symbols()
-        .into_keys()
-        .map(|provider| {
-            let status =
-                model.feeds.get(&provider).map(|feed| feed.status.clone()).unwrap_or_default();
-            status.caption(provider.name())
-        })
-        .find(|caption| !caption.is_empty())
-        .unwrap_or_default()
-}
-
-fn rows(watchlist: &[Instrument], quotes: &HashMap<String, Quote>) -> Vec<Row> {
-    watchlist
-        .iter()
-        .map(|instrument| {
-            let quote = quotes.get(&instrument.id());
-            let (name, detail) = instrument.row_label();
-            Row {
-                name,
-                detail,
-                session: quote.and_then(|q| q.session).map(Session::label),
-                price: quote.map_or_else(
-                    || "—".to_owned(),
-                    |q| format::price(q.last, format::decimals(q.last, instrument.decimals)),
-                ),
-                change: quote
-                    .and_then(|q| format::change_pct(q.last, q.open))
-                    .map(|pct| (format::change_signed(pct), format::direction(pct))),
-            }
-        })
-        .collect()
-}
-
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
-    let result = match event.id().as_ref() {
-        ID_SETTINGS => window::open_settings(app),
-        ID_QUIT => {
-            app.exit(0);
-            Ok(())
-        }
+    let action = match event.id().as_ref() {
+        ID_SETTINGS => Action::Settings,
+        ID_QUIT => Action::Quit,
         id => match id.strip_prefix(INSTRUMENT_PREFIX) {
-            Some(instrument) => window::open_chart(app, instrument),
-            None => Ok(()),
+            Some(instrument) => Action::Chart(instrument.to_owned()),
+            None => return,
         },
     };
-    if let Err(e) = result {
-        log::error!("menu action failed: {e}");
-    }
+    bar::perform(app, action);
 }

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["nsis"],
+    "publisher": "Hangzhou Healing Era Technology Co., Ltd",
+    "windows": {
+      "minimumWebview2Version": "125.0.2535.41",
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese"],
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    }
+  }
+}

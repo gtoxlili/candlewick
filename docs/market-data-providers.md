@@ -11,7 +11,7 @@
    - `validate`：校验设置页传来的自选项。
    - `search`：返回候选；`notes` 说明搜不全的原因。
    - `drop_search_cache`：设置窗口关闭时释放搜索缓存。
-   - `watch`：菜单栏报价的常驻任务，读取 `FeedControl` 里的 symbols、paused 和 credentials，写 `model.quotes`，用 `market::set_status` 报告状态。
+   - `watch`：菜单栏（Windows 上是任务栏）报价的常驻任务，读取 `FeedControl` 里的 symbols、paused 和 credentials，写 `model.quotes`，用 `market::set_status` 报告状态。
    - `chart_spec` / `history` / `recent_trades` / `stream`：行情窗口的能力说明、K 线翻页、最近成交和实时流。
 3. 前端 `src/lib/api.ts` 的 `ProviderId`、`instrumentLabel`、`marketLabel` 加上对应分支。
 

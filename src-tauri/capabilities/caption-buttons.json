@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "caption-buttons",
+  "description": "Windows: the caption buttons the pages draw in their title bars (minimize, maximize or restore, close).",
+  "platforms": ["windows"],
+  "windows": ["settings", "chart"],
+  "permissions": [
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close"
+  ]
+}

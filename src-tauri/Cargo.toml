@@ -1,19 +1,21 @@
 [package]
 name = "candlewick"
 version = "0.5.0"
-description = "Live crypto and stock prices in the macOS menu bar"
+description = "Live crypto and stock prices in the macOS menu bar and the Windows taskbar"
 repository = "https://github.com/gtoxlili/candlewick"
 homepage = "https://github.com/gtoxlili/candlewick"
-keywords = ["macos", "menu-bar", "crypto", "stocks", "tauri"]
+keywords = ["menu-bar", "taskbar", "crypto", "stocks", "tauri"]
 edition = "2024"
 rust-version = "1.98"
 publish = false
 
 [build-dependencies]
-tauri-build = { version = "2.6", features = [] }
+tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-tauri = { version = "2.11", features = ["tray-icon", "macos-private-api"] }
+# `macos-private-api` matches `app.macOSPrivateApi`, which tauri-build checks on
+# every platform; it does nothing on Windows.
+tauri = { version = "2.12", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 thiserror = "2"
@@ -30,6 +32,10 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 prost = { version = "0.14", default-features = false, features = ["derive", "std"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 ring = "0.17"
+
+# The status item is Tauri's tray icon; Windows draws its own (platform/windows).
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri = { version = "2.12", features = ["tray-icon"] }
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [
@@ -51,6 +57,26 @@ objc2-service-management = { version = "0.3", default-features = false, features
 objc2-system-configuration = { version = "0.3", default-features = false, features = [
     "std", "SCDynamicStore", "SCDynamicStoreCopySpecific", "SCSchemaDefinitions",
 ] }
+
+# The versions Tauri's wry is built on (windows, webview2-com, and the
+# windows-numerics that windows uses), so window handles, WebView2 interfaces
+# and Direct2D's vectors are the same types.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "UI_ViewManagement",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct2D", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi",
+    "Win32_Networking_WinHttp",
+    "Win32_Security",
+    "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Power", "Win32_System_Registry",
+    "Win32_System_RemoteDesktop", "Win32_System_SystemServices", "Win32_System_Threading",
+    "Win32_UI_Accessibility", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-numerics = "0.3"
+windows-version = "0.100"
+webview2-com = "0.39"
 
 # Measured on this app: opt-level 3 grew the binary 20% (4.0 → 4.8 MB) with the
 # same 15 MB footprint and no CPU difference, so optimize for size. trim-paths and

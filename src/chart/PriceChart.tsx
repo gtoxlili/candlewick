@@ -23,8 +23,8 @@ const DAY = 86_400;
 /** Pointer travel before a press becomes a drag, so clicks stay clicks. */
 const DRAG_SLOP = 4;
 /**
- * A double-click this soon after a drag is two quick drags that macOS counted
- * as clicks, not a request to reset.
+ * A double-click this soon after a drag is two quick drags that the system
+ * counted as clicks, not a request to reset.
  */
 const DRAG_DBLCLICK_MS = 500;
 
@@ -257,7 +257,7 @@ export function PriceChart(props: {
       />
 
       {hint && ready && (
-        <p className="pointer-events-none absolute top-2.5 left-4 text-[11px] text-muted-foreground animate-in fade-in delay-1000 duration-700 fill-mode-both">
+        <p className="pointer-events-none absolute top-2.5 left-4 text-2xs text-muted-foreground animate-in fade-in delay-1000 duration-700 fill-mode-both">
           拖动查看更早的走势 · 滚动或双指缩放 · 双击复位
         </p>
       )}

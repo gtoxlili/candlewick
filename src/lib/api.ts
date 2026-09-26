@@ -18,7 +18,7 @@ export interface Instrument {
   name?: string | null;
   /** Decimals of the tick size; null lets the app pick by magnitude. */
   decimals: number | null;
-  /** Shown in the menu bar title, not only in the dropdown. */
+  /** Shown in the menu bar or taskbar, not only in the dropdown. */
   pinned: boolean;
 }
 

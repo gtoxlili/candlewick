@@ -17,9 +17,10 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::WS_HOSTS;
 use crate::{
+    bar,
     market::{self, ProviderId},
     model::{FeedControl, Quote, Shared, Status},
-    net, tray,
+    net,
 };
 
 const PROVIDER: ProviderId = ProviderId::Binance;
@@ -145,7 +146,7 @@ async fn pump(
             }
             () = &mut flush, if dirty => {
                 dirty = false;
-                tray::request_render(app);
+                bar::request_render(app);
             }
             () = &mut silence => return End::Lost("长时间没有收到行情".to_owned()),
         }

@@ -1,25 +1,35 @@
-//! AppKit and ServiceManagement glue.
+//! AppKit, ServiceManagement and SystemConfiguration glue.
+
+pub mod bar;
+pub mod proxy;
+mod ticker;
+pub mod window;
 
 use std::{path::Path, ptr::NonNull, sync::Arc};
 
 use block2::RcBlock;
-use objc2::MainThreadMarker;
 use objc2_app_kit::{
-    NSApplication, NSFont, NSFontWeightRegular, NSStatusItem, NSWindow, NSWorkspace,
-    NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidSleepNotification,
+    NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidSleepNotification,
     NSWorkspaceScreensDidWakeNotification, NSWorkspaceSessionDidBecomeActiveNotification,
     NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{NSNotification, NSString, NSURL};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
+use tauri::{Builder, Wry};
 
-/// Why streaming is paused: in each case nobody can see the menu bar.
-#[derive(Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum Pause {
-    SystemSleep = 1 << 0,
-    DisplaySleep = 1 << 1,
-    SessionInactive = 1 << 2,
+use super::Pause;
+
+/// Whether the first launch from an install location opens the settings
+/// window. The status item is in plain sight, so macOS leaves the app to it.
+pub const SETTINGS_ON_FIRST_RUN: bool = false;
+
+/// LaunchServices keeps one instance and reports a second launch as a
+/// reopen, so there is nothing to claim.
+pub fn claim_single_instance() {}
+
+/// The app menu (see [`window::app_menu`]).
+pub fn configure(builder: Builder<Wry>) -> Builder<Wry> {
+    builder.menu(window::app_menu)
 }
 
 /// Calls `on_change(reason, paused)` on sleep/wake, display sleep/wake and
@@ -48,40 +58,6 @@ pub fn observe_pauses(on_change: impl Fn(Pause, bool) + Send + Sync + 'static) {
         };
         std::mem::forget(token);
     }
-}
-
-/// Asks to make this the active app. Call it shortly after the user's click
-/// (not in the same turn as switching to the regular activation policy,
-/// which macOS silently ignores) — see `window::open`.
-pub fn activate_app() {
-    if let Some(mtm) = MainThreadMarker::new() {
-        let app = NSApplication::sharedApplication(mtm);
-        #[allow(deprecated)] // still the more forceful request on macOS 14+
-        app.activateIgnoringOtherApps(true);
-        app.activate();
-    }
-}
-
-/// Orders the window above other apps' windows even when this app is not
-/// (yet) active; `makeKeyAndOrderFront` alone leaves it behind them.
-pub fn order_front_regardless(ns_window: *mut std::ffi::c_void) {
-    if ns_window.is_null() || MainThreadMarker::new().is_none() {
-        return;
-    }
-    // SAFETY: a live NSWindow pointer from Tauri, used on the main thread.
-    let window: &NSWindow = unsafe { &*ns_window.cast() };
-    window.orderFrontRegardless();
-}
-
-/// Tabular digits keep the status item from changing width every tick.
-pub fn use_tabular_digits(item: &NSStatusItem) {
-    let Some(button) = MainThreadMarker::new().and_then(|mtm| item.button(mtm)) else {
-        return;
-    };
-    let size = NSFont::menuBarFontOfSize(0.0).pointSize();
-    // SAFETY: reading an immutable AppKit constant.
-    let font = NSFont::monospacedDigitSystemFontOfSize_weight(size, unsafe { NSFontWeightRegular });
-    button.setFont(Some(&font));
 }
 
 pub fn open_url(url: &str) {

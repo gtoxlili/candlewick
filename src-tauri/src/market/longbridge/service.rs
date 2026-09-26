@@ -36,10 +36,11 @@ use super::{
     proto::{self, cmd, sub_type, trade_session},
 };
 use crate::{
+    bar,
     credentials::{self, LongbridgeKeys},
     market::{self, Error, ProviderId},
     model::{FeedControl, Quote, Session, Shared, Status},
-    net, tray,
+    net,
 };
 
 const PROVIDER: ProviderId = ProviderId::Longbridge;
@@ -546,7 +547,7 @@ impl Service {
                 }
                 () = &mut flush, if dirty => {
                     dirty = false;
-                    tray::request_render(&self.app);
+                    bar::request_render(&self.app);
                 }
             }
         }

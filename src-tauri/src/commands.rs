@@ -7,11 +7,11 @@ use tauri::{AppHandle, Manager, State, WebviewWindow, ipc::Channel};
 use tokio::sync::oneshot;
 
 use crate::{
+    bar,
     credentials::{self, LongbridgeKeys},
-    macos,
     market::{self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, longbridge},
     model::{self, Instrument, Settings, Shared},
-    tray,
+    platform,
     window::{self, StatusView},
 };
 
@@ -63,7 +63,7 @@ pub fn save_settings(
         control.symbols = symbols;
         changed
     });
-    tray::request_render(&app);
+    bar::request_render(&app);
     window::emit_settings(&app, &settings);
     window::sync_chart(&app);
     Ok(settings)
@@ -76,20 +76,20 @@ pub fn get_status(shared: State<'_, Shared>) -> StatusView {
 
 #[tauri::command]
 pub fn get_login_item() -> bool {
-    macos::login_item_enabled()
+    platform::login_item_enabled()
 }
 
 #[tauri::command]
 pub fn set_login_item(enabled: bool) -> CmdResult<bool> {
-    macos::set_login_item(enabled).map_err(CommandError::LoginItem)?;
-    Ok(macos::login_item_enabled())
+    platform::set_login_item(enabled).map_err(CommandError::LoginItem)?;
+    Ok(platform::login_item_enabled())
 }
 
 /// The page has content; now its window can appear without a blank flash.
 #[tauri::command]
 pub fn window_ready(window: WebviewWindow) -> CmdResult<()> {
     window.show()?;
-    window::bring_to_front(&window);
+    platform::window::bring_to_front(&window);
     Ok(())
 }
 
@@ -156,7 +156,7 @@ pub fn set_longbridge(
     };
     longbridge::forget_account();
     shared.control.send_modify(|control| control.credentials = credentials);
-    tray::request_render(&app);
+    bar::request_render(&app);
     Ok(get_longbridge(shared))
 }
 
@@ -250,7 +250,7 @@ pub fn chart_stream_stop(shared: State<'_, Shared>, handle: u32) {
 pub fn open_link(shared: State<'_, Shared>, id: String) -> CmdResult<()> {
     let instrument = instrument(&shared, &id)?;
     if let Some(link) = instrument.provider.provider().chart_spec(&instrument).link {
-        macos::open_url(&link.url);
+        platform::open_url(&link.url);
     }
     Ok(())
 }

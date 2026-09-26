@@ -1,18 +1,13 @@
-//! Opens the market-data websockets, following the macOS system proxy the way
-//! Safari would (HTTPS proxy via CONNECT, else SOCKS5, honoring exceptions),
-//! and gives the HTTP client (`http.rs`) the same route and TLS setup.
+//! Opens the market-data websockets through the route the system proxy
+//! settings prescribe (`platform::proxy`: an HTTPS proxy via CONNECT, else
+//! SOCKS5, honoring exceptions), and gives the HTTP client (`http.rs`) the
+//! same route and TLS setup.
 
 use std::{
     fmt, io,
     sync::{Arc, OnceLock},
 };
 
-use objc2_core_foundation::{CFArray, CFNumber, CFString, CFType};
-use objc2_system_configuration::{
-    SCDynamicStore, kSCPropNetProxiesExceptionsList, kSCPropNetProxiesHTTPSEnable,
-    kSCPropNetProxiesHTTPSPort, kSCPropNetProxiesHTTPSProxy, kSCPropNetProxiesSOCKSEnable,
-    kSCPropNetProxiesSOCKSPort, kSCPropNetProxiesSOCKSProxy,
-};
 use rustls_platform_verifier::BuilderVerifierExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -22,6 +17,8 @@ use tokio_tungstenite::{
     Connector, MaybeTlsStream, WebSocketStream, client_async_tls_with_config,
     tungstenite::{client::IntoClientRequest, http::HeaderValue, protocol::WebSocketConfig},
 };
+
+use crate::platform;
 
 pub type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -66,7 +63,7 @@ pub async fn connect_with_headers(
     headers: &[(&'static str, &str)],
 ) -> Result<(Socket, Route), Error> {
     const PORT: u16 = 443;
-    let mut route = system_route(host);
+    let mut route = platform::proxy::route(host);
     let proxy = match &route {
         Route::Direct => None,
         Route::Http { host, port } | Route::Socks5 { host, port } => Some((host.clone(), *port)),
@@ -117,7 +114,7 @@ pub async fn connect_with_headers(
 
 /// The system proxy for `host` as a proxy URL, or `None` to go direct.
 pub fn proxy_url(host: &str) -> Option<String> {
-    match system_route(host) {
+    match platform::proxy::route(host) {
         Route::Direct => None,
         Route::Http { host, port } => Some(format!("http://{host}:{port}")),
         // `socks5h`: the proxy resolves the name, as `socks5_connect` has it do.
@@ -151,80 +148,11 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
             let config = rustls::ClientConfig::builder_with_provider(provider)
                 .with_safe_default_protocol_versions()
                 .and_then(|builder| builder.with_platform_verifier())
-                // Only fails on Android (JVM not initialized); unreachable on macOS.
+                // Only fails on Android (JVM not initialized); unreachable here.
                 .expect("ring + platform verifier");
             Arc::new(config.with_no_client_auth())
         })
         .clone()
-}
-
-/// Reads the current system proxy settings (they can change at any time, so
-/// this runs on every connection attempt).
-fn system_route(target: &str) -> Route {
-    let Some(dict) = SCDynamicStore::proxies(None) else {
-        return Route::Direct;
-    };
-    // SAFETY: SCDynamicStoreCopyProxies returns a dictionary keyed by CFString.
-    let dict = unsafe { dict.cast_unchecked::<CFString, CFType>() };
-    let number = |key: &CFString| {
-        dict.get(key)
-            .and_then(|v| v.downcast::<CFNumber>().ok())
-            .and_then(|n| n.as_i64())
-            .unwrap_or(0)
-    };
-    let string = |key: &CFString| {
-        dict.get(key)
-            .and_then(|v| v.downcast::<CFString>().ok())
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty())
-    };
-
-    // SAFETY: the kSCPropNetProxies* statics are immutable CFString constants.
-    let (exceptions_key, https, socks) = unsafe {
-        (
-            kSCPropNetProxiesExceptionsList,
-            (kSCPropNetProxiesHTTPSEnable, kSCPropNetProxiesHTTPSProxy, kSCPropNetProxiesHTTPSPort),
-            (kSCPropNetProxiesSOCKSEnable, kSCPropNetProxiesSOCKSProxy, kSCPropNetProxiesSOCKSPort),
-        )
-    };
-
-    let excepted =
-        dict.get(exceptions_key).and_then(|v| v.downcast::<CFArray>().ok()).is_some_and(|list| {
-            // SAFETY: the exceptions list holds CFStrings.
-            let list = unsafe { list.cast_unchecked::<CFString>() };
-            list.iter().any(|pattern| host_matches(target, &pattern.to_string()))
-        });
-    if excepted {
-        return Route::Direct;
-    }
-
-    let port = |key| u16::try_from(number(key)).ok().filter(|p| *p != 0);
-    if number(https.0) == 1
-        && let (Some(host), Some(port)) = (string(https.1), port(https.2))
-    {
-        return Route::Http { host, port };
-    }
-    if number(socks.0) == 1
-        && let (Some(host), Some(port)) = (string(socks.1), port(socks.2))
-    {
-        return Route::Socks5 { host, port };
-    }
-    Route::Direct
-}
-
-/// Proxy exception patterns: exact host names and `*.suffix` wildcards.
-/// CIDR entries only ever match IP literals, which we never dial.
-fn host_matches(host: &str, pattern: &str) -> bool {
-    let pattern = pattern.trim();
-    match pattern.strip_prefix("*.") {
-        Some(suffix) => {
-            host.eq_ignore_ascii_case(suffix)
-                || host.len() > suffix.len()
-                    && host[host.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
-                    && host.as_bytes()[host.len() - suffix.len() - 1] == b'.'
-        }
-        None => host.eq_ignore_ascii_case(pattern),
-    }
 }
 
 async fn http_connect(tcp: &mut TcpStream, host: &str, port: u16) -> Result<(), Error> {
@@ -289,19 +217,4 @@ async fn socks5_connect(tcp: &mut TcpStream, host: &str, port: u16) -> Result<()
     let mut rest = vec![0u8; addr_len + 2];
     tcp.read_exact(&mut rest).await?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::host_matches;
-
-    // macOS proxy exception semantics: `*.x` covers x and its subdomains only.
-    #[test]
-    fn exception_patterns() {
-        assert!(host_matches("stream.binance.com", "*.binance.com"));
-        assert!(host_matches("binance.com", "*.binance.com"));
-        assert!(!host_matches("notbinance.com", "*.binance.com"));
-        assert!(host_matches("localhost", "localhost"));
-        assert!(!host_matches("stream.binance.com", "127.0.0.0/8"));
-    }
 }

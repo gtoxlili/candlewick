@@ -1,4 +1,4 @@
-//! Settings, live quotes and feed status, shared by the feed tasks, the tray
+//! Settings, live quotes and feed status, shared by the feed tasks, the bar
 //! renderer and the IPC commands.
 
 use std::{
@@ -39,7 +39,8 @@ pub struct Instrument {
     /// Decimals of the tick size. `None` falls back to a magnitude rule.
     #[serde(default)]
     pub decimals: Option<u8>,
-    /// Shown in the menu bar, not only in the dropdown. At most one entry is.
+    /// Shown in the bar (the menu bar, the taskbar), not only in the
+    /// dropdown. At most one entry is.
     #[serde(default)]
     pub pinned: bool,
 }
@@ -62,7 +63,7 @@ impl Instrument {
         market::instrument_id(self.provider, &self.symbol)
     }
 
-    /// The menu bar's name for it: `BTC` for USD-like quotes, `ETH/BTC`
+    /// The bar's name for it: `BTC` for USD-like quotes, `ETH/BTC`
     /// otherwise; US tickers as they are, other stocks by name.
     pub fn short_label(&self) -> String {
         match self.provider {
@@ -157,7 +158,7 @@ impl Settings {
         Ok(self)
     }
 
-    /// The entry shown in the menu bar, if any.
+    /// The entry shown in the bar, if any.
     pub fn pinned(&self) -> Option<&Instrument> {
         self.watchlist.iter().find(|instrument| instrument.pinned)
     }
@@ -295,7 +296,7 @@ impl Status {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FeedControl {
     pub symbols: BTreeMap<ProviderId, Vec<String>>,
-    /// Bit set of reasons the machine is not being looked at (see `macos::Pause`).
+    /// Bit set of reasons the machine is not being looked at (see `platform::Pause`).
     pub paused: u8,
     pub credentials: Credentials,
 }

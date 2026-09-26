@@ -2,8 +2,20 @@
   "name": "candlewick",
   "private": true,
   "version": "0.5.0",
-  "description": "Live crypto and stock prices in the macOS menu bar",
-  "keywords": ["macos", "menu-bar", "crypto", "bitcoin", "stocks", "binance", "longbridge", "price-ticker", "tauri"],
+  "description": "Live crypto and stock prices in the macOS menu bar and the Windows taskbar",
+  "keywords": [
+    "macos",
+    "menu-bar",
+    "windows",
+    "taskbar",
+    "crypto",
+    "bitcoin",
+    "stocks",
+    "binance",
+    "longbridge",
+    "price-ticker",
+    "tauri"
+  ],
   "homepage": "https://github.com/gtoxlili/candlewick",
   "repository": "github:gtoxlili/candlewick",
   "type": "module",
@@ -16,7 +28,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/api": "^2.12.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
     "liveline": "^0.0.7",
@@ -28,7 +40,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
-    "@tauri-apps/cli": "^2.11.5",
+    "@tauri-apps/cli": "^2.12.0",
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

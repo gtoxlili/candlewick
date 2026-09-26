@@ -2,11 +2,12 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* Follow the macOS appearance setting. */
+/* Follow the system's light or dark appearance. */
 @custom-variant dark (@media (prefers-color-scheme: dark));
 
-/* macOS type sizes: 13 pt body, 11 pt secondary. */
+/* macOS type sizes: 13 pt body, 11 pt secondary (Windows: see below). */
 @theme {
+    --text-2xs: 0.6875rem;
     --text-xs: 0.6875rem;
     --text-xs--line-height: 1.35;
     --text-sm: 0.8125rem;
@@ -17,7 +18,10 @@
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif;
+    /* The system's UI fonts: SF and PingFang on macOS, Segoe UI Variable (Segoe
+       UI on Windows 10) and Microsoft YaHei UI on Windows. */
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC",
+        "Microsoft YaHei UI", system-ui, sans-serif;
     --color-up: var(--up);
     --color-down: var(--down);
     --color-ring: var(--ring);
@@ -46,10 +50,11 @@
 }
 
 /*
- * The windows sit on macOS vibrancy, so surfaces are translucent fills over
- * it rather than opaque paint. Text, separators, accent and red/green come
- * from the system (WebKit's -apple-system-* colors, below) so they match
- * native controls in both appearances; the values here are fallbacks for
+ * The windows sit on macOS vibrancy (Windows: Mica), so surfaces are
+ * translucent fills over it rather than opaque paint. On macOS text,
+ * separators, accent and red/green come from the system (WebKit's
+ * -apple-system-* colors, below) so they match native controls in both
+ * appearances; Windows sets its own below; the values here are fallbacks for
  * previewing the pages in other browsers.
  */
 :root {
@@ -113,6 +118,139 @@
     }
 }
 
+/*
+ * Windows: the pages sit on Mica (Windows 11) or Fluent's solid background
+ * (Windows 10). Colors are Windows 11's text, fill and stroke tokens; the
+ * accent comes from the app (platform.ts), since WebView2 doesn't expose it
+ * to CSS. Text follows Windows' type ramp: 14 px body, 12 px caption.
+ */
+:root[data-platform="windows"] {
+    --text-2xs: 0.75rem;
+    --text-xs: 0.75rem;
+    --text-xs--line-height: 1.34;
+    --text-sm: 0.875rem;
+    --text-sm--line-height: 1.43;
+    --text-base: 0.875rem;
+    --text-base--line-height: 1.43;
+    --foreground: rgb(0 0 0 / 0.894);
+    --muted-foreground: rgb(0 0 0 / 0.62);
+    --card: rgb(255 255 255 / 0.7);
+    --popover: rgb(249 249 249 / 0.96);
+    --border: rgb(0 0 0 / 0.0578);
+    --primary: var(--accent-on-light, #005fb8);
+    --primary-foreground: #fff;
+    --ring: color-mix(in oklab, var(--primary) 50%, transparent);
+    --window: #f3f3f3;
+    --subtle-fill-secondary: rgb(0 0 0 / 0.0373);
+    --subtle-fill-tertiary: rgb(0 0 0 / 0.0241);
+    --flyout-stroke: rgb(0 0 0 / 0.0578);
+    --flyout-shadow: 0 0 2px rgb(0 0 0 / 0.12), 0 8px 16px rgb(0 0 0 / 0.14);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root[data-platform="windows"] {
+        --foreground: #fff;
+        --muted-foreground: rgb(255 255 255 / 0.786);
+        --card: rgb(255 255 255 / 0.0512);
+        --popover: rgb(44 44 44 / 0.96);
+        --border: rgb(255 255 255 / 0.0837);
+        --primary: var(--accent-on-dark, #60cdff);
+        --primary-foreground: #000;
+        --window: #202020;
+        --subtle-fill-secondary: rgb(255 255 255 / 0.0605);
+        --subtle-fill-tertiary: rgb(255 255 255 / 0.0419);
+        --flyout-stroke: rgb(0 0 0 / 0.2);
+        --flyout-shadow: 0 0 2px rgb(0 0 0 / 0.24), 0 8px 16px rgb(0 0 0 / 0.28);
+    }
+}
+
+/* No Mica before Windows 11: the page paints the window. */
+:root[data-backdrop="solid"],
+:root[data-backdrop="solid"] body {
+    background: var(--window);
+}
+
+/* The title bar is the window's caption (WebView2's non-client regions); its
+   controls stay clickable. */
+[data-platform="windows"] .titlebar {
+    -webkit-app-region: drag;
+    app-region: drag;
+}
+[data-platform="windows"] .titlebar :is(button, a, input, select, textarea, label, [role="button"], [role="tab"]) {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+}
+
+/* Windows 11 caption buttons: the system's glyphs and fills, red to close. */
+.caption-button {
+    font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
+    font-size: 10px;
+    color: var(--foreground);
+}
+.caption-button:hover {
+    background: var(--subtle-fill-secondary);
+}
+.caption-button:active {
+    background: var(--subtle-fill-tertiary);
+}
+.caption-button[data-close]:hover {
+    background: #c42b1c;
+    color: #fff;
+}
+.caption-button[data-close]:active {
+    background: rgb(196 43 28 / 0.9);
+    color: rgb(255 255 255 / 0.7);
+}
+
+/* shadcn's Select as Windows 11's combo box drop-down: an acrylic flyout
+   with Fluent's stroke and shadow, 32 px items on subtle fills, and the
+   accent pill beside the current item in place of a check mark. It opens
+   over the title bar, so it must not count as part of the caption. */
+[data-platform="windows"] [data-slot="select-content"] {
+    min-width: 5rem;
+    border: 1px solid var(--flyout-stroke);
+    border-radius: 8px;
+    box-shadow: var(--flyout-shadow);
+    backdrop-filter: blur(30px) saturate(150%);
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+}
+[data-platform="windows"] [data-slot="select-item"] {
+    height: 2rem;
+    padding: 0 0.75rem;
+    border-radius: 4px;
+}
+[data-platform="windows"] [data-slot="select-item"] + [data-slot="select-item"] {
+    margin-top: 2px;
+}
+[data-platform="windows"] [data-slot="select-item"]:is([data-highlighted], [data-state="checked"]) {
+    background: var(--subtle-fill-secondary);
+    color: var(--foreground);
+}
+[data-platform="windows"] [data-slot="select-item"]:is(:active, [data-state="checked"][data-highlighted]) {
+    background: var(--subtle-fill-tertiary);
+}
+[data-platform="windows"] [data-slot="select-item"] > span:first-child {
+    display: none;
+}
+[data-platform="windows"] [data-slot="select-item"][data-state="checked"]::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 3px;
+    height: 1rem;
+    margin-top: -0.5rem;
+    border-radius: 1.5px;
+    background: var(--primary);
+}
+
+/* An inactive window's title bar fades, as Windows' own do. */
+:root[data-platform="windows"][data-active="false"] .titlebar > :not(.caption-buttons),
+:root[data-platform="windows"][data-active="false"] .caption-button:not(:hover) {
+    opacity: 0.45;
+}
+
 /* Price colors follow the user's convention (settings → 红涨绿跌). */
 :root {
     --up: var(--green);
@@ -133,7 +271,7 @@
     -webkit-font-smoothing: antialiased;
     }
   html, body {
-    /* Let the window's vibrancy show through. */
+    /* Let the window's material (vibrancy, Mica) show through. */
     background: transparent;
     overscroll-behavior: none;
     cursor: default;

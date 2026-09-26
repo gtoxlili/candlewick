@@ -4,7 +4,7 @@
 export type Rgb = [number, number, number];
 
 export interface ChartColors {
-  /** macOS accent color, as "rgb(r, g, b)" (Liveline derives its palette from it). */
+  /** The system accent color, as "rgb(r, g, b)" (Liveline derives its palette from it). */
   accent: string;
   up: Rgb;
   down: Rgb;

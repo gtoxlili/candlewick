@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { BAR } from "@/lib/platform";
 import {
   api,
   instrumentId,
@@ -85,9 +86,7 @@ export default function App() {
 
   return (
     <main className="flex h-screen flex-col select-none">
-      <TitleBar className="justify-center" divider={scrolled}>
-        <h1 className="text-sm font-semibold">设置</h1>
-      </TitleBar>
+      <TitleBar title="设置" divider={scrolled} />
 
       {!settings ? (
         <div className="flex flex-1 items-center justify-center p-6 text-muted-foreground">
@@ -108,19 +107,19 @@ export default function App() {
           <Section title="显示">
             <Group>
               <SwitchRow
-                label="菜单栏显示名称"
+                label={`${BAR}显示名称`}
                 checked={settings.showSymbol}
                 onChange={(showSymbol) => void update({ ...settings, showSymbol })}
               />
               <SwitchRow
-                label="菜单栏显示涨跌幅"
+                label={`${BAR}显示涨跌幅`}
                 hint="价格与涨跌幅分上下两排显示"
                 checked={settings.showChange}
                 onChange={(showChange) => void update({ ...settings, showChange })}
               />
               <SwitchRow
                 label="红涨绿跌"
-                hint="下拉菜单与 K 线图的涨跌配色"
+                hint={__WINDOWS__ ? "任务栏、菜单与 K 线图的涨跌配色" : "下拉菜单与 K 线图的涨跌配色"}
                 checked={settings.colorScheme === "redUp"}
                 onChange={(redUp) =>
                   void update({ ...settings, colorScheme: redUp ? "redUp" : "greenUp" })
@@ -132,8 +131,8 @@ export default function App() {
           <Section title="通用">
             <Group>
               <SwitchRow
-                label="登录时启动"
-                hint="开机后自动出现在菜单栏"
+                label={__WINDOWS__ ? "开机时启动" : "登录时启动"}
+                hint={`开机后自动出现在${BAR}`}
                 checked={loginItem ?? false}
                 disabled={loginItem === null}
                 onChange={(enabled) => void toggleLoginItem(enabled)}
@@ -163,6 +162,10 @@ export default function App() {
   );
 }
 
+const WATCHLIST_FOOTNOTE = __WINDOWS__
+  ? "任务栏只显示一个，打开哪个的「任务栏」就显示哪个；点任务栏上的行情或托盘图标，在菜单里选名称可查看 K 线与盘口。"
+  : "菜单栏只显示一个，打开哪个的「菜单栏」就显示哪个；点下拉菜单里的名称可查看 K 线与盘口。";
+
 function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist: Instrument[]) => void }) {
   const { watchlist, onChange } = props;
   const move = (index: number, delta: number) => {
@@ -172,10 +175,7 @@ function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist
     onChange(next);
   };
   return (
-    <Section
-      title="自选"
-      footnote="菜单栏只显示一个，打开哪个的「菜单栏」就显示哪个；点下拉菜单里的名称可查看 K 线与盘口。"
-    >
+    <Section title="自选" footnote={WATCHLIST_FOOTNOTE}>
       <InstrumentSearch
         existing={watchlist}
         full={watchlist.length >= MAX_INSTRUMENTS}
@@ -189,12 +189,12 @@ function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist
             <div key={instrumentId(item)} className="flex h-10 items-center gap-0.5 pr-1.5 pl-3.5">
               <InstrumentName instrument={item} className="min-w-0 flex-1 truncate" />
               <Label className="mr-2 gap-2 text-xs font-normal text-muted-foreground">
-                菜单栏
+                {BAR}
                 <Switch
                   size="sm"
                   checked={item.pinned}
                   onCheckedChange={(pinned) =>
-                    // One pair in the menu bar: switching one on switches the others off.
+                    // One pair in the bar: switching one on switches the others off.
                     onChange(
                       watchlist.map((c) =>
                         c === item ? { ...c, pinned } : pinned ? { ...c, pinned: false } : c,
@@ -240,7 +240,7 @@ function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist
   );
 }
 
-/** macOS System Settings style: small title above a grouped box, optional footnote below. */
+/** System Settings style: small title above a grouped box, optional footnote below. */
 function Section(props: { title: string; footnote?: string; children: ReactNode }) {
   return (
     <section className="space-y-2">
