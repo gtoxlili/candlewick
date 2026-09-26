@@ -1,34 +1,86 @@
-# Coin Tray
+<p align="center">
+  <img src="src-tauri/icons/128x128@2x.png" width="128" height="128" alt="Coin Tray app icon: a glowing live price line ending in a pulsing dot">
+</p>
 
-在 macOS 菜单栏里看币安现货的实时价格。
+<h1 align="center">Coin Tray</h1>
 
-- 菜单栏直接显示选中币种的价格，可附带币种名称和 24 小时涨跌幅
-- 下拉菜单列出全部币种，点其中一个打开行情窗口：折线或 K 线随逐笔成交实时变化，周期从 1 秒到 1 天，可拖动回看历史、缩放，另有 20 档盘口和最近成交
-- 设置里搜索添加交易对，最多 30 个，可切换红涨绿跌和登录时启动
-- Mac 睡眠、显示器休眠或切换用户时暂停行情连接，恢复后自动重连
+<p align="center">Live Binance crypto prices in the macOS menu bar, with a real-time chart, order book and trades.</p>
 
-启动后只出现在菜单栏，没有 Dock 图标，设置从下拉菜单打开。
+<p align="center">
+  <a href="https://github.com/gtoxlili/coin-tray/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/gtoxlili/coin-tray"></a>
+  <img alt="macOS 15 or later on Apple silicon" src="https://img.shields.io/badge/macOS-15%2B%20%C2%B7%20Apple%20silicon-black">
+  <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/github/license/gtoxlili/coin-tray"></a>
+</p>
 
-行情来自币安公开的现货行情接口，不需要账号或 API key。连接跟随系统代理设置，`binance.com` 连不上时改用
-`binance.vision` 的公开行情域名。
+<p align="center"><a href="README.zh-CN.md">简体中文</a></p>
 
-## 构建
+Coin Tray is a free, open-source macOS menu bar app that shows live prices of Bitcoin, Ethereum and any other Binance spot pair. Pin the pairs you care about to the menu bar, and click one to open a chart that moves with every trade. It reads Binance's public market data, so there is no account, API key or sign-up. The interface is in Simplified Chinese.
 
-需要 macOS 15 或更高、Rust 1.98+、Node.js 与 pnpm。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/chart-dark.png">
+  <img alt="The Coin Tray chart window: BTC/USDT one-minute candlesticks updating live, the 24-hour high, low and volume, and a 20-level order book with buy and sell pressure" src="assets/chart-light.png">
+</picture>
+
+## Features
+
+- Prices in the menu bar: pinned pairs show their last price, optionally with the symbol and the 24-hour change, and the dropdown lists every pair you track
+- A live chart: line or candlesticks at intervals from 1 second to 1 day, updated by every trade and animated by [Liveline](https://github.com/benjitaylor/liveline); drag to scroll back through history, scroll or pinch to zoom
+- The top 20 levels of the order book with buy and sell pressure, and a live list of recent trades
+- Any Binance spot pair, up to 30: search, pin and reorder them
+- Green-up or red-up colors, and launch at login
+- Pauses while the Mac or its display sleeps, and reconnects on its own
+
+## Install
+
+Download `Coin-Tray_<version>_aarch64.dmg` from the [latest release](https://github.com/gtoxlili/coin-tray/releases/latest), open it and drag Coin Tray into Applications. It needs macOS 15 or later on a Mac with Apple silicon. The app is signed with a Developer ID and notarized by Apple, so macOS opens it normally.
+
+Coin Tray lives in the menu bar and has no Dock icon; open its settings from the dropdown menu.
+
+## FAQ
+
+### Do I need a Binance account or an API key?
+
+No. Coin Tray only reads Binance's public spot market data, over WebSocket and REST. It never trades and never asks for a key.
+
+### Which coins can I track?
+
+Any Binance spot trading pair, such as BTC/USDT, ETH/USDT, SOL/USDT or ETH/BTC, up to 30 at a time.
+
+### Does it work where binance.com is blocked?
+
+It follows the macOS system proxy settings (HTTPS and SOCKS). When `binance.com` cannot be reached, it switches to Binance's public market data hosts on `binance.vision`.
+
+### How much memory and CPU does it use?
+
+Sitting in the menu bar with prices streaming, about 19 MB of memory and under 1% of one CPU core. The chart and settings windows exist only while they are open.
+
+### Does it collect any data?
+
+No. There is no telemetry and no account; the app only talks to Binance's market data endpoints, and your settings stay on your Mac.
+
+### Is there an English interface, or a build for Intel Macs?
+
+Not yet. The interface is in Simplified Chinese, and releases are built for Apple silicon.
+
+## Build from source
+
+Requires macOS 15 or later, Rust 1.98+, Node.js and pnpm.
 
 ```sh
 pnpm install
-pnpm tauri dev     # 开发
-pnpm tauri build   # 产物在 src-tauri/target/release/bundle/
+pnpm tauri dev     # run in development
+pnpm tauri build   # the .app and .dmg land in src-tauri/target/release/bundle/
 ```
 
-## 代码结构
+## Project structure
 
-- `src-tauri/src/`：菜单栏、行情连接、窗口与设置存储
-- `src/settings/`：设置窗口
-- `src/chart/`：行情窗口，图表基于 [Liveline](https://github.com/benjitaylor/liveline)
-- `patches/liveline@0.0.7.patch`：给 Liveline 加上拖动和缩放，让它跟随红涨绿跌配色，并在窗口失焦时降低重绘帧率
+- `src-tauri/src/`: the Rust side: the menu bar item, the market data connection, windows and settings
+- `src/settings/`: the settings window
+- `src/chart/`: the chart window, built on [Liveline](https://github.com/benjitaylor/liveline)
+- `patches/liveline@0.0.7.patch`: adds dragging and zooming to Liveline, makes it follow the color setting, and lowers its frame rate while the window is in the background
 
-## 许可
+Built with [Tauri 2](https://tauri.app), Rust, React 19 and Tailwind CSS.
 
-[GPL-3.0](LICENSE)。本项目与币安无关联。
+## License
+
+[GPL-3.0](LICENSE). Coin Tray is not affiliated with Binance. Prices are for reference only and are not financial advice.
