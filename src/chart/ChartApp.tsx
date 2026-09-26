@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ChartCandlestick, ChartLine, ChevronsUpDown, ExternalLink } from "lucide-react";
-import { Liveline, setFrameRate, setTrendColors, type CandlePoint, type LivelinePoint } from "liveline";
+import { setFrameRate, setTrendColors } from "liveline";
 import { cn } from "cn";
 
 import { PillTabs } from "@/components/PillTabs";
@@ -9,19 +9,19 @@ import { Button } from "@/components/ui/button";
 import { api, subscribe, type Coin, type Settings } from "@/lib/api";
 import { direction, fmtCompact, fmtPct, fmtPrice, priceDecimals } from "@/lib/format";
 import {
+  INTERVALS,
+  intervalBySecs,
   Market,
-  WINDOWS,
-  windowBySecs,
   type Book,
-  type ChartData,
   type ChartMode,
   type FeedState,
   type Ticker,
-  type TimeWindow,
   type Trade,
 } from "./market";
 import { bidShare, OrderBook } from "./OrderBook";
 import { readChartColors, sameColors, type ChartColors } from "./palette";
+import { load, store } from "./prefs";
+import { PriceChart, type VisibleStats } from "./PriceChart";
 import { TradeList } from "./TradeList";
 
 type Tab = "book" | "trades";
@@ -31,47 +31,29 @@ const TABS = [
   { value: "trades", label: "成交" },
 ] as const satisfies readonly { value: Tab; label: string }[];
 
-const WINDOW_TABS = WINDOWS.map((w) => ({ value: w.secs as number, label: w.label }));
-
-/** Per-viewer view preferences; storage may be unavailable, which is fine. */
-function load<T>(key: string, parse: (raw: string) => T | undefined, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return (raw !== null && parse(raw)) || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function store(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Not persisted; the default comes back next time.
-  }
-}
+const INTERVAL_TABS = INTERVALS.map((i) => ({ value: i.secs as number, label: i.label }));
 
 const parseModes = (raw: string): Record<string, ChartMode> | undefined => {
   const value: unknown = JSON.parse(raw);
   return value && typeof value === "object" ? (value as Record<string, ChartMode>) : undefined;
 };
 
-const clockFull = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-const clockShort = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-
 export default function ChartApp() {
   const [symbol, setSymbol] = useState(
     () => new URLSearchParams(location.search).get("symbol") ?? "BTCUSDT",
   );
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [windowSecs, setWindowSecs] = useState(() =>
-    load("chart.window", (raw) => WINDOWS.find((w) => String(w.secs) === raw)?.secs, 3600 as number),
+  const [intervalSecs, setIntervalSecs] = useState(() =>
+    load("chart.interval", (raw) => INTERVALS.find((i) => String(i.secs) === raw)?.secs, 60 as number),
   );
-  const [modes, setModes] = useState(() => load("chart.modes", parseModes, {} as Record<string, ChartMode>));
+  const [modes, setModes] = useState(() =>
+    load("chart.modeByInterval", parseModes, {} as Record<string, ChartMode>),
+  );
   const [tab, setTab] = useState<Tab>(() =>
     load("chart.tab", (raw) => TABS.find((t) => t.value === raw)?.value, "book" as Tab),
   );
-  const [chart, setChart] = useState<ChartData | null>(null);
+  const [market, setMarket] = useState<Market | null>(null);
+  const [stats, setStats] = useState<VisibleStats | null>(null);
   const [ticker, setTicker] = useState<Ticker | null>(null);
   const [lastDirection, setLastDirection] = useState<1 | -1 | 0>(0);
   const [book, setBook] = useState<Book | null>(null);
@@ -85,19 +67,16 @@ export default function ChartApp() {
   });
   const [chartKey, setChartKey] = useState(0);
 
-  const market = useRef<Market | null>(null);
-  const currentWindow = useRef<TimeWindow>(windowBySecs(windowSecs));
+  const currentInterval = useRef(intervalSecs);
   const currentTab = useRef(tab);
 
-  const win = windowBySecs(windowSecs);
-  const mode: ChartMode = modes[win.secs] ?? win.mode;
+  const interval = intervalBySecs(intervalSecs);
+  const mode: ChartMode = modes[interval.secs] ?? interval.mode;
   const coin: Coin | undefined = settings?.coins.find((c) => c.symbol === symbol);
   const base = coin?.base ?? symbol;
   const quote = coin?.quote ?? "";
   const decimals = priceDecimals(ticker?.last ?? 0, coin?.decimals ?? null);
   const scheme = settings?.colorScheme ?? "greenUp";
-  const value = chart?.live?.close ?? chart?.candles.at(-1)?.close ?? ticker?.last ?? 0;
-  const line = chart ? linePoints(chart, win.candle) : [];
 
   // Settings, the tray switching pairs, and showing the window.
   useEffect(() => {
@@ -143,24 +122,18 @@ export default function ChartApp() {
   }, [scheme, appearance, colors]);
 
   useEffect(() => {
-    currentWindow.current = win;
-    store("chart.window", String(win.secs));
-    if (market.current) {
-      setChart(null);
-      market.current.setWindow(win);
-    }
-  }, [win]);
+    currentInterval.current = intervalSecs;
+    store("chart.interval", String(intervalSecs));
+  }, [intervalSecs]);
 
-  // One feed per pair; window and tab changes reuse its socket.
+  // One feed per pair; interval and tab changes reuse its socket.
   useEffect(() => {
-    setChart(null);
     setTicker(null);
     setBook(null);
     setTrades([]);
     setLastDirection(0);
     let previousLast: number | null = null;
-    const feedFor = new Market(symbol, currentWindow.current, currentTab.current === "trades", {
-      chart: setChart,
+    const feedFor = new Market(symbol, intervalBySecs(currentInterval.current), currentTab.current === "trades", {
       ticker: (next) => {
         if (previousLast !== null && next.last !== previousLast) {
           setLastDirection(next.last > previousLast ? 1 : -1);
@@ -172,19 +145,16 @@ export default function ChartApp() {
       trades: setTrades,
       state: setFeed,
     });
-    market.current = feedFor;
+    setMarket(feedFor);
     feedFor.start();
-    return () => {
-      feedFor.dispose();
-      market.current = null;
-    };
+    return () => feedFor.dispose();
   }, [symbol]);
 
   useEffect(() => {
     currentTab.current = tab;
     store("chart.tab", tab);
-    market.current?.setTrades(tab === "trades");
-  }, [tab]);
+    market?.setTrades(tab === "trades");
+  }, [market, tab]);
 
   // Full motion while in front; when another app has focus the chart is only
   // glanced at, so redraw less often (it stops entirely once covered).
@@ -205,25 +175,25 @@ export default function ChartApp() {
     const onVisibility = () => {
       window.clearTimeout(timer);
       if (document.visibilityState === "hidden") {
-        timer = window.setTimeout(() => market.current?.suspend(), 60_000);
+        timer = window.setTimeout(() => market?.suspend(), 60_000);
       } else {
-        market.current?.resume();
+        market?.resume();
       }
     };
     document.addEventListener("visibilitychange", onVisibility);
+    // A new pair picked while hidden (the tray, a settings change) starts the clock too.
+    if (document.visibilityState === "hidden") onVisibility();
     return () => {
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [market]);
 
   const setMode = (next: ChartMode) => {
-    const updated = { ...modes, [win.secs]: next };
+    const updated = { ...modes, [interval.secs]: next };
     setModes(updated);
-    store("chart.modes", JSON.stringify(updated));
+    store("chart.modeByInterval", JSON.stringify(updated));
   };
-
-  const formatTime = (t: number) => (win.secs <= 900 ? clockFull : clockShort).format(t * 1000);
 
   return (
     <main className="flex h-screen flex-col select-none">
@@ -256,41 +226,29 @@ export default function ChartApp() {
             ticker={ticker}
             decimals={decimals}
             lastDirection={lastDirection}
-            insight={insight(win, chart, book)}
+            insight={insight(stats, book)}
           />
 
           <div className="flex items-center gap-2 px-4">
-            <PillTabs label="时间范围" value={win.secs} options={WINDOW_TABS} onChange={setWindowSecs} />
+            <PillTabs label="K 线周期" value={interval.secs} options={INTERVAL_TABS} onChange={setIntervalSecs} />
             <span className="flex-1" />
             <ModeToggle mode={mode} onChange={setMode} />
           </div>
 
-          <div className="relative mx-4 min-h-0 flex-1 overflow-hidden rounded-2xl border bg-white/45 dark:bg-white/3">
-            <Liveline
-              key={chartKey}
-              mode="candle"
-              data={line}
-              value={value}
-              candles={chart?.candles ?? []}
-              candleWidth={win.candle}
-              liveCandle={chart?.live ?? undefined}
-              lineMode={mode === "line"}
-              lineData={line}
-              lineValue={value}
-              window={win.secs}
-              theme={colors.dark ? "dark" : "light"}
-              color={colors.accent}
-              loading={chart === null}
-              formatValue={(v) => fmtPrice(v, decimals)}
-              formatTime={formatTime}
-              padding={{ top: 16, bottom: 28, left: 14 }}
+          {market ? (
+            <PriceChart
+              market={market}
+              interval={interval}
+              mode={mode}
+              colors={colors}
+              paletteKey={chartKey}
+              decimals={decimals}
+              offline={feed === "offline"}
+              onStats={setStats}
             />
-            {chart === null && feed === "offline" && (
-              <p className="absolute inset-x-0 bottom-3 text-center text-xs text-muted-foreground">
-                无法连接币安，正在重试…
-              </p>
-            )}
-          </div>
+          ) : (
+            <div className="mx-4 min-h-0 flex-1 rounded-2xl border bg-white/45 dark:bg-white/3" />
+          )}
 
           <Stats ticker={ticker} decimals={decimals} base={base} quote={quote} />
         </section>
@@ -317,40 +275,11 @@ export default function ChartApp() {
   );
 }
 
-const withLive = (chart: ChartData): CandlePoint[] =>
-  chart.live ? [...chart.candles, chart.live] : chart.candles;
-
-/**
- * The line view: the first open, each candle's close at the end of its
- * bucket, then the live price now. Same density as the candles, so the
- * line/candle morph lines up and quiet markets don't draw as stairs.
- */
-function linePoints(chart: ChartData, candle: number): LivelinePoint[] {
-  const all = withLive(chart);
-  if (all.length === 0) return [];
-  const points: LivelinePoint[] = [{ time: all[0].time, value: all[0].open }];
-  for (const c of chart.candles) points.push({ time: c.time + candle, value: c.close });
-  const live = chart.live;
-  if (live) points.push({ time: Math.min(Date.now() / 1000, live.time + candle), value: live.close });
-  return points;
-}
-
-/** One readable line about the visible window and the order book. */
-function insight(win: TimeWindow, chart: ChartData | null, book: Book | null): string | null {
-  if (!chart) return null;
-  const start = Date.now() / 1000 - win.secs;
-  const visible = withLive(chart).filter((c) => c.time + win.candle > start);
-  if (visible.length < 2) return null;
-  const first = visible[0].open;
-  const last = visible[visible.length - 1].close;
-  let high = -Infinity;
-  let low = Infinity;
-  for (const c of visible) {
-    high = Math.max(high, c.high);
-    low = Math.min(low, c.low);
-  }
-  const parts = [`近${win.label} ${fmtPct(((last - first) / first) * 100)}`, `振幅 ${(((high - low) / low) * 100).toFixed(2)}%`];
-  const share = bidShare(book);
+/** One readable line about the stretch on screen, plus order book pressure while live. */
+function insight(stats: VisibleStats | null, book: Book | null): string | null {
+  if (!stats) return null;
+  const parts = [`${stats.label} ${fmtPct(stats.changePct)}`, `振幅 ${stats.amplitudePct.toFixed(2)}%`];
+  const share = stats.live ? bidShare(book) : null;
   if (share !== null) {
     parts.push(share >= 55 ? `买盘偏强 ${share.toFixed(0)}%` : share <= 45 ? `卖盘偏强 ${(100 - share).toFixed(0)}%` : "买卖均衡");
   }

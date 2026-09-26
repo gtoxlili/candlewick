@@ -1,8 +1,47 @@
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..d5f2c087c1e818ba284c262b6fcf0a2148aa1f04 100644
+index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..35fec64eb3e19981380833ada2e1fb0eaad18f22 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -129,4 +129,16 @@ interface LivelineTransitionProps {
+@@ -46,6 +46,27 @@ interface LivelineSeries {
+     color: string;
+     label?: string;
+ }
++/**
++ * coin-tray patch: pans and zooms a candle chart. Pass one object and change
++ * its fields; the chart reads them every frame, so gestures need no re-render.
++ */
++interface LivelineView {
++    /** Visible seconds to ease toward. */
++    span: number;
++    /** Epoch seconds at the right edge to ease toward; null follows the live edge. */
++    end: number | null;
++    /** Jump to `span`/`end` on the next frame instead of easing (cleared after use). */
++    snap?: boolean;
++    /** Set by the chart every frame: the edges drawn, in epoch seconds. */
++    left?: number;
++    right?: number;
++    /** Set by the chart every frame: the plot area's left x and width, in CSS pixels. */
++    plotX?: number;
++    plotW?: number;
++    /** Set by the chart every frame: its clock, and the gap after the live edge as a share of the span. */
++    now?: number;
++    buffer?: number;
++}
+ interface LivelineProps {
+     data: LivelinePoint[];
+     value: number;
+@@ -92,6 +113,10 @@ interface LivelineProps {
+     onModeChange?: (mode: 'line' | 'candle') => void;
+     onSeriesToggle?: (id: string, visible: boolean) => void;
+     seriesToggleCompact?: boolean;
++    /** coin-tray patch: see LivelineView (candle mode). */
++    view?: LivelineView;
++    /** coin-tray patch: formats the hovered candle's time (defaults to formatTime). */
++    formatHoverTime?: (t: number) => string;
+     className?: string;
+     style?: CSSProperties;
+ }
+@@ -129,4 +154,16 @@ interface LivelineTransitionProps {
   */
  declare function LivelineTransition({ active, children, duration, className, style, }: LivelineTransitionProps): react_jsx_runtime.JSX.Element;
  
@@ -19,9 +58,9 @@ index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..d5f2c087c1e818ba284c262b6fcf0a21
 + */
 +declare function setFrameRate(fps: number): void;
 +
-+export { type BadgeVariant, type CandlePoint, type DegenOptions, type HoverPoint, Liveline, type LivelinePoint, type LivelineProps, type LivelineSeries, LivelineTransition, type LivelineTransitionProps, setFrameRate, setTrendColors, type Momentum, type OrderbookData, type Padding, type ReferenceLine, type ThemeMode, type WindowOption, type WindowStyle };
++export { type BadgeVariant, type CandlePoint, type DegenOptions, type HoverPoint, Liveline, type LivelinePoint, type LivelineProps, type LivelineSeries, LivelineTransition, type LivelineView, type LivelineTransitionProps, setFrameRate, setTrendColors, type Momentum, type OrderbookData, type Padding, type ReferenceLine, type ThemeMode, type WindowOption, type WindowStyle };
 diff --git a/dist/index.js b/dist/index.js
-index fd0506272e9a54432a0882c3a389ee74302e4718..2db9cc6a3176b078b8a43eeeaf74a902f820b532 100644
+index fd0506272e9a54432a0882c3a389ee74302e4718..68863a5d557b3d2c6a34aab3f5f709cf0a036ca4 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -16,6 +16,17 @@ function parseColorRgb(color) {
@@ -58,7 +97,65 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..2db9cc6a3176b078b8a43eeeaf74a902
      glowFlat: rgba(r, g, b, 0.12),
      // Badge
      badgeOuterBg: isDark ? "rgba(40, 40, 40, 0.95)" : "rgba(255, 255, 255, 0.95)",
-@@ -1003,7 +1014,7 @@ function drawOrderbook(ctx, layout, palette, orderbook, dt, state, swingMagnitud
+@@ -388,7 +399,7 @@ function renderCurve(ctx, layout, palette, pts, showFill, lineAlpha = 1, fillAlp
+   ctx.stroke();
+   ctx.globalAlpha = baseAlpha;
+ }
+-function drawLine(ctx, layout, palette, visible, smoothValue, now, showFill, scrubX, scrubAmount = 0, chartReveal = 1, now_ms = 0, colorBlend = 1, skipDashLine = false, fillScale = 1) {
++function drawLine(ctx, layout, palette, visible, smoothValue, now, showFill, scrubX, scrubAmount = 0, chartReveal = 1, now_ms = 0, colorBlend = 1, skipDashLine = false, fillScale = 1, liveOffscreen = false) {
+   const { h, pad, toX, toY, chartW, chartH } = layout;
+   const incomingAlpha = ctx.globalAlpha;
+   const yMin = pad.top;
+@@ -404,15 +415,19 @@ function drawLine(ctx, layout, palette, visible, smoothValue, now, showFill, scr
+     const baseY = loadingY(t, centerY, amplitude, scroll);
+     return baseY + (rawY - baseY) * localReveal;
+   } : (rawY, _x) => rawY;
++  // coin-tray patch: with the live tip off screen (panned into history) the
++  // last visible point keeps its own value and no tip is appended.
+   const pts = visible.map((p, i) => {
+     const x = toX(p.time);
+-    const y = i === visible.length - 1 ? morphY(clampY(toY(smoothValue)), x) : morphY(clampY(toY(p.value)), x);
++    const y = i === visible.length - 1 && !liveOffscreen ? morphY(clampY(toY(smoothValue)), x) : morphY(clampY(toY(p.value)), x);
+     return [x, y];
+   });
+-  const liveTipX = toX(now);
+-  const fullRightX = pad.left + chartW;
+-  const tipX = chartReveal < 1 ? liveTipX + (fullRightX - liveTipX) * (1 - chartReveal) : liveTipX;
+-  pts.push([tipX, morphY(clampY(toY(smoothValue)), tipX)]);
++  if (!liveOffscreen) {
++    const liveTipX = toX(now);
++    const fullRightX = pad.left + chartW;
++    const tipX = chartReveal < 1 ? liveTipX + (fullRightX - liveTipX) * (1 - chartReveal) : liveTipX;
++    pts.push([tipX, morphY(clampY(toY(smoothValue)), tipX)]);
++  }
+   if (pts.length < 2) return;
+   let lineAlpha = 1;
+   let fillAlpha = fillScale;
+@@ -446,7 +461,8 @@ function drawLine(ctx, layout, palette, visible, smoothValue, now, showFill, scr
+     renderCurve(ctx, layout, palette, pts, showFill, lineAlpha, fillAlpha, strokeColor);
+   }
+   ctx.restore();
+-  if (!skipDashLine) {
++  const liveOutOfRange = liveOffscreen && (toY(smoothValue) < pad.top || toY(smoothValue) > h - pad.bottom);
++  if (!skipDashLine && !liveOutOfRange) {
+     const realCurrentY = Math.max(pad.top, Math.min(h - pad.bottom, toY(smoothValue)));
+     const currentY = chartReveal < 1 ? centerY + (realCurrentY - centerY) * chartReveal : realCurrentY;
+     ctx.setLineDash([4, 4]);
+@@ -801,9 +817,10 @@ function drawTimeAxis(ctx, layout, palette, windowSecs, targetWindowSecs, format
+   const useLocalDays = interval >= 86400;
+   let firstTime;
+   if (useLocalDays) {
+-    const d = new Date((leftEdge - interval) * 1e3);
+-    d.setHours(0, 0, 0, 0);
+-    firstTime = d.getTime() / 1e3;
++    // coin-tray patch: step from one fixed local midnight (a Monday), so
++    // multi-day labels keep their dates while the view is dragged.
++    const anchor = new Date(2024, 0, 1).getTime() / 1e3;
++    firstTime = anchor + Math.floor((leftEdge - interval - anchor) / interval) * interval;
+   } else {
+     firstTime = Math.ceil((leftEdge - interval) / interval) * interval;
+   }
+@@ -1003,7 +1020,7 @@ function drawOrderbook(ctx, layout, palette, orderbook, dt, state, swingMagnitud
      const yRatio = (l.y - topY) / chartH;
      const fadeOut = yRatio < 0.45 ? yRatio / 0.45 : 1;
      const colorStrength = l.intensity * fadeIn * fadeOut;
@@ -67,7 +164,105 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..2db9cc6a3176b078b8a43eeeaf74a902
      const fillColor = mixColor(baseColor, bg, 1 - colorStrength);
      ctx.strokeStyle = outlineColor;
      ctx.lineWidth = 4;
-@@ -2471,6 +2482,10 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+@@ -1723,8 +1740,9 @@ function drawCandleFrame(ctx, layout, palette, opts) {
+       opts.now_ms,
+       colorBlend,
+       !fullLineMode,
+-      opts.lineModeProg
++      opts.lineModeProg,
+       // fillScale — fill fades smoothly with line mode transition
++      layout.toX(opts.now) > pad.left + chartW + 1
+     );
+     ctx.restore();
+   }
+@@ -1822,7 +1840,7 @@ function drawCandleFrame(ctx, layout, palette, opts) {
+     }
+     ctx.restore();
+   }
+-  if (lp > 0.5 && linePts && linePts.length > 0 && reveal > 0.3) {
++  if (lp > 0.5 && linePts && linePts.length > 0 && reveal > 0.3 && linePts[linePts.length - 1][0] <= pad.left + chartW + 1) {
+     const lastPt = linePts[linePts.length - 1];
+     const dotAlpha = (lp - 0.5) * 2 * ((reveal - 0.3) / 0.7);
+     const showPulse = lp > 0.8 && reveal > 0.6;
+@@ -1865,9 +1883,9 @@ function drawCandleFrame(ctx, layout, palette, opts) {
+         palette,
+         opts.hoverX,
+         opts.hoveredCandle.close,
+-        opts.hoverTime ?? 0,
++        opts.hoveredCandle.time,
+         opts.formatValue,
+-        opts.formatTime,
++        opts.formatHoverTime ?? opts.formatTime,
+         opts.scrubAmount
+       );
+     } else {
+@@ -1877,9 +1895,9 @@ function drawCandleFrame(ctx, layout, palette, opts) {
+         palette,
+         opts.hoverX,
+         opts.hoveredCandle,
+-        opts.hoverTime ?? 0,
++        opts.hoveredCandle.time,
+         opts.formatValue,
+-        opts.formatTime,
++        opts.formatHoverTime ?? opts.formatTime,
+         opts.scrubAmount
+       );
+     }
+@@ -1981,6 +1999,45 @@ var LINE_SNAP_THRESHOLD = 1e-3;
+ var RANGE_LERP_SPEED = 0.15;
+ var RANGE_ADAPTIVE_BOOST = 0.2;
+ var CANDLE_BUFFER_NO_BADGE = 0.015;
++// coin-tray patch: pan and zoom through the `view` prop. The app writes the
++// target span and right edge; each frame eases toward them (or jumps, for a
++// drag that has to stay under the pointer) and reports the drawn edges back.
++var VIEW_EASE = 0.2;
++function updateView(view, ve, now, buffer, plotW, noMotion, dt) {
++  if (!ve.inited) {
++    ve.span = view.span;
++    ve.end = view.end ?? now + view.span * buffer;
++    ve.lag = 0;
++    ve.panned = view.end != null;
++    ve.inited = true;
++  }
++  const snap = view.snap || noMotion;
++  view.snap = false;
++  if (snap) {
++    ve.span = view.span;
++  } else {
++    // In log space, so zooming in and out move at the same pace.
++    const target = Math.log(view.span);
++    const next = lerp(Math.log(ve.span), target, VIEW_EASE, dt);
++    ve.span = Math.abs(next - target) < 1e-4 ? view.span : Math.exp(next);
++  }
++  const settle = 0.5 * ve.span / Math.max(plotW, 1);
++  const liveEnd = now + ve.span * buffer;
++  if (view.end == null) {
++    // Back from history: close the gap to the moving live edge smoothly.
++    if (ve.panned) {
++      ve.lag = Math.max(0, liveEnd - ve.end);
++      ve.panned = false;
++    }
++    ve.lag = snap ? 0 : lerp(ve.lag, 0, VIEW_EASE, dt);
++    if (ve.lag < settle) ve.lag = 0;
++    ve.end = liveEnd - ve.lag;
++  } else {
++    ve.panned = true;
++    ve.end = snap ? view.end : lerp(ve.end, view.end, VIEW_EASE, dt);
++    if (Math.abs(ve.end - view.end) < settle) ve.end = view.end;
++  }
++}
+ function computeAdaptiveSpeed(value, displayValue, displayMin, displayMax, lerpSpeed, noMotion) {
+   const valGap = Math.abs(value - displayValue);
+   const prevRange = displayMax - displayMin || 1;
+@@ -2370,6 +2427,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+   const lastLiveRef = useRef(null);
+   const lastLineDataStashRef = useRef([]);
+   const lastLineValueStashRef = useRef(void 0);
++  const viewEaseRef = useRef({ inited: false, span: 0, end: 0, lag: 0, panned: false });
+   useEffect(() => {
+     const container = containerRef.current;
+     if (!container) return;
+@@ -2471,6 +2529,10 @@ function useLivelineEngine(canvasRef, containerRef, config) {
        rafRef.current = 0;
        return;
      }
@@ -78,7 +273,7 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..2db9cc6a3176b078b8a43eeeaf74a902
      const canvas = canvasRef.current;
      const { w, h } = sizeRef.current;
      if (!canvas || w === 0 || h === 0) {
-@@ -2480,7 +2495,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+@@ -2480,7 +2542,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
      const cfg = configRef.current;
      const dpr = getDpr();
      const now_ms = performance.now();
@@ -87,7 +282,140 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..2db9cc6a3176b078b8a43eeeaf74a902
      lastFrameRef.current = now_ms;
      const targetW = Math.round(w * dpr);
      const targetH = Math.round(h * dpr);
-@@ -3463,7 +3478,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+@@ -2674,8 +2736,10 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+         morphT = 0;
+         cwt.rangeFromMin = displayMinRef.current;
+         cwt.rangeFromMax = displayMaxRef.current;
+-        const curWindow = displayWindowRef.current;
+-        const re = now + curWindow * candleBuffer;
++        const ve = viewEaseRef.current;
++        const viewed = cfg.view && ve.inited;
++        const curWindow = viewed ? ve.span : displayWindowRef.current;
++        const re = viewed ? ve.end : now + curWindow * candleBuffer;
+         const le = re - curWindow;
+         const targetVis = [];
+         for (const c of effectiveCandles) {
+@@ -2715,25 +2779,44 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+       }
+       lineDensityProgRef.current = lineDensityProg;
+       const transition = windowTransitionRef.current;
+-      const windowResult = updateCandleWindowTransition(
+-        cfg.windowSecs,
+-        transition,
+-        displayWindowRef.current,
+-        displayMinRef.current,
+-        displayMaxRef.current,
+-        now_ms,
+-        now,
+-        effectiveCandles,
+-        rawLive,
+-        candleWidthSecs,
+-        candleBuffer
+-      );
+-      displayWindowRef.current = windowResult.windowSecs;
+-      const windowSecs = windowResult.windowSecs;
+-      const windowTransProgress = windowResult.windowTransProgress;
++      const view = cfg.view;
++      let windowSecs;
++      let windowTransProgress = 0;
++      let rightEdge;
++      if (view) {
++        const ve = viewEaseRef.current;
++        updateView(view, ve, now, candleBuffer, w - pad.left - pad.right, noMotion, dt);
++        windowSecs = ve.span;
++        rightEdge = ve.end;
++      } else {
++        const windowResult = updateCandleWindowTransition(
++          cfg.windowSecs,
++          transition,
++          displayWindowRef.current,
++          displayMinRef.current,
++          displayMaxRef.current,
++          now_ms,
++          now,
++          effectiveCandles,
++          rawLive,
++          candleWidthSecs,
++          candleBuffer
++        );
++        windowSecs = windowResult.windowSecs;
++        windowTransProgress = windowResult.windowTransProgress;
++        rightEdge = now + windowSecs * candleBuffer;
++      }
++      displayWindowRef.current = windowSecs;
+       const isWindowTransitioning = transition.startMs > 0;
+-      const rightEdge = now + windowSecs * candleBuffer;
+       const leftEdge = rightEdge - windowSecs;
++      if (view) {
++        view.left = leftEdge;
++        view.right = rightEdge;
++        view.plotX = pad.left;
++        view.plotW = w - pad.left - pad.right;
++        view.now = now;
++        view.buffer = candleBuffer;
++      }
+       let smoothLive;
+       if (rawLive) {
+         const prev = displayCandleRef.current;
+@@ -2866,7 +2949,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+         toX: (t) => pad.left + (t - leftEdge) / (rightEdge - leftEdge) * chartW,
+         toY: (v) => pad.top + (1 - (v - minVal) / valRange) * chartH
+       };
+-      const hoverPx = hoverXRef.current;
++      const hoverPx = cfg.scrub ? hoverXRef.current : null;
+       let hoveredCandle = null;
+       let isActiveHover = false;
+       if (hoverPx !== null && hoverPx >= pad.left && hoverPx <= w - pad.right) {
+@@ -2926,8 +3009,15 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+         if (drawLive) closeRefs.push({ t: now, v: drawLive.close });
+         lineVisible = [];
+         let refIdx = 0;
+-        for (const pt of effectiveLineData) {
+-          if (pt.time < leftEdge || pt.time > rightEdge) continue;
++        // coin-tray patch: start from the last point before the left edge, so
++        // sparse data (a point per candle) still enters from the edge.
++        let start = 0;
++        while (start < effectiveLineData.length && effectiveLineData[start].time < leftEdge) start++;
++        for (let i = Math.max(0, start - 1); i < effectiveLineData.length; i++) {
++          const pt = effectiveLineData[i];
++          // ...and end on the first point past the right edge, so a view
++          // panned into history is left through that edge too.
++          const beyond = pt.time > rightEdge;
+           while (refIdx < closeRefs.length - 2 && closeRefs[refIdx + 1].t < pt.time) refIdx++;
+           let interpClose;
+           if (closeRefs.length === 0) {
+@@ -2945,6 +3035,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+           }
+           const blended = interpClose + (pt.value - interpClose) * lineDensityProg;
+           lineVisible.push({ time: pt.time, value: blended });
++          if (beyond) break;
+         }
+         const smoothTick = lineTickSmoothInitedRef.current ? lineTickSmoothRef.current : effectiveLineValue ?? effectiveLineData[effectiveLineData.length - 1].value;
+         lineSmoothValue = lineSmoothCloseRef.current + (smoothTick - lineSmoothCloseRef.current) * lineDensityProg;
+@@ -2992,10 +3083,11 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+         hoveredCandle: drawHoverCandle,
+         formatValue: cfg.formatValue,
+         formatTime: cfg.formatTime,
++        formatHoverTime: cfg.formatHoverTime,
+         gridState: gridStateRef.current,
+         timeAxisState: timeAxisStateRef.current,
+         dt: pausedDt,
+-        targetWindowSecs: cfg.windowSecs,
++        targetWindowSecs: view ? view.span : cfg.windowSecs,
+         tooltipY: cfg.tooltipY,
+         tooltipOutline: cfg.tooltipOutline,
+         lineVisible,
+@@ -3009,7 +3101,8 @@ function useLivelineEngine(canvasRef, containerRef, config) {
+         showEmptyOverlay: !(cfg.loading ?? false) && loadingAlpha < 0.01
+       });
+       if (badgeRef.current) {
+-        if (lineModeProg > 0.5 && cfg.showBadge) {
++        const tipOnScreen = layout.toX(now) <= pad.left + chartW + 1;
++        if (lineModeProg > 0.5 && cfg.showBadge && tipOnScreen) {
+           const momentum = detectMomentum(lineVisible);
+           badgeYRef.current = updateBadgeDOM(
+             badgeRef.current,
+@@ -3463,7 +3556,7 @@ function useLivelineEngine(canvasRef, containerRef, config) {
          const displayVal = cfg.valueMomentumColor ? Math.abs(smoothValue) : smoothValue;
          valEl.textContent = cfg.formatValue(displayVal);
          if (cfg.valueMomentumColor) {
@@ -96,7 +424,32 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..2db9cc6a3176b078b8a43eeeaf74a902
            if (mc) valEl.style.color = mc;
            else valEl.style.removeProperty("color");
          }
-@@ -4008,7 +4023,22 @@ function LivelineTransition({
+@@ -3533,6 +3626,8 @@ function Liveline({
+   onSeriesToggle,
+   seriesToggleCompact = false,
+   lineWidth,
++  view,
++  formatHoverTime,
+   className,
+   style
+ }) {
+@@ -3668,9 +3763,13 @@ function Liveline({
+     lineValue,
+     multiSeries,
+     isMultiSeries,
+-    hiddenSeriesIds: hiddenSeries
++    hiddenSeriesIds: hiddenSeries,
++    view,
++    formatHoverTime
+   });
+-  const cursorStyle = scrub ? cursor : "default";
++  // coin-tray patch: an explicit cursor (such as "grabbing" mid-drag) also
++  // applies while scrubbing is off.
++  const cursorStyle = scrub || cursor !== "crosshair" ? cursor : "default";
+   const activeColor = isDark ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.55)";
+   const inactiveColor = isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.22)";
+   return /* @__PURE__ */ jsxs(Fragment, { children: [
+@@ -4008,7 +4107,22 @@ function LivelineTransition({
      );
    }) });
  }

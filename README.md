@@ -3,7 +3,7 @@
 在 macOS 菜单栏里看币安现货的实时价格。
 
 - 菜单栏直接显示选中币种的价格，可附带币种名称和 24 小时涨跌幅
-- 下拉菜单列出全部币种，点其中一个打开行情窗口：折线或 K 线，时间范围 5 分钟到 1 天，另有 20 档盘口和最近成交
+- 下拉菜单列出全部币种，点其中一个打开行情窗口：折线或 K 线随逐笔成交实时变化，周期从 1 秒到 1 天，可拖动回看历史、缩放，另有 20 档盘口和最近成交
 - 设置里搜索添加交易对，最多 30 个，可切换红涨绿跌和登录时启动
 - Mac 睡眠、显示器休眠或切换用户时暂停行情连接，恢复后自动重连
 
@@ -27,7 +27,7 @@ pnpm tauri build   # 产物在 src-tauri/target/release/bundle/
 - `src-tauri/src/`：菜单栏、行情连接、窗口与设置存储
 - `src/settings/`：设置窗口
 - `src/chart/`：行情窗口，图表基于 [Liveline](https://github.com/benjitaylor/liveline)
-- `patches/liveline@0.0.7.patch`：让 Liveline 跟随红涨绿跌配色，并在窗口失焦时降低重绘帧率
+- `patches/liveline@0.0.7.patch`：给 Liveline 加上拖动和缩放，让它跟随红涨绿跌配色，并在窗口失焦时降低重绘帧率
 
 ## 许可
 

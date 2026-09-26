@@ -193,8 +193,8 @@ fn open(app: &AppHandle, spec: Spec) -> tauri::Result<()> {
         // Vibrancy shows through the transparent window and webview.
         .transparent(true)
         .effects(effects)
-        // The webview only ever shows the app's own pages; links out (such
-        // as the chart's TradingView attribution) open in the browser.
+        // The webview only ever shows the app's own pages; links out open
+        // in the browser.
         .on_navigation(|url| {
             let internal = is_app_url(url);
             if !internal {
