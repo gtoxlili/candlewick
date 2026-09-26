@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import {
   api,
   instrumentId,
+  instrumentLabel,
   subscribe,
   type Book,
   type ChartMode,
@@ -81,8 +82,8 @@ export default function ChartApp() {
   const interval = pickInterval(chartSpec?.intervals ?? [], intervalSecs);
   const mode: ChartMode = (interval && modes[interval.secs]) ?? interval?.mode ?? "candle";
   const instrument: Instrument | undefined = settings?.watchlist.find((i) => instrumentId(i) === id);
-  const base = instrument?.base ?? "";
-  const quote = instrument?.quote ?? "";
+  const volumeUnit = chartSpec?.volumeUnit ?? "";
+  const priceUnit = chartSpec?.turnoverUnit ?? "";
   const decimals = priceDecimals(stats?.last ?? 0, instrument?.decimals ?? null);
   const scheme = settings?.colorScheme ?? "greenUp";
 
@@ -227,9 +228,8 @@ export default function ChartApp() {
       <TitleBar className={cn(TRAFFIC_LIGHTS_INSET, "gap-2 pr-2")}>
         <InstrumentPicker
           watchlist={settings?.watchlist ?? []}
+          instrument={instrument}
           id={id}
-          base={base}
-          quote={quote}
           onPick={(next) => void api.openChart(next)}
         />
         <span className="flex-1" />
@@ -280,6 +280,7 @@ export default function ChartApp() {
               decimals={decimals}
               offline={feed === "offline"}
               source={chartSpec.source}
+              dayOffset={chartSpec.dayOffset}
               onStats={setVisible}
             />
           ) : (
@@ -299,11 +300,11 @@ export default function ChartApp() {
               last={stats?.last ?? null}
               lastDirection={lastDirection}
               decimals={decimals}
-              base={base}
-              quote={quote}
+              base={volumeUnit}
+              quote={priceUnit}
             />
           ) : (
-            <TradeList trades={trades} decimals={decimals} base={base} quote={quote} />
+            <TradeList trades={trades} decimals={decimals} base={volumeUnit} quote={priceUnit} />
           )}
         </aside>
       </div>
@@ -423,30 +424,37 @@ function LiveBadge(props: { state: FeedState }) {
 /** Instrument name that opens the native pop-up menu of the watchlist. */
 function InstrumentPicker(props: {
   watchlist: Instrument[];
+  instrument: Instrument | undefined;
   id: string;
-  base: string;
-  quote: string;
   onPick: (id: string) => void;
 }) {
+  const label = props.instrument && instrumentLabel(props.instrument);
   return (
     <label className="relative -ml-1.5 flex h-6 items-center gap-1 rounded-full px-2 hover:bg-accent">
       <span className="text-sm">
-        <span className="font-semibold">{props.base}</span>
-        {props.quote && <span className="text-muted-foreground">/{props.quote}</span>}
+        <span className="font-semibold">{label?.name}</span>
+        {label?.detail && (
+          <span className="text-muted-foreground">
+            {props.instrument?.provider === "binance" ? label.detail : ` ${label.detail}`}
+          </span>
+        )}
       </span>
       {props.watchlist.length > 1 && <ChevronsUpDown className="size-3 text-muted-foreground" />}
       {props.watchlist.length > 1 && (
         <select
-          aria-label="切换交易对"
+          aria-label="切换"
           className="absolute inset-0 appearance-none opacity-0"
           value={props.id}
           onChange={(e) => props.onPick(e.target.value)}
         >
-          {props.watchlist.map((i) => (
-            <option key={instrumentId(i)} value={instrumentId(i)}>
-              {i.base}/{i.quote}
-            </option>
-          ))}
+          {props.watchlist.map((i) => {
+            const { name, detail } = instrumentLabel(i);
+            return (
+              <option key={instrumentId(i)} value={instrumentId(i)}>
+                {i.provider === "binance" ? `${name}${detail}` : `${name} ${detail}`.trim()}
+              </option>
+            );
+          })}
         </select>
       )}
     </label>

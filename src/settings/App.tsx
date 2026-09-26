@@ -10,10 +10,14 @@ import { Switch } from "@/components/ui/switch";
 import {
   api,
   instrumentId,
+  instrumentLabel,
+  marketLabel,
   MAX_INSTRUMENTS,
   subscribe,
   type Candidate,
   type Instrument,
+  type Longbridge,
+  type LongbridgeKeys,
   type Search as SearchResults,
   type Settings,
   type Status,
@@ -99,15 +103,17 @@ export default function App() {
             onChange={(watchlist) => void update({ ...settings, watchlist })}
           />
 
+          <LongbridgeSection />
+
           <Section title="显示">
             <Group>
               <SwitchRow
-                label="菜单栏显示币种名称"
+                label="菜单栏显示名称"
                 checked={settings.showSymbol}
                 onChange={(showSymbol) => void update({ ...settings, showSymbol })}
               />
               <SwitchRow
-                label="菜单栏显示 24 小时涨跌幅"
+                label="菜单栏显示涨跌幅"
                 hint="价格与涨跌幅分上下两排显示"
                 checked={settings.showChange}
                 onChange={(showChange) => void update({ ...settings, showChange })}
@@ -152,50 +158,46 @@ export default function App() {
           )}
         />
         <span className="truncate">{status?.label ?? "—"}</span>
-        <span className="ml-auto shrink-0">数据来自币安现货</span>
       </footer>
     </main>
   );
 }
 
 function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist: Instrument[]) => void }) {
-  const { watchlist: coins, onChange } = props;
+  const { watchlist, onChange } = props;
   const move = (index: number, delta: number) => {
-    const next = [...coins];
-    const [coin] = next.splice(index, 1);
-    next.splice(index + delta, 0, coin);
+    const next = [...watchlist];
+    const [moved] = next.splice(index, 1);
+    next.splice(index + delta, 0, moved);
     onChange(next);
   };
   return (
     <Section
-      title="币种"
-      footnote="菜单栏只显示一个币种，打开哪个的「菜单栏」就显示哪个；点下拉菜单里的币种可查看 K 线与盘口。"
+      title="自选"
+      footnote="菜单栏只显示一个，打开哪个的「菜单栏」就显示哪个；点下拉菜单里的名称可查看 K 线与盘口。"
     >
       <InstrumentSearch
-        existing={coins}
-        full={coins.length >= MAX_INSTRUMENTS}
-        onAdd={(coin) => onChange([...coins, { ...coin, pinned: coins.length === 0 }])}
+        existing={watchlist}
+        full={watchlist.length >= MAX_INSTRUMENTS}
+        onAdd={(added) => onChange([...watchlist, { ...added, pinned: watchlist.length === 0 }])}
       />
       <Group>
-        {coins.length === 0 ? (
-          <p className="px-3.5 py-6 text-center text-muted-foreground">还没有币种，在上方搜索并添加</p>
+        {watchlist.length === 0 ? (
+          <p className="px-3.5 py-6 text-center text-muted-foreground">还没有自选，在上方搜索并添加</p>
         ) : (
-          coins.map((coin, index) => (
-            <div key={instrumentId(coin)} className="flex h-10 items-center gap-0.5 pr-1.5 pl-3.5">
-              <span className="min-w-0 flex-1 truncate">
-                <span className="font-medium">{coin.base}</span>
-                <span className="text-muted-foreground">/{coin.quote}</span>
-              </span>
+          watchlist.map((item, index) => (
+            <div key={instrumentId(item)} className="flex h-10 items-center gap-0.5 pr-1.5 pl-3.5">
+              <InstrumentName instrument={item} className="min-w-0 flex-1 truncate" />
               <Label className="mr-2 gap-2 text-xs font-normal text-muted-foreground">
                 菜单栏
                 <Switch
                   size="sm"
-                  checked={coin.pinned}
+                  checked={item.pinned}
                   onCheckedChange={(pinned) =>
                     // One pair in the menu bar: switching one on switches the others off.
                     onChange(
-                      coins.map((c) =>
-                        c === coin ? { ...c, pinned } : pinned ? { ...c, pinned: false } : c,
+                      watchlist.map((c) =>
+                        c === item ? { ...c, pinned } : pinned ? { ...c, pinned: false } : c,
                       ),
                     )
                   }
@@ -216,7 +218,7 @@ function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist
                 size="icon-sm"
                 aria-label="下移"
                 className="text-muted-foreground"
-                disabled={index === coins.length - 1}
+                disabled={index === watchlist.length - 1}
                 onClick={() => move(index, 1)}
               >
                 <ChevronDown />
@@ -224,9 +226,9 @@ function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label={`删除 ${coin.base}/${coin.quote}`}
+                aria-label={`删除 ${instrumentLabel(item).name}`}
                 className="text-muted-foreground hover:text-destructive"
-                onClick={() => onChange(coins.filter((c) => c !== coin))}
+                onClick={() => onChange(watchlist.filter((c) => c !== item))}
               >
                 <X />
               </Button>
@@ -279,6 +281,23 @@ function SwitchRow(props: {
   );
 }
 
+/** "BTC/USDT", "AAPL 苹果 美股", "腾讯控股 700 港股": the name, then dimmed details. */
+function InstrumentName(props: { instrument: Instrument; className?: string; dim?: string }) {
+  const { name, detail } = instrumentLabel(props.instrument);
+  const market = marketLabel(props.instrument);
+  const dim = props.dim ?? "text-muted-foreground";
+  return (
+    <span className={props.className}>
+      <span className="font-medium">{name}</span>
+      {detail && <span className={dim}>{props.instrument.provider === "binance" ? detail : ` ${detail}`}</span>}
+      {market && <span className={cn("ml-1.5 text-xs", dim)}>{market}</span>}
+    </span>
+  );
+}
+
+/** Searching stocks goes over the network, so it waits for a pause in typing. */
+const SEARCH_DELAY_MS = 200;
+
 function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd: (instrument: Instrument) => void }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults | null>(null);
@@ -287,15 +306,21 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
   const [active, setActive] = useState(-1);
   /** Only the latest search may show its results. */
   const latest = useRef(0);
+  const timer = useRef<number | undefined>(undefined);
 
-  const run = (text: string) => {
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const run = (text: string, delay: number) => {
     const seq = ++latest.current;
+    window.clearTimeout(timer.current);
     setLoading(true);
-    api
-      .search(text)
-      .then((found) => seq === latest.current && setResults(found))
-      .catch(() => seq === latest.current && setResults({ candidates: [], degraded: true }))
-      .finally(() => seq === latest.current && setLoading(false));
+    timer.current = window.setTimeout(() => {
+      api
+        .search(text)
+        .then((found) => seq === latest.current && setResults(found))
+        .catch((e: unknown) => seq === latest.current && setResults({ candidates: [], notes: [String(e)] }))
+        .finally(() => seq === latest.current && setLoading(false));
+    }, delay);
   };
 
   const taken = new Set(props.existing.map(instrumentId));
@@ -333,16 +358,16 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
       <Input
         value={query}
         disabled={props.full}
-        placeholder={props.full ? `最多 ${MAX_INSTRUMENTS} 个币种` : "添加币种：搜索交易对，如 SOL、ETHBTC"}
+        placeholder={props.full ? `最多 ${MAX_INSTRUMENTS} 个` : "搜索币种或股票代码，如 SOL、AAPL、700"}
         className="h-8 rounded-lg bg-card pl-8 dark:bg-card"
         spellCheck={false}
         autoCorrect="off"
         // Starts loading the pair list before the first keystroke.
-        onFocus={() => results || loading || run("")}
+        onFocus={() => results || loading || run("", 0)}
         onChange={(e) => {
           setQuery(e.target.value);
           setActive(-1);
-          run(e.target.value);
+          run(e.target.value, SEARCH_DELAY_MS);
         }}
         onKeyDown={onKeyDown}
       />
@@ -351,16 +376,19 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
           {options.length === 0 ? (
             loading ? (
               <p className="flex items-center gap-2 px-2.5 py-1.5 text-muted-foreground">
-                <LoaderCircle className="size-4 animate-spin" /> 正在获取交易对…
+                <LoaderCircle className="size-4 animate-spin" /> 正在搜索…
               </p>
             ) : (
-              <p className="px-2.5 py-1.5 text-muted-foreground">
-                {results?.degraded ? "无法获取交易对列表，请输入完整交易对，如 SOLUSDT" : "没有匹配的交易对"}
-              </p>
+              <div className="space-y-1 px-2.5 py-1.5 text-muted-foreground">
+                {(results?.notes.length ? results.notes : ["没有找到"]).map((note) => (
+                  <p key={note}>{note}</p>
+                ))}
+              </div>
             )
           ) : (
             options.map((candidate, index) => {
               const added = taken.has(instrumentId(candidate));
+              const highlighted = index === current && !added;
               return (
                 <button
                   key={instrumentId(candidate)}
@@ -370,18 +398,19 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => add(candidate)}
                   className={cn(
-                    "flex w-full items-center justify-between rounded-md px-2.5 py-1 text-left",
-                    index === current && !added && "bg-primary text-primary-foreground",
+                    "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1 text-left",
+                    highlighted && "bg-primary text-primary-foreground",
                     added && "text-muted-foreground",
                   )}
                 >
-                  <span>
-                    <span className="font-medium">{candidate.base}</span>
-                    <span className={index === current && !added ? "opacity-80" : "text-muted-foreground"}>
-                      /{candidate.quote}
-                    </span>
+                  <InstrumentName
+                    instrument={candidate}
+                    className="min-w-0 truncate"
+                    dim={highlighted ? "opacity-80" : "text-muted-foreground"}
+                  />
+                  <span className="shrink-0 text-xs opacity-70">
+                    {added ? "已添加" : candidate.manual ? "手动添加" : ""}
                   </span>
-                  <span className="text-xs opacity-70">{added ? "已添加" : candidate.manual ? "手动添加" : ""}</span>
                 </button>
               );
             })
@@ -390,4 +419,156 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
       )}
     </div>
   );
+}
+
+const LONGBRIDGE_FIELDS = [
+  { key: "appKey", label: "App Key", secret: false },
+  { key: "appSecret", label: "App Secret", secret: true },
+  { key: "accessToken", label: "Access Token", secret: true },
+] as const satisfies readonly { key: keyof LongbridgeKeys; label: string; secret: boolean }[];
+
+/** Credentials for stocks: entered once, checked by logging in. */
+function LongbridgeSection() {
+  const [state, setState] = useState<Longbridge | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [keys, setKeys] = useState<LongbridgeKeys>({ appKey: "", appSecret: "", accessToken: "" });
+  const [checking, setChecking] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const check = () => {
+    setChecking(true);
+    setProblem(null);
+    api
+      .checkLongbridge()
+      .then((account) => setState((s) => s && { ...s, account }))
+      .catch((e: unknown) => setProblem(String(e)))
+      .finally(() => setChecking(false));
+  };
+
+  useEffect(() => {
+    api
+      .getLongbridge()
+      .then((found) => {
+        setState(found);
+        if (found.appKey && !found.account) check();
+      })
+      .catch((e: unknown) => setProblem(String(e)));
+  }, []);
+
+  const save = () => {
+    setProblem(null);
+    api
+      .setLongbridge(keys)
+      .then((saved) => {
+        setState(saved);
+        setEditing(false);
+        setKeys({ appKey: "", appSecret: "", accessToken: "" });
+        check();
+      })
+      .catch((e: unknown) => setProblem(String(e)));
+  };
+
+  const remove = () => {
+    setProblem(null);
+    api
+      .setLongbridge(null)
+      .then(setState)
+      .catch((e: unknown) => setProblem(String(e)));
+  };
+
+  if (!state) return null;
+  const configured = state.appKey !== null && !editing;
+  const expires = state.account?.tokenExpires;
+
+  return (
+    <Section
+      title="长桥"
+      footnote={configured ? undefined : "填写长桥 OpenAPI 凭证后，可以添加美股、港股和 A 股。"}
+    >
+      <Group>
+        {configured ? (
+          <>
+            <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <p>
+                  App Key <span className="font-mono text-xs text-muted-foreground">{state.appKey}</span>
+                </p>
+                {expires && <p className="text-xs text-muted-foreground">Access Token {fmtDate(expires)}到期，到期前会自动续期</p>}
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+                更换
+              </Button>
+              <Button variant="ghost" size="sm" className="hover:text-destructive" onClick={remove}>
+                移除
+              </Button>
+            </div>
+            <div className="space-y-1 px-3.5 py-2 text-xs">
+              {checking ? (
+                <p className="flex items-center gap-2 text-muted-foreground">
+                  <LoaderCircle className="size-3.5 animate-spin" /> 正在登录长桥…
+                </p>
+              ) : state.account ? (
+                state.account.markets.map((m) => (
+                  <p key={m.market} className="flex gap-2">
+                    <span className="w-9 shrink-0 text-muted-foreground">{m.market}</span>
+                    <span>{m.packages.length ? m.packages.join("、") : (m.note ?? "无行情权限")}</span>
+                  </p>
+                ))
+              ) : (
+                <button type="button" className="text-muted-foreground underline" onClick={check}>
+                  查看行情权限
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="space-y-2 px-3.5 py-3">
+            {LONGBRIDGE_FIELDS.map((field) => (
+              <label key={field.key} className="flex items-center gap-3">
+                <span className="w-24 shrink-0 text-muted-foreground">{field.label}</span>
+                <Input
+                  type={field.secret ? "password" : "text"}
+                  value={keys[field.key]}
+                  className="h-7 rounded-md font-mono text-xs"
+                  spellCheck={false}
+                  autoCorrect="off"
+                  onChange={(e) => setKeys({ ...keys, [field.key]: e.target.value })}
+                />
+              </label>
+            ))}
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <a
+                href="https://open.longbridge.com/"
+                target="_blank"
+                rel="noreferrer"
+                className="mr-auto text-xs text-muted-foreground underline"
+              >
+                在长桥开发者中心获取
+              </a>
+              {state.appKey !== null && (
+                <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
+                  取消
+                </Button>
+              )}
+              <Button
+                size="sm"
+                disabled={!keys.appKey.trim() || !keys.appSecret.trim() || !keys.accessToken.trim()}
+                onClick={save}
+              >
+                保存
+              </Button>
+            </div>
+          </div>
+        )}
+      </Group>
+      {problem && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{problem}</p>}
+    </Section>
+  );
+}
+
+/** Epoch seconds → "12 月 25 日", with the year when it isn't this one. */
+function fmtDate(secs: number): string {
+  const d = new Date(secs * 1000);
+  const year = d.getFullYear() === new Date().getFullYear() ? "" : `${d.getFullYear()} 年 `;
+  return `${year}${d.getMonth() + 1} 月 ${d.getDate()} 日`;
 }

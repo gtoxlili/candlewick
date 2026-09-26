@@ -27,7 +27,7 @@ static CLIENTS: LazyLock<Clients> = LazyLock::new(|| Clients {
 fn builder() -> reqwest::ClientBuilder {
     Client::builder()
         .use_preconfigured_tls(net::tls_client_config())
-        .user_agent(concat!("CoinTray/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Candlewick/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(10))
         // Paging back through candles makes runs of requests to one host.
         .pool_idle_timeout(Duration::from_secs(30))

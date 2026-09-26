@@ -85,11 +85,19 @@ impl Provider for Binance {
             source: ProviderId::Binance.name(),
             intervals: INTERVALS
                 .iter()
-                .map(|&(secs, label, _, mode)| IntervalSpec { secs, label, mode })
+                .map(|&(secs, label, _, mode)| IntervalSpec {
+                    secs,
+                    label,
+                    mode,
+                    aligned: true,
+                    regular_only: false,
+                })
                 .collect(),
             stats_span: "24h",
             volume_unit: instrument.base.clone(),
             turnover_unit: instrument.quote.clone(),
+            // Daily candles open at 00:00 UTC.
+            day_offset: 0,
             link: Some(Link {
                 label: "在币安打开",
                 url: format!(
@@ -183,6 +191,7 @@ impl Pair {
             symbol: self.symbol.clone(),
             base: self.base.clone(),
             quote: self.quote.clone(),
+            name: None,
             decimals: Some(self.decimals),
             pinned: false,
         }
@@ -269,7 +278,7 @@ async fn search(query: &str) -> Search {
                 .into_iter()
                 .map(|pair| Candidate { instrument: pair.instrument(), manual: false })
                 .collect(),
-            degraded: false,
+            notes: Vec::new(),
         },
         Err(e) => {
             log::warn!("cannot load Binance pairs: {e}");
@@ -278,7 +287,7 @@ async fn search(query: &str) -> Search {
                     .map(|instrument| Candidate { instrument, manual: true })
                     .into_iter()
                     .collect(),
-                degraded: true,
+                notes: vec!["无法获取币安交易对列表，请输入完整交易对，如 SOLUSDT".to_owned()],
             }
         }
     }
@@ -333,6 +342,7 @@ fn parse_pair(input: &str) -> Option<Instrument> {
         symbol: format!("{base}{quote}"),
         base,
         quote,
+        name: None,
         decimals: None,
         pinned: false,
     })
@@ -404,6 +414,7 @@ impl RawTrade {
             qty: self.qty.parse().unwrap_or(f64::NAN),
             time: self.time as f64,
             sell: self.buyer_maker,
+            extended: false,
         }
     }
 }

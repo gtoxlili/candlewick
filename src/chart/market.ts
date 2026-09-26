@@ -44,6 +44,8 @@ const CHART_FLUSH_MS = 100;
 const TRADES_FLUSH_MS = 250;
 const MAX_TRADES = 60;
 const HISTORY_RETRY_MS = 5000;
+/** How often the provider's latest candles are fetched for intervals it buckets itself. */
+const REFRESH_MS = 30_000;
 /** Paging back retries after this, doubling per failure: a service left hammered may ban the IP. */
 const OLDER_RETRY_MS = 2000;
 const OLDER_RETRY_MAX_MS = 60_000;
@@ -73,24 +75,29 @@ class Series {
     return Math.max(this.interval.secs / 60, 0.25);
   }
 
-  /** One trade: fold it into the forming candle and the line's detail. */
-  add(price: number, time: number): void {
+  /**
+   * One trade: fold it into the forming candle and the line's detail. Returns
+   * true when it belongs to a candle only the provider can start.
+   */
+  add(price: number, time: number): boolean {
     const secs = this.interval.secs;
-    const bucket = Math.floor(time / secs) * secs;
     const live = this.live;
-    if (!live || bucket > live.time) {
-      if (live) this.close(live);
-      this.live = { time: bucket, open: price, high: price, low: price, close: price };
-    } else if (bucket === live.time) {
-      this.live = {
-        time: bucket,
-        open: live.open,
-        high: Math.max(live.high, price),
-        low: Math.min(live.low, price),
-        close: price,
-      };
+    if (this.interval.aligned) {
+      const bucket = Math.floor(time / secs) * secs;
+      if (!live || bucket > live.time) {
+        if (live) this.close(live);
+        this.live = { time: bucket, open: price, high: price, low: price, close: price };
+      } else if (bucket === live.time) {
+        this.live = { ...live, high: Math.max(live.high, price), low: Math.min(live.low, price), close: price };
+      } else {
+        return false; // part of a candle the history already has
+      }
     } else {
-      return; // part of a candle the history already has
+      // Trading sessions decide where these candles start: trades only move
+      // the one forming, and one past its end waits for the provider's next.
+      if (!live || time < live.time) return false;
+      if (time >= live.time + secs) return true;
+      this.live = { ...live, high: Math.max(live.high, price), low: Math.min(live.low, price), close: price };
     }
 
     const last = this.trail.at(-1);
@@ -103,6 +110,27 @@ class Series {
         this.history = null;
       }
     }
+    return false;
+  }
+
+  /**
+   * The provider's latest candles, oldest first, for an interval it buckets
+   * itself: its versions replace ours, and a newer one starts the next candle.
+   */
+  mergeLatest(fresh: CandlePoint[]): void {
+    for (const candle of fresh) {
+      const live = this.live;
+      if (live && candle.time < live.time) {
+        const index = this.candles.findIndex((c) => c.time === candle.time);
+        if (index >= 0) this.candles = this.candles.with(index, candle);
+      } else if (live && candle.time === live.time) {
+        this.live = candle;
+      } else {
+        if (live) this.close(live);
+        this.live = candle;
+      }
+    }
+    this.history = null;
   }
 
   private close(candle: CandlePoint): void {
@@ -171,6 +199,9 @@ export class Market {
   private gap = false;
   private retryTimer: number | undefined;
   private historyTimer: number | undefined;
+  private refreshTimer: number | undefined;
+  /** Series whose latest candles are being fetched. */
+  private refreshing = new Set<Series>();
   private chartTimer: number | undefined;
   private tradesTimer: number | undefined;
   /** Every interval looked at so far: switching back is instant and animates. */
@@ -195,6 +226,7 @@ export class Market {
   start(): void {
     this.loadSnapshot();
     this.connect();
+    this.keepRefreshing();
   }
 
   dispose(): void {
@@ -272,6 +304,7 @@ export class Market {
     this.suspended = false;
     this.loadSnapshot();
     this.connect();
+    this.keepRefreshing();
   }
 
   private seriesFor(interval: Interval): Series {
@@ -323,7 +356,8 @@ export class Market {
     for (const timer of [this.retryTimer, this.historyTimer, this.chartTimer, this.tradesTimer]) {
       window.clearTimeout(timer);
     }
-    this.retryTimer = this.historyTimer = this.chartTimer = this.tradesTimer = undefined;
+    window.clearInterval(this.refreshTimer);
+    this.retryTimer = this.historyTimer = this.chartTimer = this.tradesTimer = this.refreshTimer = undefined;
   }
 
   private handle(event: LiveEvent): void {
@@ -361,8 +395,9 @@ export class Market {
       this.price = trade.price;
       // Every cached interval stays live, not only the one on screen.
       for (const s of this.series.values()) {
+        if (trade.extended && s.interval.regularOnly) continue;
         if (s.ready) {
-          s.add(trade.price, time);
+          if (s.add(trade.price, time)) this.refresh(s);
         } else if (s.load) {
           s.pending.push({ price: trade.price, time });
           if (s.pending.length > MAX_PENDING) s.pending = s.pending.slice(-MAX_PENDING / 2);
@@ -428,9 +463,10 @@ export class Market {
         if (s.load !== load || this.disposed) return;
         if (!s.replaceRecent(candles)) s.exhausted = candles.length < PAGE;
         // Trades seen while loading; those already counted change nothing.
-        for (const t of s.pending) s.add(t.price, t.time);
+        const behind = s.pending.map((t) => s.add(t.price, t.time)).includes(true);
         s.pending = [];
         s.ready = true;
+        if (behind) this.refresh(s);
         if (s === this.current) this.publish();
       })
       .catch(() => {
@@ -442,6 +478,30 @@ export class Market {
       .finally(() => {
         if (s.load === load) s.load = null;
       });
+  }
+
+  /** Every so often, the provider's latest candles for the intervals it buckets itself. */
+  private keepRefreshing(): void {
+    window.clearInterval(this.refreshTimer);
+    this.refreshTimer = window.setInterval(() => {
+      for (const s of this.series.values()) {
+        if (!s.interval.aligned) this.refresh(s);
+      }
+    }, REFRESH_MS);
+  }
+
+  private refresh(s: Series): void {
+    if (!s.ready || this.refreshing.has(s) || this.disposed || this.suspended) return;
+    this.refreshing.add(s);
+    api
+      .chartHistory(this.id, s.interval.secs, null, 3)
+      .then((candles) => {
+        if (this.disposed || this.series.get(s.interval.secs) !== s || !s.ready) return;
+        s.mergeLatest(candles);
+        if (s === this.current) this.publish();
+      })
+      .catch(() => {})
+      .finally(() => this.refreshing.delete(s));
   }
 
   private loadTrades(): void {

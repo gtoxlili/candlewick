@@ -8,6 +8,7 @@
 //! another service means adding a provider here, nothing else.
 
 pub mod binance;
+pub mod longbridge;
 
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
@@ -28,15 +29,17 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[serde(rename_all = "camelCase")]
 pub enum ProviderId {
     Binance,
+    Longbridge,
 }
 
 impl ProviderId {
-    pub const ALL: [Self; 1] = [Self::Binance];
+    pub const ALL: [Self; 2] = [Self::Binance, Self::Longbridge];
 
     /// The prefix of instrument ids.
     pub fn key(self) -> &'static str {
         match self {
             Self::Binance => "binance",
+            Self::Longbridge => "longbridge",
         }
     }
 
@@ -44,12 +47,14 @@ impl ProviderId {
     pub fn name(self) -> &'static str {
         match self {
             Self::Binance => "币安",
+            Self::Longbridge => "长桥",
         }
     }
 
     pub fn provider(self) -> &'static dyn Provider {
         match self {
             Self::Binance => &binance::Binance,
+            Self::Longbridge => &longbridge::Longbridge,
         }
     }
 }
@@ -118,8 +123,8 @@ pub enum Error {
 #[serde(rename_all = "camelCase")]
 pub struct Search {
     pub candidates: Vec<Candidate>,
-    /// The instrument list could not be loaded, so only exact input matches.
-    pub degraded: bool,
+    /// Why results may be missing, e.g. a list that could not be loaded.
+    pub notes: Vec<String>,
 }
 
 /// A search result: a watchlist entry, not yet pinned.
@@ -142,6 +147,8 @@ pub struct ChartSpec {
     pub stats_span: &'static str,
     pub volume_unit: String,
     pub turnover_unit: String,
+    /// Seconds east of UTC at which daily candles open, for their date labels.
+    pub day_offset: i64,
     pub link: Option<Link>,
 }
 
@@ -152,6 +159,11 @@ pub struct IntervalSpec {
     pub label: &'static str,
     /// How the chart first shows it.
     pub mode: ChartMode,
+    /// Candles line up with the clock (`time % secs == 0`), so the chart can
+    /// bucket trades itself; otherwise new candles come from the provider.
+    pub aligned: bool,
+    /// Trades outside the regular session don't count.
+    pub regular_only: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -213,6 +225,8 @@ pub struct Trade {
     pub time: f64,
     /// The taker sold.
     pub sell: bool,
+    /// Outside the regular session (US pre-market, post-market, overnight).
+    pub extended: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -275,7 +289,7 @@ pub fn set_status(app: &AppHandle, provider: ProviderId, status: Status) {
             Status::Live(_) => feed.stale = false,
             // Paused: nothing arrives while asleep, so on wake the prices on
             // screen are old until the stream is live again.
-            Status::Retrying { .. } | Status::Paused => feed.stale = true,
+            Status::Retrying { .. } | Status::Paused | Status::Unavailable(_) => feed.stale = true,
             Status::Idle | Status::Connecting => {}
         }
         feed.status = status;

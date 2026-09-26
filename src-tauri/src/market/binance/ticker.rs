@@ -176,7 +176,7 @@ fn apply(app: &AppHandle, text: &str) -> bool {
     let (Ok(last), Ok(open)) = (data.last.parse::<f64>(), data.open.parse::<f64>()) else {
         return false;
     };
-    let quote = Quote { last, open };
+    let quote = Quote { last, open, session: None };
     let id = market::instrument_id(PROVIDER, &data.symbol);
     let shared = app.state::<Shared>();
     let mut model = shared.model();

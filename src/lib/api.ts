@@ -3,15 +3,19 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type ColorScheme = "greenUp" | "redUp";
 
-export type ProviderId = "binance";
+export type ProviderId = "binance" | "longbridge";
 
 /** A watchlist entry. */
 export interface Instrument {
   provider: ProviderId;
-  /** The provider's symbol, e.g. BTCUSDT. */
+  /** The provider's symbol, e.g. BTCUSDT, AAPL.US. */
   symbol: string;
+  /** Crypto: the base asset (BTC). Stocks: the code (AAPL, 700). */
   base: string;
+  /** Crypto: the quote asset (USDT). Stocks: the currency. */
   quote: string;
+  /** A stock's name, e.g. 腾讯控股. */
+  name?: string | null;
   /** Decimals of the tick size; null lets the app pick by magnitude. */
   decimals: number | null;
   /** Shown in the menu bar title, not only in the dropdown. */
@@ -21,6 +25,25 @@ export interface Instrument {
 /** "binance:BTCUSDT": how windows and menus refer to an instrument. */
 export const instrumentId = (instrument: Pick<Instrument, "provider" | "symbol">): string =>
   `${instrument.provider}:${instrument.symbol}`;
+
+/**
+ * The name and a dimmed detail, as the dropdown shows them (see
+ * `Instrument::row_label` in the app): BTC /USDT, AAPL 苹果, 腾讯控股 700.
+ */
+export function instrumentLabel(instrument: Instrument): { name: string; detail: string } {
+  if (instrument.provider === "binance") return { name: instrument.base, detail: `/${instrument.quote}` };
+  const name = instrument.name ?? "";
+  // US tickers read better than their names; other codes are just numbers.
+  if (instrument.symbol.endsWith(".US") || !name) return { name: instrument.base, detail: name };
+  return { name, detail: instrument.base };
+}
+
+const MARKETS: Record<string, string> = { US: "美股", HK: "港股", SH: "A 股", SZ: "A 股" };
+
+/** 美股, 港股, A 股; nothing for crypto. */
+export function marketLabel(instrument: Instrument): string {
+  return instrument.provider === "longbridge" ? (MARKETS[instrument.symbol.split(".").at(-1) ?? ""] ?? "") : "";
+}
 
 export interface Settings {
   watchlist: Instrument[];
@@ -41,8 +64,8 @@ export interface Candidate extends Instrument {
 
 export interface Search {
   candidates: Candidate[];
-  /** The instrument list could not be loaded, so only exact input matches. */
-  degraded: boolean;
+  /** Why results may be missing, e.g. a list that could not be loaded. */
+  notes: string[];
 }
 
 export type ChartMode = "line" | "candle";
@@ -53,6 +76,10 @@ export interface Interval {
   label: string;
   /** How it first shows. */
   mode: ChartMode;
+  /** Candles line up with the clock, so trades can be bucketed here; otherwise new candles come from the app. */
+  aligned: boolean;
+  /** Trades outside the regular session don't count. */
+  regularOnly: boolean;
 }
 
 /** What the chart window offers for an instrument. */
@@ -64,6 +91,8 @@ export interface ChartSpec {
   statsSpan: string;
   volumeUnit: string;
   turnoverUnit: string;
+  /** Seconds east of UTC at which daily candles open, for their date labels. */
+  dayOffset: number;
   link: { label: string; url: string } | null;
 }
 
@@ -107,6 +136,8 @@ export interface Trade {
   time: number;
   /** The taker sold. */
   sell: boolean;
+  /** Outside the regular session (US pre-market, post-market, overnight). */
+  extended: boolean;
 }
 
 export type FeedState = "connecting" | "live" | "offline";
@@ -117,6 +148,26 @@ export type LiveEvent =
   | { kind: "book"; book: Book }
   /** New trades, oldest first. */
   | { kind: "trades"; trades: Trade[] };
+
+/** What a Longbridge account may see. */
+export interface LongbridgeAccount {
+  markets: { market: string; packages: string[]; note: string | null }[];
+  /** When the access token expires, epoch seconds. */
+  tokenExpires: number | null;
+}
+
+export interface Longbridge {
+  /** The app key's ends, when credentials are saved. */
+  appKey: string | null;
+  /** As of the last login with these credentials. */
+  account: LongbridgeAccount | null;
+}
+
+export interface LongbridgeKeys {
+  appKey: string;
+  appSecret: string;
+  accessToken: string;
+}
 
 export const MAX_INSTRUMENTS = 30;
 
@@ -148,6 +199,11 @@ export const api = {
   },
   /** Opens the instrument's page on its provider's website. */
   openLink: (id: string) => invoke<void>("open_link", { id }),
+  getLongbridge: () => invoke<Longbridge>("get_longbridge"),
+  /** Saves the credentials, or removes them with null. */
+  setLongbridge: (keys: LongbridgeKeys | null) => invoke<Longbridge>("set_longbridge", { keys }),
+  /** Logs in with the saved credentials and reports what the account may see. */
+  checkLongbridge: () => invoke<LongbridgeAccount>("check_longbridge"),
   onStatus: (handler: (status: Status) => void): Promise<UnlistenFn> =>
     listen<Status>("status", (event) => handler(event.payload)),
   /** Saved settings, from whichever window saved them. */

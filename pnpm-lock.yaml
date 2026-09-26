@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   liveline@0.0.7:
-    hash: 3a8c76297499633a73aeadced4402d8f872752e16309e4bc3e4b7641732ee0c1
+    hash: e3f09b12b15510a4da8f68be76ad243e4beb52b816c3fac03447cad99fab9c1a
     path: patches/liveline@0.0.7.patch
 
 importers:
@@ -24,7 +24,7 @@ importers:
         version: 0.4.0
       liveline:
         specifier: ^0.0.7
-        version: 0.0.7(patch_hash=3a8c76297499633a73aeadced4402d8f872752e16309e4bc3e4b7641732ee0c1)(react@19.3.0)
+        version: 0.0.7(patch_hash=e3f09b12b15510a4da8f68be76ad243e4beb52b816c3fac03447cad99fab9c1a)(react@19.3.0)
       lucide-react:
         specifier: ^1.48.0
         version: 1.48.0(react@19.3.0)
@@ -4906,7 +4906,7 @@ snapshots:
 
   lines-and-columns@1.2.4: {}
 
-  liveline@0.0.7(patch_hash=3a8c76297499633a73aeadced4402d8f872752e16309e4bc3e4b7641732ee0c1)(react@19.3.0):
+  liveline@0.0.7(patch_hash=e3f09b12b15510a4da8f68be76ad243e4beb52b816c3fac03447cad99fab9c1a)(react@19.3.0):
     dependencies:
       react: 19.3.0
 

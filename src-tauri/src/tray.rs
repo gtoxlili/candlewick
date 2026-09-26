@@ -23,7 +23,7 @@ use tauri::{
 use crate::{
     format::{self, Direction},
     macos,
-    model::{ColorScheme, Instrument, Model, Quote, Shared},
+    model::{ColorScheme, Instrument, Model, Quote, Session, Shared},
     ticker::{self, Ticker},
     window,
 };
@@ -75,10 +75,12 @@ struct Columns {
 
 #[derive(Debug, Clone, PartialEq)]
 struct Row {
-    base: String,
-    /// Shown dimmed after the base, e.g. `/USDT`.
-    quote: String,
+    name: String,
+    /// Shown dimmed after the name, e.g. `/USDT`.
+    detail: String,
     price: String,
+    /// Shown dimmed before the change, e.g. `盘后`.
+    session: Option<&'static str>,
     change: Option<(String, Direction)>,
 }
 
@@ -87,7 +89,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let tray = TrayIconBuilder::new()
         .icon(template_icon())
         .icon_as_template(true)
-        .tooltip("Coin Tray")
+        .tooltip("Candlewick")
         .show_menu_on_left_click(true)
         .on_menu_event(on_menu_event)
         .build(app)?;
@@ -258,24 +260,38 @@ impl Ui {
 
     /// `BTC/USDT ⇥ 84,002.01 ⇥ −0.24%` with right-aligned tab stops.
     fn styled_row(&self, row: &Row) -> Retained<NSMutableAttributedString> {
-        let mut text = format!("{}{}\t{}", row.base, row.quote, row.price);
+        let mut text = format!("{}{}\t{}", row.name, row.detail, row.price);
+        let mut session_at = None;
         if let Some((change, _)) = &row.change {
             text.push('\t');
+            if let Some(session) = row.session {
+                session_at = Some(utf16_len(&text));
+                text.push_str(session);
+                text.push(' ');
+            }
             text.push_str(change);
         }
         let string = attributed(&text, &self.fonts.row);
-        let base_len = utf16_len(&row.base);
-        // SAFETY: each value matches its attribute key.
+        let dimmed = |at: usize, len: usize| {
+            // SAFETY: NSColor for the foreground color key.
+            unsafe {
+                string.addAttribute_value_range(
+                    NSForegroundColorAttributeName,
+                    &NSColor::secondaryLabelColor(),
+                    NSRange::new(at, len),
+                );
+            }
+        };
+        dimmed(utf16_len(&row.name), utf16_len(&row.detail));
+        if let (Some(at), Some(session)) = (session_at, row.session) {
+            dimmed(at, utf16_len(session));
+        }
+        // SAFETY: an NSParagraphStyle for the paragraph style key.
         unsafe {
             string.addAttribute_value_range(
                 NSParagraphStyleAttributeName,
                 &self.tabs,
                 NSRange::new(0, utf16_len(&text)),
-            );
-            string.addAttribute_value_range(
-                NSForegroundColorAttributeName,
-                &NSColor::secondaryLabelColor(),
-                NSRange::new(base_len, utf16_len(&row.quote)),
             );
         }
         if let Some((change, direction)) = &row.change
@@ -297,9 +313,12 @@ impl Ui {
 
 impl Columns {
     fn fit(self, row: &Row, font: &NSFont) -> Self {
-        let change = row.change.as_ref().map_or(0.0, |(change, _)| text_width(change, font));
+        let change = row.change.as_ref().map_or(0.0, |(change, _)| {
+            let session = row.session.map(|s| format!("{s} ")).unwrap_or_default();
+            text_width(&format!("{session}{change}"), font)
+        });
         Self {
-            label: self.label.max(text_width(&format!("{}{}", row.base, row.quote), font)),
+            label: self.label.max(text_width(&format!("{}{}", row.name, row.detail), font)),
             price: self.price.max(text_width(&row.price, font)),
             change: self.change.max(change),
         }
@@ -378,7 +397,7 @@ fn utf16_len(s: &str) -> usize {
 fn build_menu(app: &AppHandle, watchlist: &[Instrument]) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::new(app)?;
     if watchlist.is_empty() {
-        menu.append(&MenuItem::with_id(app, "empty", "在设置中添加币种", false, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id(app, "empty", "在设置中添加自选", false, None::<&str>)?)?;
     } else {
         for instrument in watchlist {
             let id = format!("{INSTRUMENT_PREFIX}{}", instrument.id());
@@ -391,7 +410,7 @@ fn build_menu(app: &AppHandle, watchlist: &[Instrument]) -> tauri::Result<Menu<W
     // No key equivalents: AppKit reserves a shortcut column on every row, which
     // would leave a wide empty band to the right of the prices.
     menu.append(&MenuItem::with_id(app, ID_SETTINGS, "设置…", true, None::<&str>)?)?;
-    menu.append(&MenuItem::with_id(app, ID_QUIT, "退出 Coin Tray", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(app, ID_QUIT, "退出 Candlewick", true, None::<&str>)?)?;
     Ok(menu)
 }
 
@@ -435,9 +454,11 @@ fn rows(watchlist: &[Instrument], quotes: &HashMap<String, Quote>) -> Vec<Row> {
         .iter()
         .map(|instrument| {
             let quote = quotes.get(&instrument.id());
+            let (name, detail) = instrument.row_label();
             Row {
-                base: instrument.base.clone(),
-                quote: format!("/{}", instrument.quote),
+                name,
+                detail,
+                session: quote.and_then(|q| q.session).map(Session::label),
                 price: quote.map_or_else(
                     || "—".to_owned(),
                     |q| format::price(q.last, format::decimals(q.last, instrument.decimals)),

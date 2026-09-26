@@ -7,8 +7,9 @@ use tauri::{AppHandle, Manager, State, WebviewWindow, ipc::Channel};
 use tokio::sync::oneshot;
 
 use crate::{
+    credentials::{self, LongbridgeKeys},
     macos,
-    market::{self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade},
+    market::{self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, longbridge},
     model::{self, Instrument, Settings, Shared},
     tray,
     window::{self, StatusView},
@@ -95,13 +96,86 @@ pub fn window_ready(window: WebviewWindow) -> CmdResult<()> {
 /// Instruments matching the query, from every provider.
 #[tauri::command]
 pub async fn search_instruments(query: String) -> Search {
+    let searches = ProviderId::ALL.map(|provider| provider.provider().search(&query));
     let mut all = Search::default();
-    for provider in ProviderId::ALL {
-        let found = provider.provider().search(&query).await;
+    for found in futures_util::future::join_all(searches).await {
         all.candidates.extend(found.candidates);
-        all.degraded |= found.degraded;
+        all.notes.extend(found.notes);
     }
     all
+}
+
+/// The Longbridge credentials as the settings window shows them.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LongbridgeView {
+    /// The app key's ends, enough to recognize it; the secrets never leave.
+    app_key: Option<String>,
+    account: Option<longbridge::Account>,
+}
+
+#[tauri::command]
+pub fn get_longbridge(shared: State<'_, Shared>) -> LongbridgeView {
+    let keys = shared.credentials().longbridge.clone();
+    let account = keys.as_ref().and_then(|_| longbridge::last_account());
+    LongbridgeView { app_key: keys.map(|keys| masked(&keys.app_key)), account }
+}
+
+/// Saves (or with `None`, removes) the Longbridge credentials.
+#[tauri::command]
+pub fn set_longbridge(
+    app: AppHandle,
+    shared: State<'_, Shared>,
+    keys: Option<LongbridgeKeys>,
+) -> CmdResult<LongbridgeView> {
+    let keys = keys
+        .map(|keys| {
+            let clean = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+            let keys = LongbridgeKeys {
+                app_key: clean(&keys.app_key),
+                app_secret: clean(&keys.app_secret),
+                access_token: clean(&keys.access_token),
+            };
+            let complete = !keys.app_key.is_empty()
+                && !keys.app_secret.is_empty()
+                && !keys.access_token.is_empty();
+            if complete {
+                Ok(keys)
+            } else {
+                Err(CommandError::Invalid(
+                    "请填写完整的 App Key、App Secret 和 Access Token".to_owned(),
+                ))
+            }
+        })
+        .transpose()?;
+    let credentials = {
+        let mut stored = shared.credentials();
+        stored.longbridge = keys;
+        credentials::save(&shared.credentials_path, &stored)?;
+        stored.clone()
+    };
+    longbridge::forget_account();
+    shared.control.send_modify(|control| control.credentials = credentials);
+    tray::request_render(&app);
+    Ok(get_longbridge(shared))
+}
+
+/// Logs in with the saved credentials (unless already logged in) and
+/// returns what the account may see.
+#[tauri::command]
+pub async fn check_longbridge() -> CmdResult<longbridge::Account> {
+    Ok(longbridge::account().await?)
+}
+
+/// `hk_abc1…wxyz`
+fn masked(key: &str) -> String {
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() <= 10 {
+        return "…".to_owned();
+    }
+    let head: String = chars[..6].iter().collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("{head}…{tail}")
 }
 
 /// The instrument id the chart window should show.
@@ -184,5 +258,5 @@ pub fn open_link(shared: State<'_, Shared>, id: String) -> CmdResult<()> {
 fn instrument(shared: &Shared, id: &str) -> CmdResult<Instrument> {
     let model = shared.model();
     let found = model.settings.instrument(id).cloned();
-    found.ok_or_else(|| CommandError::Invalid(format!("未知的交易对：{id}")))
+    found.ok_or_else(|| CommandError::Invalid(format!("不在自选中：{id}")))
 }

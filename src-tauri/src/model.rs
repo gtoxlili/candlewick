@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{oneshot, watch};
 
 use crate::{
+    credentials::Credentials,
     market::{self, Feeds, ProviderId},
     net::Route,
 };
@@ -28,8 +29,13 @@ pub struct Instrument {
     pub provider: ProviderId,
     /// The provider's symbol, e.g. `BTCUSDT`.
     pub symbol: String,
+    /// Crypto: the base asset (`BTC`). Stocks: the code (`AAPL`, `700`).
     pub base: String,
+    /// Crypto: the quote asset (`USDT`). Stocks: the currency.
     pub quote: String,
+    /// A stock's name, e.g. 腾讯控股.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     /// Decimals of the tick size. `None` falls back to a magnitude rule.
     #[serde(default)]
     pub decimals: Option<u8>,
@@ -45,6 +51,7 @@ impl Instrument {
             symbol: format!("{base}USDT"),
             base: base.to_owned(),
             quote: "USDT".to_owned(),
+            name: None,
             decimals: Some(2),
             pinned,
         }
@@ -55,13 +62,40 @@ impl Instrument {
         market::instrument_id(self.provider, &self.symbol)
     }
 
-    /// `BTC` for USD-like quotes, `ETH/BTC` otherwise.
+    /// The menu bar's name for it: `BTC` for USD-like quotes, `ETH/BTC`
+    /// otherwise; US tickers as they are, other stocks by name.
     pub fn short_label(&self) -> String {
-        if is_usd_like(&self.quote) { self.base.clone() } else { self.pair_label() }
+        match self.provider {
+            ProviderId::Binance if is_usd_like(&self.quote) => self.base.clone(),
+            ProviderId::Binance => self.pair_label(),
+            ProviderId::Longbridge => match &self.name {
+                Some(name) if !self.symbol.ends_with(".US") => name.clone(),
+                _ => self.base.clone(),
+            },
+        }
     }
 
+    /// `BTC/USDT`, or a stock's name and code: `苹果 AAPL`, `腾讯控股 700`.
     pub fn pair_label(&self) -> String {
-        format!("{}/{}", self.base, self.quote)
+        match (self.provider, &self.name) {
+            (ProviderId::Binance, _) => format!("{}/{}", self.base, self.quote),
+            (ProviderId::Longbridge, Some(name)) => format!("{name} {}", self.base),
+            (ProviderId::Longbridge, None) => self.base.clone(),
+        }
+    }
+
+    /// The dropdown row's name and the dimmed part after it: `BTC` `/USDT`,
+    /// `AAPL` ` 苹果`, `腾讯控股` ` 700`.
+    pub fn row_label(&self) -> (String, String) {
+        match self.provider {
+            ProviderId::Binance => (self.base.clone(), format!("/{}", self.quote)),
+            ProviderId::Longbridge => {
+                let short = self.short_label();
+                let other =
+                    if short == self.base { self.name.clone() } else { Some(self.base.clone()) };
+                (short, other.map(|other| format!(" {other}")).unwrap_or_default())
+            }
+        }
     }
 }
 
@@ -105,7 +139,7 @@ impl Settings {
     /// Normalizes and checks settings coming from the webview.
     pub fn validated(mut self) -> Result<Self, String> {
         if self.watchlist.len() > MAX_INSTRUMENTS {
-            return Err(format!("最多添加 {MAX_INSTRUMENTS} 个币种"));
+            return Err(format!("最多添加 {MAX_INSTRUMENTS} 个"));
         }
         let mut seen = HashSet::new();
         for instrument in &mut self.watchlist {
@@ -114,11 +148,11 @@ impl Settings {
                 instrument.decimals = None;
             }
             if !seen.insert(instrument.id()) {
-                return Err(format!("重复的交易对：{}", instrument.symbol));
+                return Err(format!("重复添加：{}", instrument.symbol));
             }
         }
         if self.watchlist.iter().filter(|instrument| instrument.pinned).count() > 1 {
-            return Err("菜单栏只能显示一个币种".to_owned());
+            return Err("菜单栏只能显示一个".to_owned());
         }
         Ok(self)
     }
@@ -174,10 +208,30 @@ pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
     fs::rename(&tmp, path)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Quote {
     pub last: f64,
+    /// What the change counts from: the price 24 hours ago, or the last close.
     pub open: f64,
+    /// Set outside the regular session (US stocks).
+    pub session: Option<Session>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Session {
+    Pre,
+    Post,
+    Overnight,
+}
+
+impl Session {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pre => "盘前",
+            Self::Post => "盘后",
+            Self::Overnight => "夜盘",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -192,6 +246,8 @@ pub enum Status {
         reason: String,
         retry_in_secs: u64,
     },
+    /// Waits for the user, e.g. to enter credentials; not retried.
+    Unavailable(String),
 }
 
 impl Status {
@@ -203,15 +259,16 @@ impl Status {
             Self::Paused => "已暂停".to_owned(),
             Self::Connecting => format!("正在连接{source}…"),
             Self::Retrying { retry_in_secs, .. } => {
-                format!("连接失败 · {retry_in_secs} 秒后重试")
+                format!("{source}连接失败 · {retry_in_secs} 秒后重试")
             }
+            Self::Unavailable(reason) => reason.clone(),
         }
     }
 
     /// Full description for the settings window, including the route.
     pub fn label(&self) -> String {
         match self {
-            Self::Idle => "未添加币种".to_owned(),
+            Self::Idle => "还没有自选".to_owned(),
             Self::Paused => "已暂停（屏幕休眠）".to_owned(),
             Self::Connecting => "连接中…".to_owned(),
             Self::Live(route) => format!("实时 · {route}"),
@@ -219,25 +276,28 @@ impl Status {
                 let reason: String = reason.chars().take(48).collect();
                 format!("{retry_in_secs} 秒后重连 · {reason}")
             }
+            Self::Unavailable(reason) => reason.clone(),
         }
     }
 
     pub fn tone(&self) -> &'static str {
         match self {
             Self::Live(_) => "live",
-            Self::Retrying { .. } => "error",
+            Self::Retrying { .. } | Self::Unavailable(_) => "error",
             Self::Connecting => "busy",
             Self::Idle | Self::Paused => "idle",
         }
     }
 }
 
-/// What the feed tasks need to know: which symbols, and whether to run at all.
+/// What the feed tasks need to know: which symbols, whether to run at all,
+/// and the credentials to log in with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FeedControl {
     pub symbols: BTreeMap<ProviderId, Vec<String>>,
     /// Bit set of reasons the machine is not being looked at (see `macos::Pause`).
     pub paused: u8,
+    pub credentials: Credentials,
 }
 
 pub struct Model {
@@ -263,14 +323,25 @@ pub struct Shared {
     pub control: watch::Sender<FeedControl>,
     pub render_pending: AtomicBool,
     pub settings_path: PathBuf,
+    credentials: Mutex<Credentials>,
+    pub credentials_path: PathBuf,
     /// The chart window's live streams; dropping a sender stops its stream.
     pub streams: Mutex<HashMap<u32, oneshot::Sender<()>>>,
     pub next_stream: AtomicU32,
 }
 
 impl Shared {
-    pub fn new(settings: Settings, settings_path: PathBuf) -> (Self, watch::Receiver<FeedControl>) {
-        let (control, rx) = watch::channel(FeedControl { symbols: settings.symbols(), paused: 0 });
+    pub fn new(
+        settings: Settings,
+        settings_path: PathBuf,
+        credentials: Credentials,
+        credentials_path: PathBuf,
+    ) -> (Self, watch::Receiver<FeedControl>) {
+        let (control, rx) = watch::channel(FeedControl {
+            symbols: settings.symbols(),
+            paused: 0,
+            credentials: credentials.clone(),
+        });
         let shared = Self {
             model: Mutex::new(Model {
                 settings,
@@ -281,10 +352,16 @@ impl Shared {
             control,
             render_pending: AtomicBool::new(false),
             settings_path,
+            credentials: Mutex::new(credentials),
+            credentials_path,
             streams: Mutex::new(HashMap::new()),
             next_stream: AtomicU32::new(1),
         };
         (shared, rx)
+    }
+
+    pub fn credentials(&self) -> MutexGuard<'_, Credentials> {
+        self.credentials.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn model(&self) -> MutexGuard<'_, Model> {

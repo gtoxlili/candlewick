@@ -60,6 +60,8 @@ export function PriceChart(props: {
   offline: boolean;
   /** The provider's name, for the offline message. */
   source: string;
+  /** Seconds east of UTC at which daily candles open. */
+  dayOffset: number;
   onStats: (stats: VisibleStats | null) => void;
 }) {
   const { market, interval, onStats } = props;
@@ -250,7 +252,7 @@ export function PriceChart(props: {
         cursor={dragging ? "grabbing" : "crosshair"}
         formatValue={(v) => fmtPrice(v, props.decimals)}
         formatTime={(t) => axisLabel(t, viewport.view.span)}
-        formatHoverTime={(t) => candleLabel(t, interval.secs)}
+        formatHoverTime={(t) => candleLabel(t, interval.secs, props.dayOffset)}
         padding={{ top: 16, bottom: 28, left: 14 }}
       />
 
@@ -357,10 +359,13 @@ function axisLabel(t: number, span: number): string {
   return span <= 5 * MINUTE ? hms(d) : hm(d);
 }
 
-/** The hovered candle's start. Daily candles open at 00:00 UTC, so they carry the UTC date. */
-function candleLabel(t: number, secs: number): string {
+/** The hovered candle's start. Daily candles carry the date of the day they open, where they open. */
+function candleLabel(t: number, secs: number, dayOffset: number): string {
+  if (secs >= DAY) {
+    const day = new Date((t + dayOffset) * 1000);
+    return `${day.getUTCFullYear()}/${day.getUTCMonth() + 1}/${day.getUTCDate()}`;
+  }
   const d = new Date(t * 1000);
-  if (secs >= DAY) return `${d.getUTCFullYear()}/${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
   const time = secs < MINUTE ? hms(d) : hm(d);
   return isToday(d) ? time : `${d.getMonth() + 1}/${d.getDate()} ${time}`;
 }

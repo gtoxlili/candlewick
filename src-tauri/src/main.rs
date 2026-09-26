@@ -1,10 +1,11 @@
-//! Coin Tray: live market prices in the macOS menu bar.
+//! Candlewick: live market prices in the macOS menu bar.
 //!
 //! Idle footprint is one Rust process: the status item and its dropdown are
 //! native AppKit, prices arrive over one websocket per market-data provider,
 //! and the webviews only exist while their windows are open.
 
 mod commands;
+mod credentials;
 mod format;
 mod http;
 mod macos;
@@ -26,7 +27,7 @@ fn main() {
     // A few websockets need one worker thread, not one per core.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
-        .thread_name("coin-tray-io")
+        .thread_name("candlewick-io")
         .enable_all()
         .build()
         .expect("failed to start the tokio runtime");
@@ -50,13 +51,22 @@ fn main() {
             commands::chart_stream,
             commands::chart_stream_stop,
             commands::open_link,
+            commands::get_longbridge,
+            commands::set_longbridge,
+            commands::check_longbridge,
         ])
         .setup(|app| {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let config_dir = app.path().app_config_dir()?;
             let settings_path = config_dir.join("settings.json");
-            let (shared, control) = Shared::new(model::load(&settings_path), settings_path);
+            let credentials_path = config_dir.join("credentials.json");
+            let (shared, control) = Shared::new(
+                model::load(&settings_path),
+                settings_path,
+                credentials::load(&credentials_path),
+                credentials_path,
+            );
             app.manage(shared);
 
             tray::create(app.handle())?;
@@ -121,7 +131,7 @@ fn init_debug_logger() {
     struct Stderr;
     impl log::Log for Stderr {
         fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-            metadata.target().starts_with("coin_tray")
+            metadata.target().starts_with("candlewick")
         }
         fn log(&self, record: &log::Record<'_>) {
             if self.enabled(record.metadata()) {
@@ -132,6 +142,6 @@ fn init_debug_logger() {
     }
     static LOGGER: Stderr = Stderr;
     let _ = log::set_logger(&LOGGER);
-    let level = std::env::var("COIN_TRAY_LOG").ok().and_then(|l| l.parse().ok());
+    let level = std::env::var("CANDLEWICK_LOG").ok().and_then(|l| l.parse().ok());
     log::set_max_level(level.unwrap_or(log::LevelFilter::Debug));
 }

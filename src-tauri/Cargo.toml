@@ -1,10 +1,10 @@
 [package]
-name = "coin-tray"
+name = "candlewick"
 version = "0.3.0"
-description = "Live Binance crypto prices in the macOS menu bar"
-repository = "https://github.com/gtoxlili/coin-tray"
-homepage = "https://github.com/gtoxlili/coin-tray"
-keywords = ["macos", "menu-bar", "crypto", "binance", "tauri"]
+description = "Live crypto and stock prices in the macOS menu bar"
+repository = "https://github.com/gtoxlili/candlewick"
+homepage = "https://github.com/gtoxlili/candlewick"
+keywords = ["macos", "menu-bar", "crypto", "stocks", "tauri"]
 edition = "2024"
 rust-version = "1.98"
 publish = false
@@ -25,6 +25,11 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-platform-verifier = "0.7"
 # The TLS config comes from net.rs (ring, platform verifier), so no provider here.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "socks", "json"] }
+# Longbridge's quote socket: protobuf bodies, sometimes gzipped; ring (already
+# rustls' crypto) signs its REST requests.
+prost = { version = "0.14", default-features = false, features = ["derive", "std"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+ring = "0.17"
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [

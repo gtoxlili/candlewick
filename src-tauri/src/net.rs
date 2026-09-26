@@ -20,7 +20,7 @@ use tokio::{
 };
 use tokio_tungstenite::{
     Connector, MaybeTlsStream, WebSocketStream, client_async_tls_with_config,
-    tungstenite::protocol::WebSocketConfig,
+    tungstenite::{client::IntoClientRequest, http::HeaderValue, protocol::WebSocketConfig},
 };
 
 pub type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -56,6 +56,15 @@ pub enum Error {
 /// settings prescribe. A configured proxy that is not listening (a proxy app
 /// that quit without restoring settings) falls back to a direct connection.
 pub async fn connect(host: &str, path_and_query: &str) -> Result<(Socket, Route), Error> {
+    connect_with_headers(host, path_and_query, &[]).await
+}
+
+/// [`connect`], with extra headers on the upgrade request.
+pub async fn connect_with_headers(
+    host: &str,
+    path_and_query: &str,
+    headers: &[(&'static str, &str)],
+) -> Result<(Socket, Route), Error> {
     const PORT: u16 = 443;
     let mut route = system_route(host);
     let proxy = match &route {
@@ -91,10 +100,18 @@ pub async fn connect(host: &str, path_and_query: &str) -> Result<(Socket, Route)
         .write_buffer_size(0)
         .max_message_size(Some(256 * 1024))
         .max_frame_size(Some(256 * 1024));
-    let url = format!("wss://{host}{path_and_query}");
-    let (socket, _) =
-        client_async_tls_with_config(url, tcp, Some(config), Some(Connector::Rustls(tls_config())))
-            .await?;
+    let mut request = format!("wss://{host}{path_and_query}").into_client_request()?;
+    for (name, value) in headers {
+        let value = HeaderValue::from_str(value).map_err(|e| Error::Proxy(e.to_string()))?;
+        request.headers_mut().insert(*name, value);
+    }
+    let (socket, _) = client_async_tls_with_config(
+        request,
+        tcp,
+        Some(config),
+        Some(Connector::Rustls(tls_config())),
+    )
+    .await?;
     Ok((socket, route))
 }
 

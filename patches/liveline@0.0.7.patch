@@ -7,7 +7,7 @@ index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..35fec64eb3e19981380833ada2e1fb0e
      label?: string;
  }
 +/**
-+ * coin-tray patch: pans and zooms a candle chart. Pass one object and change
++ * candlewick patch: pans and zooms a candle chart. Pass one object and change
 + * its fields; the chart reads them every frame, so gestures need no re-render.
 + */
 +interface LivelineView {
@@ -34,9 +34,9 @@ index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..35fec64eb3e19981380833ada2e1fb0e
      onModeChange?: (mode: 'line' | 'candle') => void;
      onSeriesToggle?: (id: string, visible: boolean) => void;
      seriesToggleCompact?: boolean;
-+    /** coin-tray patch: see LivelineView (candle mode). */
++    /** candlewick patch: see LivelineView (candle mode). */
 +    view?: LivelineView;
-+    /** coin-tray patch: formats the hovered candle's time (defaults to formatTime). */
++    /** candlewick patch: formats the hovered candle's time (defaults to formatTime). */
 +    formatHoverTime?: (t: number) => string;
      className?: string;
      style?: CSSProperties;
@@ -47,13 +47,13 @@ index 414c4e61bac1017c49bbaedbd1691bcd9cdd667c..35fec64eb3e19981380833ada2e1fb0e
  
 -export { type BadgeVariant, type CandlePoint, type DegenOptions, type HoverPoint, Liveline, type LivelinePoint, type LivelineProps, type LivelineSeries, LivelineTransition, type LivelineTransitionProps, type Momentum, type OrderbookData, type Padding, type ReferenceLine, type ThemeMode, type WindowOption, type WindowStyle };
 +/**
-+ * coin-tray patch: sets the rising/falling colors (RGB) used for candles,
++ * candlewick patch: sets the rising/falling colors (RGB) used for candles,
 + * the live dot, momentum and the orderbook stream. Charts pick them up on
 + * their next theme resolve (remount to apply immediately).
 + */
 +declare function setTrendColors(up: [number, number, number], down: [number, number, number]): void;
 +/**
-+ * coin-tray patch: caps how often charts redraw (frames per second; 0 lifts
++ * candlewick patch: caps how often charts redraw (frames per second; 0 lifts
 + * the cap). Animation is time-based, so a lower rate only drops frames.
 + */
 +declare function setFrameRate(fps: number): void;
@@ -67,14 +67,14 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..68863a5d557b3d2c6a34aab3f5f709cf
  function rgba(r, g, b, a) {
    return `rgba(${r}, ${g}, ${b}, ${a})`;
  }
-+// coin-tray patch: rising/falling colors are configurable (red-up markets,
++// candlewick patch: rising/falling colors are configurable (red-up markets,
 +// platform palettes) through setTrendColors().
 +var TREND_UP = [34, 197, 94];
 +var TREND_DOWN = [239, 68, 68];
 +function trendHex(rgb) {
 +  return "#" + rgb.map((c) => c.toString(16).padStart(2, "0")).join("");
 +}
-+// coin-tray patch: optional frame-rate cap for the draw loop (0 = uncapped).
++// candlewick patch: optional frame-rate cap for the draw loop (0 = uncapped).
 +// The per-frame delta clamp widens with it, so capped frames still advance
 +// animations at full speed.
 +var FRAME_GAP_MS = 0;
@@ -110,7 +110,7 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..68863a5d557b3d2c6a34aab3f5f709cf
      const baseY = loadingY(t, centerY, amplitude, scroll);
      return baseY + (rawY - baseY) * localReveal;
    } : (rawY, _x) => rawY;
-+  // coin-tray patch: with the live tip off screen (panned into history) the
++  // candlewick patch: with the live tip off screen (panned into history) the
 +  // last visible point keeps its own value and no tip is appended.
    const pts = visible.map((p, i) => {
      const x = toX(p.time);
@@ -148,7 +148,7 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..68863a5d557b3d2c6a34aab3f5f709cf
 -    const d = new Date((leftEdge - interval) * 1e3);
 -    d.setHours(0, 0, 0, 0);
 -    firstTime = d.getTime() / 1e3;
-+    // coin-tray patch: step from one fixed local midnight (a Monday), so
++    // candlewick patch: step from one fixed local midnight (a Monday), so
 +    // multi-day labels keep their dates while the view is dragged.
 +    const anchor = new Date(2024, 0, 1).getTime() / 1e3;
 +    firstTime = anchor + Math.floor((leftEdge - interval - anchor) / interval) * interval;
@@ -212,7 +212,7 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..68863a5d557b3d2c6a34aab3f5f709cf
  var RANGE_LERP_SPEED = 0.15;
  var RANGE_ADAPTIVE_BOOST = 0.2;
  var CANDLE_BUFFER_NO_BADGE = 0.015;
-+// coin-tray patch: pan and zoom through the `view` prop. The app writes the
++// candlewick patch: pan and zoom through the `view` prop. The app writes the
 +// target span and right edge; each frame eases toward them (or jumps, for a
 +// drag that has to stay under the pointer) and reports the drawn edges back.
 +var VIEW_EASE = 0.2;
@@ -372,7 +372,7 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..68863a5d557b3d2c6a34aab3f5f709cf
          let refIdx = 0;
 -        for (const pt of effectiveLineData) {
 -          if (pt.time < leftEdge || pt.time > rightEdge) continue;
-+        // coin-tray patch: start from the last point before the left edge, so
++        // candlewick patch: start from the last point before the left edge, so
 +        // sparse data (a point per candle) still enters from the edge.
 +        let start = 0;
 +        while (start < effectiveLineData.length && effectiveLineData[start].time < leftEdge) start++;
@@ -443,7 +443,7 @@ index fd0506272e9a54432a0882c3a389ee74302e4718..68863a5d557b3d2c6a34aab3f5f709cf
 +    formatHoverTime
    });
 -  const cursorStyle = scrub ? cursor : "default";
-+  // coin-tray patch: an explicit cursor (such as "grabbing" mid-drag) also
++  // candlewick patch: an explicit cursor (such as "grabbing" mid-drag) also
 +  // applies while scrubbing is off.
 +  const cursorStyle = scrub || cursor !== "crosshair" ? cursor : "default";
    const activeColor = isDark ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.55)";

@@ -85,7 +85,7 @@ pub fn open_settings(app: &AppHandle) -> tauri::Result<()> {
         Spec {
             label: SETTINGS,
             url: "index.html".to_owned(),
-            title: "Coin Tray 设置".to_owned(),
+            title: "Candlewick 设置".to_owned(),
             size: (460.0, 640.0),
             min_size: (460.0, 640.0),
             resizable: false,
@@ -327,24 +327,24 @@ pub fn emit_settings(app: &AppHandle, settings: &Settings) {
 /// Edit items matter: without them Cmd-C/V/A do nothing in the text field.
 pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let about = AboutMetadata {
-        name: Some("Coin Tray".to_owned()),
+        name: Some("Candlewick".to_owned()),
         version: Some(app.package_info().version.to_string()),
-        comments: Some("在菜单栏显示币安现货实时价格".to_owned()),
+        comments: Some("在菜单栏显示实时行情".to_owned()),
         copyright: app.config().bundle.copyright.clone(),
         ..Default::default()
     };
     let app_submenu = Submenu::with_items(
         app,
-        "Coin Tray",
+        "Candlewick",
         true,
         &[
-            &PredefinedMenuItem::about(app, Some("关于 Coin Tray"), Some(about))?,
+            &PredefinedMenuItem::about(app, Some("关于 Candlewick"), Some(about))?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::hide(app, Some("隐藏 Coin Tray"))?,
+            &PredefinedMenuItem::hide(app, Some("隐藏 Candlewick"))?,
             &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
             &PredefinedMenuItem::show_all(app, Some("全部显示"))?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::quit(app, Some("退出 Coin Tray"))?,
+            &PredefinedMenuItem::quit(app, Some("退出 Candlewick"))?,
         ],
     )?;
     let edit = Submenu::with_items(
