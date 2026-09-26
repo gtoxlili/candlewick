@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Menu bar app: no Dock icon or app menu until the settings window opens. -->
+  <key>LSUIElement</key>
+  <true/>
+  <!-- The UI is Chinese; system-provided strings (context menus, dialogs) should match. -->
+  <key>CFBundleDevelopmentRegion</key>
+  <string>zh_CN</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>zh_CN</string>
+  </array>
+</dict>
+</plist>

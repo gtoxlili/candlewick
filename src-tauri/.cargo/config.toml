@@ -1,0 +1,4 @@
+# Built for and run on this Mac only (Apple M4): let LLVM use every feature
+# the host CPU has instead of the generic apple-m1 baseline.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]
