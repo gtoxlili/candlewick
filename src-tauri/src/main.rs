@@ -1,13 +1,14 @@
-//! Coin Tray: live Binance spot prices in the macOS menu bar.
+//! Coin Tray: live market prices in the macOS menu bar.
 //!
 //! Idle footprint is one Rust process: the status item and its dropdown are
-//! native AppKit, prices arrive over a single websocket, and the settings
-//! webview only exists while its window is open.
+//! native AppKit, prices arrive over one websocket per market-data provider,
+//! and the webviews only exist while their windows are open.
 
 mod commands;
-mod feed;
 mod format;
+mod http;
 mod macos;
+mod market;
 mod model;
 mod net;
 mod ticker;
@@ -16,13 +17,13 @@ mod window;
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
-use crate::model::Shared;
+use crate::{market::ProviderId, model::Shared};
 
 fn main() {
     #[cfg(debug_assertions)]
     init_debug_logger();
 
-    // One websocket needs one worker thread, not one per core.
+    // A few websockets need one worker thread, not one per core.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .thread_name("coin-tray-io")
@@ -40,9 +41,15 @@ fn main() {
             commands::get_login_item,
             commands::set_login_item,
             commands::window_ready,
-            commands::get_chart_symbol,
+            commands::search_instruments,
+            commands::get_chart_instrument,
             commands::open_chart,
-            commands::open_in_binance,
+            commands::chart_spec,
+            commands::chart_history,
+            commands::chart_trades,
+            commands::chart_stream,
+            commands::chart_stream_stop,
+            commands::open_link,
         ])
         .setup(|app| {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -68,7 +75,10 @@ fn main() {
                 });
             });
 
-            feed::spawn(app.handle().clone(), control);
+            for provider in ProviderId::ALL {
+                let quotes = provider.provider().watch(app.handle().clone(), control.clone());
+                tauri::async_runtime::spawn(quotes);
+            }
 
             // Meant to run all the time: register as a login item the first
             // time it runs from an install location, once. The marker keeps a

@@ -1,36 +1,12 @@
-// Live market data for one pair: candle history per interval over REST, plus
-// one websocket carrying every trade, the top of the order book and the 24h
-// ticker. Each trade moves the forming candle and the newest stretch of the
-// line, so the chart moves with the market rather than once a second.
+// Live market data for one instrument: candle history per interval, plus a
+// stream of every trade, the order book and the day's statistics, all from the
+// app (whichever provider serves the instrument). Each trade moves the forming
+// candle and the newest stretch of the line, so the chart moves with the
+// market rather than once a second.
 
 import type { CandlePoint, LivelinePoint } from "liveline";
 
-import { binanceGet, WS_HOSTS } from "@/lib/binance";
-
-export type ChartMode = "line" | "candle";
-
-export interface Interval {
-  label: string;
-  /** Seconds per candle. */
-  secs: number;
-  /** Binance's name for the interval. */
-  api: string;
-  /** How it opens: one-second candles are mostly noise, a line reads better. */
-  mode: ChartMode;
-}
-
-export const INTERVALS = [
-  { label: "1秒", secs: 1, api: "1s", mode: "line" },
-  { label: "1分", secs: 60, api: "1m", mode: "candle" },
-  { label: "5分", secs: 300, api: "5m", mode: "candle" },
-  { label: "15分", secs: 900, api: "15m", mode: "candle" },
-  { label: "1小时", secs: 3600, api: "1h", mode: "candle" },
-  { label: "4小时", secs: 14_400, api: "4h", mode: "candle" },
-  { label: "1日", secs: 86_400, api: "1d", mode: "candle" },
-] as const satisfies readonly Interval[];
-
-export const intervalBySecs = (secs: number): Interval =>
-  INTERVALS.find((i) => i.secs === secs) ?? INTERVALS[1];
+import { api, type Book, type FeedState, type Interval, type LiveEvent, type Stats, type Trade } from "@/lib/api";
 
 /** What the chart draws for the selected interval; a new object on every change. */
 export interface ChartData {
@@ -47,50 +23,15 @@ export interface ChartData {
   exhausted: boolean;
 }
 
-export interface Ticker {
-  last: number;
-  high: number;
-  low: number;
-  /** Base-asset volume over 24h. */
-  volume: number;
-  /** Quote-asset turnover over 24h. */
-  quoteVolume: number;
-  change: number;
-  changePct: number;
-}
-
-export interface Level {
-  price: number;
-  qty: number;
-}
-
-/** Best level first on both sides. */
-export interface Book {
-  bids: Level[];
-  asks: Level[];
-}
-
-export interface Trade {
-  id: number;
-  price: number;
-  qty: number;
-  /** Epoch milliseconds. */
-  time: number;
-  /** The buyer was the maker, so the taker sold. */
-  sell: boolean;
-}
-
-export type FeedState = "connecting" | "live" | "offline";
-
 export interface MarketEvents {
-  ticker(ticker: Ticker): void;
+  stats(stats: Stats): void;
   book(book: Book): void;
   /** Newest first. */
   trades(list: Trade[]): void;
   state(state: FeedState): void;
 }
 
-/** Binance's most klines per request. */
+/** Candles per history request. */
 const PAGE = 1000;
 /** Bounds memory and per-frame work however far back someone scrolls. */
 const MAX_CANDLES = 6000;
@@ -98,19 +39,14 @@ const MAX_CANDLES = 6000;
 const MAX_TRAIL = 2400;
 /** Trades held while an interval's history loads. */
 const MAX_PENDING = 5000;
-/** Trades arrive dozens a second; the chart eases between these updates. */
+/** Trades arrive in batches every 100 ms; the chart eases between these updates. */
 const CHART_FLUSH_MS = 100;
 const TRADES_FLUSH_MS = 250;
 const MAX_TRADES = 60;
 const HISTORY_RETRY_MS = 5000;
-/** Paging back retries after this, doubling per failure: a 429 left unanswered gets the IP banned. */
+/** Paging back retries after this, doubling per failure: a service left hammered may ban the IP. */
 const OLDER_RETRY_MS = 2000;
 const OLDER_RETRY_MAX_MS = 60_000;
-/**
- * The depth and ticker streams push every second, so this much silence means
- * a dead socket (e.g. after a network change).
- */
-const SILENCE_MS = 30_000;
 
 /** History and live state of one interval. */
 class Series {
@@ -124,8 +60,9 @@ class Series {
   ready = false;
   pending: { price: number; time: number }[] = [];
   exhausted = false;
-  load: AbortController | null = null;
-  older: AbortController | null = null;
+  /** The history request in flight; a newer one or a reset replaces it. */
+  load: object | null = null;
+  older: object | null = null;
   olderBackoff = 0;
   olderRetryAt = 0;
 
@@ -226,19 +163,16 @@ class Series {
 }
 
 export class Market {
-  private readonly lower: string;
-  private readonly query: string;
-  private ws: WebSocket | null = null;
   private disposed = false;
   private suspended = false;
-  private failures = 0;
-  private host = 0;
+  /** Stops the current stream; null while none runs. */
+  private stopStream: (() => void) | null = null;
+  /** The stream went offline: catch up on history once it is live again. */
+  private gap = false;
   private retryTimer: number | undefined;
-  private silenceTimer: number | undefined;
   private historyTimer: number | undefined;
   private chartTimer: number | undefined;
   private tradesTimer: number | undefined;
-  private rest = new AbortController();
   /** Every interval looked at so far: switching back is instant and animates. */
   private series = new Map<number, Series>();
   private current: Series;
@@ -249,13 +183,11 @@ export class Market {
   private tradeList: Trade[] = [];
 
   constructor(
-    symbol: string,
+    private readonly id: string,
     interval: Interval,
     trades: boolean,
     private readonly on: MarketEvents,
   ) {
-    this.lower = symbol.toLowerCase();
-    this.query = encodeURIComponent(symbol);
     this.current = this.seriesFor(interval);
     this.tradesOn = trades;
   }
@@ -267,7 +199,6 @@ export class Market {
 
   dispose(): void {
     this.disposed = true;
-    this.rest.abort();
     this.clearTimers();
     this.drop();
     this.listeners.clear();
@@ -297,17 +228,15 @@ export class Market {
     const room = MAX_CANDLES - s.candles.length;
     if (!s.ready || s.exhausted || s.older || !first || room <= 0 || Date.now() < s.olderRetryAt) return;
     const limit = Math.min(PAGE, room);
-    const older = new AbortController();
+    const older = {};
     s.older = older;
-    binanceGet<RawRestKline[]>(
-      `/api/v3/klines?symbol=${this.query}&interval=${s.interval.api}&endTime=${first.time * 1000 - 1}&limit=${limit}`,
-      AbortSignal.any([this.rest.signal, older.signal]),
-    )
-      .then((rows) => {
-        if (older.signal.aborted) return;
-        s.prepend(rows.map(parseKline));
+    api
+      .chartHistory(this.id, s.interval.secs, first.time, limit)
+      .then((page) => {
+        if (s.older !== older || this.disposed) return;
+        s.prepend(page);
         s.olderBackoff = 0;
-        if (rows.length < limit) s.exhausted = true;
+        if (page.length < limit) s.exhausted = true;
         if (s === this.current) this.publish();
       })
       // Asked again on the next update near the edge, once the backoff has passed.
@@ -328,7 +257,7 @@ export class Market {
     else this.on.trades(this.tradeList);
   }
 
-  /** Nobody is looking: close the socket until `resume`. */
+  /** Nobody is looking: stop streaming until `resume`. */
   suspend(): void {
     if (this.suspended || this.disposed) return;
     this.suspended = true;
@@ -341,7 +270,6 @@ export class Market {
   resume(): void {
     if (!this.suspended || this.disposed) return;
     this.suspended = false;
-    this.failures = 0;
     this.loadSnapshot();
     this.connect();
   }
@@ -357,97 +285,91 @@ export class Market {
 
   private connect(): void {
     if (this.disposed || this.suspended) return;
+    this.gap = false;
     this.on.state("connecting");
-    const streams = [`${this.lower}@aggTrade`, `${this.lower}@depth20`, `${this.lower}@ticker`];
-    // Symbols may be non-ASCII; "@" can stay as is.
-    const param = (s: string) => encodeURIComponent(s).replaceAll("%40", "@");
-    const base = WS_HOSTS[this.host % WS_HOSTS.length];
-    const ws = new WebSocket(`${base}/stream?streams=${streams.map(param).join("/")}`);
-    this.ws = ws;
-    ws.onopen = () => {
-      if (this.ws !== ws) return;
-      this.failures = 0;
-      this.on.state("live");
-      this.armSilence();
-      // A history request that failed earlier gets another go now.
-      if (!this.current.ready && !this.current.load) this.loadHistory(this.current);
+    let stopped = false;
+    const stop = () => {
+      stopped = true;
     };
-    ws.onmessage = (event: MessageEvent<string>) => {
-      if (this.ws !== ws) return;
-      this.armSilence();
-      this.handle(event.data);
-    };
-    ws.onclose = () => {
-      if (this.ws !== ws) return;
-      this.ws = null;
-      this.reconnectLater();
-    };
+    this.stopStream = stop;
+    api
+      .chartStream(this.id, (event) => {
+        if (!stopped) this.handle(event);
+      })
+      .then((stopStream) => {
+        if (stopped) stopStream();
+        else if (this.stopStream === stop) {
+          this.stopStream = () => {
+            stop();
+            stopStream();
+          };
+        }
+      })
+      .catch(() => {
+        if (stopped || this.stopStream !== stop) return;
+        this.stopStream = null;
+        this.on.state("offline");
+        this.retryTimer = window.setTimeout(() => this.connect(), HISTORY_RETRY_MS);
+      });
   }
 
-  /** Forgets the current socket without waiting for its close handshake. */
+  /** Ends the current stream; its late events are ignored. */
   private drop(): void {
-    const ws = this.ws;
-    this.ws = null;
-    if (ws) {
-      ws.onopen = ws.onmessage = ws.onclose = null;
-      ws.close();
-    }
-  }
-
-  private reconnectLater(): void {
-    if (this.disposed || this.suspended) return;
-    this.clearTimers();
-    this.failures += 1;
-    this.host += 1;
-    this.on.state("offline");
-    const delay = Math.min(1000 * 2 ** Math.min(this.failures - 1, 5), 30_000);
-    this.retryTimer = window.setTimeout(() => {
-      this.loadSnapshot();
-      this.connect();
-    }, delay);
-  }
-
-  private armSilence(): void {
-    window.clearTimeout(this.silenceTimer);
-    this.silenceTimer = window.setTimeout(() => {
-      this.drop();
-      this.reconnectLater();
-    }, SILENCE_MS);
+    this.stopStream?.();
+    this.stopStream = null;
   }
 
   private clearTimers(): void {
-    for (const timer of [this.retryTimer, this.silenceTimer, this.historyTimer, this.chartTimer, this.tradesTimer]) {
+    for (const timer of [this.retryTimer, this.historyTimer, this.chartTimer, this.tradesTimer]) {
       window.clearTimeout(timer);
     }
-    this.historyTimer = this.chartTimer = this.tradesTimer = undefined;
+    this.retryTimer = this.historyTimer = this.chartTimer = this.tradesTimer = undefined;
   }
 
-  private handle(raw: string): void {
-    const { stream, data } = JSON.parse(raw) as { stream?: string; data?: unknown };
-    if (!stream || !data) return;
-    if (stream === `${this.lower}@aggTrade`) {
-      this.trade(data as RawTrade);
-    } else if (stream === `${this.lower}@depth20`) {
-      this.on.book(parseBook(data as RawBook));
-    } else if (stream === `${this.lower}@ticker`) {
-      this.on.ticker(parseWsTicker(data as RawWsTicker));
+  private handle(event: LiveEvent): void {
+    switch (event.kind) {
+      case "state":
+        this.on.state(event.state);
+        if (event.state === "offline") {
+          this.gap = true;
+        } else if (event.state === "live") {
+          if (this.gap) {
+            this.gap = false;
+            this.loadSnapshot();
+          } else if (!this.current.ready && !this.current.load) {
+            // A history request that failed earlier gets another go now.
+            this.loadHistory(this.current);
+          }
+        }
+        break;
+      case "stats":
+        this.on.stats(event.stats);
+        break;
+      case "book":
+        this.on.book(event.book);
+        break;
+      case "trades":
+        this.trades(event.trades);
+        break;
     }
   }
 
-  private trade(raw: RawTrade): void {
-    const price = +raw.p;
-    const time = raw.T / 1000;
-    this.price = price;
-    // Every cached interval stays live, not only the one on screen.
-    for (const s of this.series.values()) {
-      if (s.ready) {
-        s.add(price, time);
-      } else if (s.load) {
-        s.pending.push({ price, time });
-        if (s.pending.length > MAX_PENDING) s.pending = s.pending.slice(-MAX_PENDING / 2);
+  /** New trades, oldest first. */
+  private trades(list: Trade[]): void {
+    for (const trade of list) {
+      const time = trade.time / 1000;
+      this.price = trade.price;
+      // Every cached interval stays live, not only the one on screen.
+      for (const s of this.series.values()) {
+        if (s.ready) {
+          s.add(trade.price, time);
+        } else if (s.load) {
+          s.pending.push({ price: trade.price, time });
+          if (s.pending.length > MAX_PENDING) s.pending = s.pending.slice(-MAX_PENDING / 2);
+        }
       }
     }
-    this.pushTrades([parseTrade(raw)]);
+    this.pushTrades(list);
     if (this.chartTimer === undefined) {
       this.chartTimer = window.setTimeout(() => {
         this.chartTimer = undefined;
@@ -482,42 +404,29 @@ export class Market {
     }, TRADES_FLUSH_MS);
   }
 
-  /** After a gap (start, reconnect, resume): fresh history, ticker and book. */
+  /** After a gap (start, reconnect, resume): fresh history and trades. The stream brings the rest. */
   private loadSnapshot(): void {
     // Until trades flow again the fresh history's close beats the last price seen.
     this.price = null;
     // Other intervals missed trades too; they reload when picked again.
     for (const s of this.series.values()) {
-      if (s !== this.current) {
-        s.load?.abort();
-        s.older?.abort();
-        this.series.delete(s.interval.secs);
-      }
+      if (s !== this.current) this.series.delete(s.interval.secs);
     }
     this.loadHistory(this.current);
-    const signal = this.rest.signal;
-    binanceGet<RawRestTicker>(`/api/v3/ticker/24hr?symbol=${this.query}`, signal)
-      .then((t) => this.on.ticker(parseRestTicker(t)))
-      .catch(() => {});
-    binanceGet<RawBook>(`/api/v3/depth?symbol=${this.query}&limit=20`, signal)
-      .then((b) => this.on.book(parseBook(b)))
-      .catch(() => {});
     if (this.tradesOn) this.loadTrades();
   }
 
   private loadHistory(s: Series): void {
-    s.load?.abort();
     window.clearTimeout(this.historyTimer);
-    const load = new AbortController();
+    const load = {};
     s.load = load;
+    s.older = null;
     s.ready = false;
-    binanceGet<RawRestKline[]>(
-      `/api/v3/klines?symbol=${this.query}&interval=${s.interval.api}&limit=${PAGE}`,
-      AbortSignal.any([this.rest.signal, load.signal]),
-    )
-      .then((rows) => {
-        if (load.signal.aborted) return;
-        if (!s.replaceRecent(rows.map(parseKline))) s.exhausted = rows.length < PAGE;
+    api
+      .chartHistory(this.id, s.interval.secs, null, PAGE)
+      .then((candles) => {
+        if (s.load !== load || this.disposed) return;
+        if (!s.replaceRecent(candles)) s.exhausted = candles.length < PAGE;
         // Trades seen while loading; those already counted change nothing.
         for (const t of s.pending) s.add(t.price, t.time);
         s.pending = [];
@@ -525,7 +434,7 @@ export class Market {
         if (s === this.current) this.publish();
       })
       .catch(() => {
-        if (load.signal.aborted || this.disposed || this.suspended || s !== this.current) return;
+        if (s.load !== load || this.disposed || this.suspended || s !== this.current) return;
         this.historyTimer = window.setTimeout(() => {
           if (!this.disposed && !this.suspended && s === this.current && !s.ready && !s.load) this.loadHistory(s);
         }, HISTORY_RETRY_MS);
@@ -536,82 +445,11 @@ export class Market {
   }
 
   private loadTrades(): void {
-    binanceGet<RawTrade[]>(`/api/v3/aggTrades?symbol=${this.query}&limit=40`, this.rest.signal)
+    api
+      .chartTrades(this.id, 40)
       .then((list) => {
-        this.pushTrades(list.map(parseTrade));
+        if (!this.disposed) this.pushTrades(list);
       })
       .catch(() => {});
   }
-}
-
-type RawRestKline = [number, string, string, string, string, ...unknown[]];
-
-interface RawBook {
-  bids: [string, string][];
-  asks: [string, string][];
-}
-
-interface RawWsTicker {
-  c: string;
-  h: string;
-  l: string;
-  v: string;
-  q: string;
-  p: string;
-  P: string;
-}
-
-interface RawRestTicker {
-  lastPrice: string;
-  highPrice: string;
-  lowPrice: string;
-  volume: string;
-  quoteVolume: string;
-  priceChange: string;
-  priceChangePercent: string;
-}
-
-interface RawTrade {
-  a: number;
-  p: string;
-  q: string;
-  T: number;
-  m: boolean;
-}
-
-function parseKline([openMs, o, h, l, c]: RawRestKline): CandlePoint {
-  return { time: openMs / 1000, open: +o, high: +h, low: +l, close: +c };
-}
-
-function parseBook(b: RawBook): Book {
-  const levels = (side: [string, string][]) => side.map(([p, q]) => ({ price: +p, qty: +q }));
-  return { bids: levels(b.bids), asks: levels(b.asks) };
-}
-
-function parseWsTicker(t: RawWsTicker): Ticker {
-  return {
-    last: +t.c,
-    high: +t.h,
-    low: +t.l,
-    volume: +t.v,
-    quoteVolume: +t.q,
-    change: +t.p,
-    changePct: +t.P,
-  };
-}
-
-function parseRestTicker(t: RawRestTicker): Ticker {
-  return {
-    last: +t.lastPrice,
-    high: +t.highPrice,
-    low: +t.lowPrice,
-    volume: +t.volume,
-    quoteVolume: +t.quoteVolume,
-    change: +t.priceChange,
-    changePct: +t.priceChangePercent,
-  };
-}
-
-function parseTrade(t: RawTrade): Trade {
-  return { id: t.a, price: +t.p, qty: +t.q, time: t.T, sell: t.m };
 }

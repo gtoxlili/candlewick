@@ -1,0 +1,297 @@
+//! Market data behind one interface, whichever service provides it.
+//!
+//! A [`Provider`] finds instruments, keeps the menu bar quotes of its
+//! watchlist entries current, and serves the chart window: candle history,
+//! recent trades and a live stream of trades, order book and day statistics.
+//! The webviews never reach a service themselves; they call the commands in
+//! `commands.rs`, which route by instrument id (`binance:BTCUSDT`). Supporting
+//! another service means adding a provider here, nothing else.
+
+pub mod binance;
+
+use std::{collections::BTreeMap, future::Future, pin::Pin};
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager, ipc::Channel};
+use tokio::sync::{oneshot, watch};
+
+use crate::{
+    http,
+    model::{FeedControl, Instrument, Shared, Status},
+    tray,
+    window::{self, StatusView},
+};
+
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderId {
+    Binance,
+}
+
+impl ProviderId {
+    pub const ALL: [Self; 1] = [Self::Binance];
+
+    /// The prefix of instrument ids.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Binance => "binance",
+        }
+    }
+
+    /// For status lines.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Binance => "币安",
+        }
+    }
+
+    pub fn provider(self) -> &'static dyn Provider {
+        match self {
+            Self::Binance => &binance::Binance,
+        }
+    }
+}
+
+/// `binance:BTCUSDT`
+pub fn instrument_id(provider: ProviderId, symbol: &str) -> String {
+    format!("{}:{symbol}", provider.key())
+}
+
+pub trait Provider: Send + Sync {
+    /// Normalizes an entry coming from the settings window and checks it.
+    fn validate(&self, instrument: &mut Instrument) -> Result<(), String>;
+
+    /// Instruments matching what someone typed, best first, ready to be added
+    /// to the watchlist. An empty query may start loading whatever searching
+    /// needs, and finds nothing.
+    fn search<'a>(&'a self, query: &'a str) -> BoxFuture<'a, Search>;
+
+    /// Keeps the quotes and feed status of this provider's watchlist entries
+    /// current for as long as the app runs, following `control`.
+    fn watch(
+        &self,
+        app: AppHandle,
+        control: watch::Receiver<FeedControl>,
+    ) -> BoxFuture<'static, ()>;
+
+    /// What the chart window offers for `instrument`.
+    fn chart_spec(&self, instrument: &Instrument) -> ChartSpec;
+
+    /// Up to `limit` candles of `interval` seconds, oldest first: the latest
+    /// ones, whose last is still forming, or those that opened before `end`.
+    fn history<'a>(
+        &'a self,
+        instrument: &'a Instrument,
+        interval: u32,
+        end: Option<f64>,
+        limit: usize,
+    ) -> BoxFuture<'a, Result<Vec<Candle>, Error>>;
+
+    /// The latest trades, oldest first.
+    fn recent_trades<'a>(
+        &'a self,
+        instrument: &'a Instrument,
+        limit: usize,
+    ) -> BoxFuture<'a, Result<Vec<Trade>, Error>>;
+
+    /// Streams live data for `instrument` into `events` until `stop` fires
+    /// (or its sender is dropped), reconnecting on its own meanwhile.
+    fn stream(
+        &self,
+        instrument: Instrument,
+        stop: oneshot::Receiver<()>,
+        events: Channel<LiveEvent>,
+    ) -> BoxFuture<'static, ()>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Http(#[from] http::Error),
+    #[error("{0}")]
+    Message(String),
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Search {
+    pub candidates: Vec<Candidate>,
+    /// The instrument list could not be loaded, so only exact input matches.
+    pub degraded: bool,
+}
+
+/// A search result: a watchlist entry, not yet pinned.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Candidate {
+    #[serde(flatten)]
+    pub instrument: Instrument,
+    /// Taken from the typed text because the instrument list was unavailable.
+    pub manual: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChartSpec {
+    /// The service's name, for messages like "cannot reach …".
+    pub source: &'static str,
+    pub intervals: Vec<IntervalSpec>,
+    /// What the statistics cover, e.g. `24h`.
+    pub stats_span: &'static str,
+    pub volume_unit: String,
+    pub turnover_unit: String,
+    pub link: Option<Link>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntervalSpec {
+    pub secs: u32,
+    pub label: &'static str,
+    /// How the chart first shows it.
+    pub mode: ChartMode,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartMode {
+    Line,
+    Candle,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Link {
+    pub label: &'static str,
+    pub url: String,
+}
+
+/// Times are epoch seconds, as the chart library takes them.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Candle {
+    pub time: f64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+}
+
+/// Statistics over the provider's span (see [`ChartSpec::stats_span`]).
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stats {
+    pub last: f64,
+    pub high: f64,
+    pub low: f64,
+    pub volume: f64,
+    pub turnover: f64,
+    pub change: f64,
+    pub change_pct: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Level {
+    pub price: f64,
+    pub qty: f64,
+}
+
+/// Best level first on both sides.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Book {
+    pub bids: Vec<Level>,
+    pub asks: Vec<Level>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Trade {
+    /// Increases with every trade of the instrument.
+    pub id: u64,
+    pub price: f64,
+    pub qty: f64,
+    /// Epoch milliseconds.
+    pub time: f64,
+    /// The taker sold.
+    pub sell: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FeedState {
+    Connecting,
+    Live,
+    Offline,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum LiveEvent {
+    State {
+        state: FeedState,
+    },
+    Stats {
+        stats: Stats,
+    },
+    Book {
+        book: Book,
+    },
+    /// New trades, oldest first.
+    Trades {
+        trades: Vec<Trade>,
+    },
+}
+
+/// This provider's part of the feed control: its symbols, and whether the
+/// machine is being looked at.
+pub fn wanted(control: &FeedControl, provider: ProviderId) -> (Vec<String>, u8) {
+    (control.symbols.get(&provider).cloned().unwrap_or_default(), control.paused)
+}
+
+/// Waits until this provider's part of `control` differs from `current`;
+/// fails once the app is shutting down.
+pub async fn changed(
+    control: &mut watch::Receiver<FeedControl>,
+    provider: ProviderId,
+    current: &(Vec<String>, u8),
+) -> Result<(), watch::error::RecvError> {
+    loop {
+        control.changed().await?;
+        if &wanted(&control.borrow_and_update(), provider) != current {
+            return Ok(());
+        }
+    }
+}
+
+/// Records a provider's feed status for the menu bar and settings window.
+pub fn set_status(app: &AppHandle, provider: ProviderId, status: Status) {
+    let shared = app.state::<Shared>();
+    let view = {
+        let mut model = shared.model();
+        let feed = model.feeds.entry(provider).or_default();
+        if feed.status == status {
+            return;
+        }
+        match status {
+            Status::Live(_) => feed.stale = false,
+            // Paused: nothing arrives while asleep, so on wake the prices on
+            // screen are old until the stream is live again.
+            Status::Retrying { .. } | Status::Paused => feed.stale = true,
+            Status::Idle | Status::Connecting => {}
+        }
+        feed.status = status;
+        StatusView::from(&*model)
+    };
+    tray::request_render(app);
+    window::emit_status(app, &view);
+}
+
+/// Feed status of every provider, by provider.
+pub type Feeds = BTreeMap<ProviderId, Feed>;
+
+#[derive(Debug, Clone, Default)]
+pub struct Feed {
+    pub status: Status,
+    /// Prices on screen may be old: set when a connection fails, cleared on
+    /// the next successful connection.
+    pub stale: bool,
+}

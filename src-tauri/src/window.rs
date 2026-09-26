@@ -17,7 +17,7 @@ use tauri::{
 
 use crate::{
     macos,
-    model::{Settings, Shared, Status},
+    model::{Model, Settings, Shared, Status},
     net,
 };
 
@@ -25,17 +25,47 @@ pub const SETTINGS: &str = "settings";
 pub const CHART: &str = "chart";
 pub const STATUS_EVENT: &str = "status";
 pub const SETTINGS_EVENT: &str = "settings";
-pub const CHART_SYMBOL_EVENT: &str = "chart-symbol";
+pub const CHART_INSTRUMENT_EVENT: &str = "chart-instrument";
 
+/// The feed status line at the bottom of the settings window.
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusView {
     pub label: String,
     pub tone: &'static str,
 }
 
-impl From<&Status> for StatusView {
-    fn from(status: &Status) -> Self {
-        Self { label: status.label(), tone: status.tone() }
+impl From<&Model> for StatusView {
+    /// The status of each provider the watchlist uses, named when there are
+    /// several; the most urgent tone wins.
+    fn from(model: &Model) -> Self {
+        let providers: Vec<_> = model.settings.symbols().into_keys().collect();
+        let status = |provider| {
+            model.feeds.get(provider).map(|feed| feed.status.clone()).unwrap_or_default()
+        };
+        match providers.as_slice() {
+            [] => Self { label: Status::Idle.label(), tone: Status::Idle.tone() },
+            [only] => {
+                let status = status(only);
+                Self { label: status.label(), tone: status.tone() }
+            }
+            several => {
+                let statuses: Vec<Status> = several.iter().map(status).collect();
+                let label = several
+                    .iter()
+                    .zip(&statuses)
+                    .map(|(provider, status)| format!("{} {}", provider.name(), status.label()))
+                    .collect::<Vec<_>>()
+                    .join("；");
+                let urgency =
+                    |tone: &str| ["live", "idle", "busy", "error"].iter().position(|t| *t == tone);
+                let tone = statuses
+                    .iter()
+                    .map(Status::tone)
+                    .max_by_key(|tone| urgency(tone))
+                    .unwrap_or("idle");
+                Self { label, tone }
+            }
+        }
     }
 }
 
@@ -64,16 +94,16 @@ pub fn open_settings(app: &AppHandle) -> tauri::Result<()> {
     )
 }
 
-/// Opens the chart for `symbol`, or switches the open chart window to it.
-pub fn open_chart(app: &AppHandle, symbol: &str) -> tauri::Result<()> {
-    let Some(title) = retarget_chart(app, symbol)? else {
+/// Opens the chart for the instrument `id`, or switches the open chart window to it.
+pub fn open_chart(app: &AppHandle, id: &str) -> tauri::Result<()> {
+    let Some(title) = retarget_chart(app, id)? else {
         return Ok(());
     };
     open(
         app,
         Spec {
             label: CHART,
-            url: format!("chart.html?symbol={}", net::percent_encode(symbol)),
+            url: format!("chart.html?id={}", net::percent_encode(id)),
             title,
             size: (980.0, 640.0),
             min_size: (760.0, 480.0),
@@ -83,23 +113,24 @@ pub fn open_chart(app: &AppHandle, symbol: &str) -> tauri::Result<()> {
     )
 }
 
-/// Points the chart at `symbol` without bringing its window forward: records
-/// it (a page still loading reads it from there), retitles an open window and
-/// tells its page. Returns the title, or `None` for a pair not in settings.
-fn retarget_chart(app: &AppHandle, symbol: &str) -> tauri::Result<Option<String>> {
+/// Points the chart at the instrument `id` without bringing its window
+/// forward: records it (a page still loading reads it from there), retitles
+/// an open window and tells its page. Returns the title, or `None` for an
+/// instrument not in the watchlist.
+fn retarget_chart(app: &AppHandle, id: &str) -> tauri::Result<Option<String>> {
     let title = {
         let shared = app.state::<Shared>();
         let mut model = shared.model();
-        let Some(coin) = model.settings.coins.iter().find(|c| c.symbol == symbol) else {
+        let Some(instrument) = model.settings.instrument(id) else {
             return Ok(None);
         };
-        let title = format!("{} 行情", coin.pair_label());
-        model.chart_symbol = Some(symbol.to_owned());
+        let title = format!("{} 行情", instrument.pair_label());
+        model.chart = Some(id.to_owned());
         title
     };
     if let Some(window) = app.get_webview_window(CHART) {
         window.set_title(&title)?;
-        app.emit_to(CHART, CHART_SYMBOL_EVENT, symbol)?;
+        app.emit_to(CHART, CHART_INSTRUMENT_EVENT, id)?;
     }
     Ok(Some(title))
 }
@@ -125,8 +156,8 @@ pub fn reopen(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// After settings change: an open chart whose pair was removed moves to the
-/// first remaining pair, or closes when none are left.
+/// After settings change: an open chart whose instrument was removed moves to
+/// the first remaining one, or closes when none are left.
 pub fn sync_chart(app: &AppHandle) {
     let Some(window) = app.get_webview_window(CHART) else {
         return;
@@ -134,14 +165,13 @@ pub fn sync_chart(app: &AppHandle) {
     let replacement = {
         let shared = app.state::<Shared>();
         let model = shared.model();
-        let current = model.chart_symbol.as_deref();
-        if model.settings.coins.iter().any(|c| Some(c.symbol.as_str()) == current) {
+        if model.chart.as_deref().is_some_and(|id| model.settings.instrument(id).is_some()) {
             return;
         }
-        model.settings.coins.first().map(|c| c.symbol.clone())
+        model.settings.watchlist.first().map(|instrument| instrument.id())
     };
     let result = match replacement {
-        Some(symbol) => retarget_chart(app, &symbol).map(|_| ()),
+        Some(id) => retarget_chart(app, &id).map(|_| ()),
         None => window.close(),
     };
     if let Err(e) = result {
@@ -251,6 +281,10 @@ pub fn bring_to_front(window: &WebviewWindow) {
 
 /// Back to a menu-bar-only app once the last window is gone.
 pub fn on_destroyed(app: &AppHandle, label: &str) {
+    if label == CHART {
+        // Dropping the senders stops the streams feeding the page.
+        app.state::<Shared>().streams.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
     if app.webview_windows().keys().any(|other| other != label) {
         return;
     }
@@ -274,13 +308,13 @@ fn release_free_memory() {
     log::debug!("returned {} KiB of free heap to the system", released / 1024);
 }
 
-pub fn emit_status(app: &AppHandle, status: &Status) {
+pub fn emit_status(app: &AppHandle, status: &StatusView) {
     if app.get_webview_window(SETTINGS).is_some() {
-        let _ = app.emit_to(SETTINGS, STATUS_EVENT, StatusView::from(status));
+        let _ = app.emit_to(SETTINGS, STATUS_EVENT, status);
     }
 }
 
-/// Keeps open windows in step with saved settings (coin list, colors).
+/// Keeps open windows in step with saved settings (watchlist, colors).
 pub fn emit_settings(app: &AppHandle, settings: &Settings) {
     for label in [SETTINGS, CHART] {
         if app.get_webview_window(label).is_some() {

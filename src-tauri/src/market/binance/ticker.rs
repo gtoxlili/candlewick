@@ -1,8 +1,8 @@
-//! Binance miniTicker stream → quotes in the shared model.
+//! Menu bar quotes: Binance's miniTicker stream → quotes in the shared model.
 //!
-//! One websocket carries every configured symbol. It is dropped whenever the
-//! symbol set changes or nobody can see the menu bar (sleep, display off),
-//! and re-established with exponential backoff after failures.
+//! One websocket carries every watched pair. It is dropped whenever the pair
+//! set changes or nobody can see the menu bar (sleep, display off), and
+//! re-established with exponential backoff after failures.
 
 use std::{borrow::Cow, time::Duration};
 
@@ -15,13 +15,14 @@ use tokio::{
 };
 use tokio_tungstenite::tungstenite::Message;
 
+use super::WS_HOSTS;
 use crate::{
+    market::{self, ProviderId},
     model::{FeedControl, Quote, Shared, Status},
-    net, tray, window,
+    net, tray,
 };
 
-/// Market-data endpoints; consecutive failures alternate between them.
-const HOSTS: [&str; 2] = ["stream.binance.com", "data-stream.binance.vision"];
+const PROVIDER: ProviderId = ProviderId::Binance;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// The server pings every 20 s, so this much silence means a dead link
 /// (typically a network change the socket never noticed).
@@ -34,35 +35,33 @@ const COALESCE: Duration = Duration::from_millis(120);
 const HEALTHY_SESSION: Duration = Duration::from_secs(60);
 const MAX_BACKOFF_SECS: u64 = 60;
 
-pub fn spawn(app: AppHandle, control: watch::Receiver<FeedControl>) {
-    tauri::async_runtime::spawn(run(app, control));
-}
-
 enum End {
     Reconfigure,
     Shutdown,
     Lost(String),
 }
 
-async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
+pub(super) async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
     // Start from the endpoint that last worked; failures walk to the next.
     let mut preferred = 0;
     let mut failures: u32 = 0;
     loop {
-        let wanted = control.borrow_and_update().clone();
-        if wanted.symbols.is_empty() || wanted.paused != 0 {
-            set_status(&app, if wanted.paused != 0 { Status::Paused } else { Status::NoCoins });
-            if control.changed().await.is_err() {
+        let wanted = market::wanted(&control.borrow_and_update(), PROVIDER);
+        let (symbols, paused) = &wanted;
+        if symbols.is_empty() || *paused != 0 {
+            let status = if symbols.is_empty() { Status::Idle } else { Status::Paused };
+            market::set_status(&app, PROVIDER, status);
+            if market::changed(&mut control, PROVIDER, &wanted).await.is_err() {
                 return;
             }
             continue;
         }
 
-        set_status(&app, Status::Connecting);
-        let host_index = (preferred + failures as usize) % HOSTS.len();
-        let host = HOSTS[host_index];
+        market::set_status(&app, PROVIDER, Status::Connecting);
+        let host_index = (preferred + failures as usize) % WS_HOSTS.len();
+        let host = WS_HOSTS[host_index];
         let started = Instant::now();
-        let path = stream_path(&wanted.symbols);
+        let path = stream_path(symbols);
         let connecting = net::connect(host, &path);
         let end = tokio::select! {
             result = timeout(CONNECT_TIMEOUT, connecting) => match result {
@@ -71,10 +70,10 @@ async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
                 Ok(Ok((socket, route))) => {
                     log::info!("streaming from {host} ({route})");
                     preferred = host_index;
-                    pump(&app, &mut control, socket, route).await
+                    pump(&app, &mut control, &wanted, socket, route).await
                 }
             },
-            changed = control.changed() => match changed {
+            changed = market::changed(&mut control, PROVIDER, &wanted) => match changed {
                 Ok(()) => End::Reconfigure,
                 Err(_) => End::Shutdown,
             },
@@ -95,10 +94,14 @@ async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
         }
         failures += 1;
         let delay = Duration::from_secs((1u64 << (failures - 1).min(6)).min(MAX_BACKOFF_SECS));
-        set_status(&app, Status::Retrying { reason, retry_in_secs: delay.as_secs() });
+        market::set_status(
+            &app,
+            PROVIDER,
+            Status::Retrying { reason, retry_in_secs: delay.as_secs() },
+        );
         tokio::select! {
             () = sleep(delay) => {}
-            changed = control.changed() => if changed.is_err() { return },
+            changed = market::changed(&mut control, PROVIDER, &wanted) => if changed.is_err() { return },
         }
     }
 }
@@ -106,10 +109,11 @@ async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
 async fn pump(
     app: &AppHandle,
     control: &mut watch::Receiver<FeedControl>,
+    wanted: &(Vec<String>, u8),
     mut socket: net::Socket,
     route: net::Route,
 ) -> End {
-    set_status(app, Status::Live(route));
+    market::set_status(app, PROVIDER, Status::Live(route));
     let silence = sleep(SILENCE_LIMIT);
     let flush = sleep(Duration::ZERO);
     tokio::pin!(silence, flush);
@@ -117,7 +121,7 @@ async fn pump(
 
     loop {
         tokio::select! {
-            changed = control.changed() => {
+            changed = market::changed(control, PROVIDER, wanted) => {
                 return if changed.is_ok() { End::Reconfigure } else { End::Shutdown };
             }
             message = socket.next() => {
@@ -173,18 +177,19 @@ fn apply(app: &AppHandle, text: &str) -> bool {
         return false;
     };
     let quote = Quote { last, open };
+    let id = market::instrument_id(PROVIDER, &data.symbol);
     let shared = app.state::<Shared>();
     let mut model = shared.model();
-    if let Some(existing) = model.quotes.get_mut(data.symbol.as_ref()) {
+    if let Some(existing) = model.quotes.get_mut(&id) {
         let changed = existing.last != last || existing.open != open;
         *existing = quote;
         return changed;
     }
-    // Ignore frames for coins removed while this connection was still open.
-    if !model.settings.coins.iter().any(|c| c.symbol == data.symbol) {
+    // Ignore frames for pairs removed while this connection was still open.
+    if !model.settings.watchlist.iter().any(|i| i.provider == PROVIDER && i.symbol == data.symbol) {
         return false;
     }
-    model.quotes.insert(data.symbol.into_owned(), quote);
+    model.quotes.insert(id, quote);
     true
 }
 
@@ -200,24 +205,4 @@ fn stream_path(symbols: &[String]) -> String {
         path.push_str("@miniTicker");
     }
     path
-}
-
-fn set_status(app: &AppHandle, status: Status) {
-    let shared = app.state::<Shared>();
-    {
-        let mut model = shared.model();
-        if model.status == status {
-            return;
-        }
-        match status {
-            Status::Live(_) => model.stale = false,
-            // Paused: nothing arrives while asleep, so on wake the prices on
-            // screen are old until the stream is live again.
-            Status::Retrying { .. } | Status::Paused => model.stale = true,
-            Status::NoCoins | Status::Connecting => {}
-        }
-        model.status = status.clone();
-    }
-    tray::request_render(app);
-    window::emit_status(app, &status);
 }

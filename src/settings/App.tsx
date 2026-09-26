@@ -7,8 +7,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { api, MAX_COINS, subscribe, type Coin, type Settings, type Status } from "@/lib/api";
-import { loadPairs, parsePair, searchPairs, type Pair } from "@/lib/binance";
+import {
+  api,
+  instrumentId,
+  MAX_INSTRUMENTS,
+  subscribe,
+  type Candidate,
+  type Instrument,
+  type Search as SearchResults,
+  type Settings,
+  type Status,
+} from "@/lib/api";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -85,7 +94,10 @@ export default function App() {
           className="flex-1 space-y-5 overflow-y-auto px-5 pt-3 pb-6"
           onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
         >
-          <CoinsSection coins={settings.coins} onChange={(coins) => void update({ ...settings, coins })} />
+          <WatchlistSection
+            watchlist={settings.watchlist}
+            onChange={(watchlist) => void update({ ...settings, watchlist })}
+          />
 
           <Section title="显示">
             <Group>
@@ -146,8 +158,8 @@ export default function App() {
   );
 }
 
-function CoinsSection(props: { coins: Coin[]; onChange: (coins: Coin[]) => void }) {
-  const { coins, onChange } = props;
+function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist: Instrument[]) => void }) {
+  const { watchlist: coins, onChange } = props;
   const move = (index: number, delta: number) => {
     const next = [...coins];
     const [coin] = next.splice(index, 1);
@@ -159,9 +171,9 @@ function CoinsSection(props: { coins: Coin[]; onChange: (coins: Coin[]) => void 
       title="币种"
       footnote="菜单栏只显示一个币种，打开哪个的「菜单栏」就显示哪个；点下拉菜单里的币种可查看 K 线与盘口。"
     >
-      <CoinSearch
+      <InstrumentSearch
         existing={coins}
-        full={coins.length >= MAX_COINS}
+        full={coins.length >= MAX_INSTRUMENTS}
         onAdd={(coin) => onChange([...coins, { ...coin, pinned: coins.length === 0 }])}
       />
       <Group>
@@ -169,7 +181,7 @@ function CoinsSection(props: { coins: Coin[]; onChange: (coins: Coin[]) => void 
           <p className="px-3.5 py-6 text-center text-muted-foreground">还没有币种，在上方搜索并添加</p>
         ) : (
           coins.map((coin, index) => (
-            <div key={coin.symbol} className="flex h-10 items-center gap-0.5 pr-1.5 pl-3.5">
+            <div key={instrumentId(coin)} className="flex h-10 items-center gap-0.5 pr-1.5 pl-3.5">
               <span className="min-w-0 flex-1 truncate">
                 <span className="font-medium">{coin.base}</span>
                 <span className="text-muted-foreground">/{coin.quote}</span>
@@ -183,7 +195,7 @@ function CoinsSection(props: { coins: Coin[]; onChange: (coins: Coin[]) => void 
                     // One pair in the menu bar: switching one on switches the others off.
                     onChange(
                       coins.map((c) =>
-                        c.symbol === coin.symbol ? { ...c, pinned } : pinned ? { ...c, pinned: false } : c,
+                        c === coin ? { ...c, pinned } : pinned ? { ...c, pinned: false } : c,
                       ),
                     )
                   }
@@ -214,7 +226,7 @@ function CoinsSection(props: { coins: Coin[]; onChange: (coins: Coin[]) => void 
                 size="icon-sm"
                 aria-label={`删除 ${coin.base}/${coin.quote}`}
                 className="text-muted-foreground hover:text-destructive"
-                onClick={() => onChange(coins.filter((c) => c.symbol !== coin.symbol))}
+                onClick={() => onChange(coins.filter((c) => c !== coin))}
               >
                 <X />
               </Button>
@@ -267,38 +279,35 @@ function SwitchRow(props: {
   );
 }
 
-function CoinSearch(props: { existing: Coin[]; full: boolean; onAdd: (coin: Coin) => void }) {
+function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd: (instrument: Instrument) => void }) {
   const [query, setQuery] = useState("");
-  const [pairs, setPairs] = useState<Pair[] | null>(null);
+  const [results, setResults] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(false);
-  const [failed, setFailed] = useState(false);
-  // -1 = follow the first pair that can still be added.
+  // -1 = follow the first candidate that can still be added.
   const [active, setActive] = useState(-1);
+  /** Only the latest search may show its results. */
+  const latest = useRef(0);
 
-  const ensurePairs = () => {
-    if (pairs || loading) return;
+  const run = (text: string) => {
+    const seq = ++latest.current;
     setLoading(true);
-    loadPairs()
-      .then((list) => {
-        setPairs(list);
-        setFailed(false);
-      })
-      .catch(() => setFailed(true))
-      .finally(() => setLoading(false));
+    api
+      .search(text)
+      .then((found) => seq === latest.current && setResults(found))
+      .catch(() => seq === latest.current && setResults({ candidates: [], degraded: true }))
+      .finally(() => seq === latest.current && setLoading(false));
   };
 
-  const taken = new Set(props.existing.map((c) => c.symbol));
-  const manual = !pairs && failed ? parsePair(query) : null;
-  const options: Coin[] = manual
-    ? [manual]
-    : (pairs ? searchPairs(pairs, query) : []).map((p) => ({ ...p, pinned: false }));
+  const taken = new Set(props.existing.map(instrumentId));
+  const options: Candidate[] = query.trim() ? (results?.candidates ?? []) : [];
 
   const current =
-    active >= 0 && active < options.length ? active : options.findIndex((o) => !taken.has(o.symbol));
+    active >= 0 && active < options.length ? active : options.findIndex((o) => !taken.has(instrumentId(o)));
 
-  const add = (coin: Coin | undefined) => {
-    if (!coin || taken.has(coin.symbol) || props.full) return;
-    props.onAdd(coin);
+  const add = (candidate: Candidate | undefined) => {
+    if (!candidate || taken.has(instrumentId(candidate)) || props.full) return;
+    const { manual: _, ...instrument } = candidate;
+    props.onAdd(instrument);
     setQuery("");
     setActive(-1);
   };
@@ -324,39 +333,42 @@ function CoinSearch(props: { existing: Coin[]; full: boolean; onAdd: (coin: Coin
       <Input
         value={query}
         disabled={props.full}
-        placeholder={props.full ? `最多 ${MAX_COINS} 个币种` : "添加币种：搜索交易对，如 SOL、ETHBTC"}
+        placeholder={props.full ? `最多 ${MAX_INSTRUMENTS} 个币种` : "添加币种：搜索交易对，如 SOL、ETHBTC"}
         className="h-8 rounded-lg bg-card pl-8 dark:bg-card"
         spellCheck={false}
         autoCorrect="off"
-        onFocus={ensurePairs}
+        // Starts loading the pair list before the first keystroke.
+        onFocus={() => results || loading || run("")}
         onChange={(e) => {
           setQuery(e.target.value);
           setActive(-1);
-          ensurePairs();
+          run(e.target.value);
         }}
         onKeyDown={onKeyDown}
       />
       {query.trim() !== "" && (
         <div className="absolute inset-x-0 top-full z-10 mt-1 overflow-hidden rounded-xl border bg-popover p-1 text-popover-foreground shadow-lg backdrop-blur-xl">
-          {loading && !pairs ? (
-            <p className="flex items-center gap-2 px-2.5 py-1.5 text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" /> 正在获取交易对…
-            </p>
-          ) : options.length === 0 ? (
-            <p className="px-2.5 py-1.5 text-muted-foreground">
-              {failed ? "无法获取交易对列表，请输入完整交易对，如 SOLUSDT" : "没有匹配的交易对"}
-            </p>
+          {options.length === 0 ? (
+            loading ? (
+              <p className="flex items-center gap-2 px-2.5 py-1.5 text-muted-foreground">
+                <LoaderCircle className="size-4 animate-spin" /> 正在获取交易对…
+              </p>
+            ) : (
+              <p className="px-2.5 py-1.5 text-muted-foreground">
+                {results?.degraded ? "无法获取交易对列表，请输入完整交易对，如 SOLUSDT" : "没有匹配的交易对"}
+              </p>
+            )
           ) : (
-            options.map((coin, index) => {
-              const added = taken.has(coin.symbol);
+            options.map((candidate, index) => {
+              const added = taken.has(instrumentId(candidate));
               return (
                 <button
-                  key={coin.symbol}
+                  key={instrumentId(candidate)}
                   type="button"
                   disabled={added}
                   onMouseEnter={() => setActive(index)}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => add(coin)}
+                  onClick={() => add(candidate)}
                   className={cn(
                     "flex w-full items-center justify-between rounded-md px-2.5 py-1 text-left",
                     index === current && !added && "bg-primary text-primary-foreground",
@@ -364,12 +376,12 @@ function CoinSearch(props: { existing: Coin[]; full: boolean; onAdd: (coin: Coin
                   )}
                 >
                   <span>
-                    <span className="font-medium">{coin.base}</span>
+                    <span className="font-medium">{candidate.base}</span>
                     <span className={index === current && !added ? "opacity-80" : "text-muted-foreground"}>
-                      /{coin.quote}
+                      /{candidate.quote}
                     </span>
                   </span>
-                  <span className="text-xs opacity-70">{added ? "已添加" : manual ? "手动添加" : ""}</span>
+                  <span className="text-xs opacity-70">{added ? "已添加" : candidate.manual ? "手动添加" : ""}</span>
                 </button>
               );
             })

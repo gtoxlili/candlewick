@@ -1,44 +1,58 @@
-//! Settings, live quotes and feed status, shared by the feed task, the tray
+//! Settings, live quotes and feed status, shared by the feed tasks, the tray
 //! renderer and the IPC commands.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
-    sync::{Mutex, MutexGuard, atomic::AtomicBool},
+    sync::{
+        Mutex, MutexGuard,
+        atomic::{AtomicBool, AtomicU32},
+    },
 };
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
-use crate::net::Route;
+use crate::{
+    market::{self, Feeds, ProviderId},
+    net::Route,
+};
 
-pub const MAX_COINS: usize = 30;
+pub const MAX_INSTRUMENTS: usize = 30;
 
+/// A watchlist entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Coin {
-    /// Binance spot symbol, always `base + quote`, e.g. `BTCUSDT`.
+pub struct Instrument {
+    pub provider: ProviderId,
+    /// The provider's symbol, e.g. `BTCUSDT`.
     pub symbol: String,
     pub base: String,
     pub quote: String,
-    /// Decimals of the pair's tick size. `None` falls back to a magnitude rule.
+    /// Decimals of the tick size. `None` falls back to a magnitude rule.
     #[serde(default)]
     pub decimals: Option<u8>,
-    /// Shown in the menu bar, not only in the dropdown. At most one pair is.
+    /// Shown in the menu bar, not only in the dropdown. At most one entry is.
     #[serde(default)]
     pub pinned: bool,
 }
 
-impl Coin {
+impl Instrument {
     fn preset(base: &str, pinned: bool) -> Self {
         Self {
+            provider: ProviderId::Binance,
             symbol: format!("{base}USDT"),
             base: base.to_owned(),
             quote: "USDT".to_owned(),
             decimals: Some(2),
             pinned,
         }
+    }
+
+    /// `binance:BTCUSDT`: how windows and menus refer to it.
+    pub fn id(&self) -> String {
+        market::instrument_id(self.provider, &self.symbol)
     }
 
     /// `BTC` for USD-like quotes, `ETH/BTC` otherwise.
@@ -66,7 +80,7 @@ pub enum ColorScheme {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
-    pub coins: Vec<Coin>,
+    pub watchlist: Vec<Instrument>,
     pub show_symbol: bool,
     pub show_change: bool,
     pub color_scheme: ColorScheme,
@@ -75,10 +89,10 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            coins: vec![
-                Coin::preset("BTC", true),
-                Coin::preset("ETH", false),
-                Coin::preset("SOL", false),
+            watchlist: vec![
+                Instrument::preset("BTC", true),
+                Instrument::preset("ETH", false),
+                Instrument::preset("SOL", false),
             ],
             show_symbol: true,
             show_change: false,
@@ -90,50 +104,43 @@ impl Default for Settings {
 impl Settings {
     /// Normalizes and checks settings coming from the webview.
     pub fn validated(mut self) -> Result<Self, String> {
-        if self.coins.len() > MAX_COINS {
-            return Err(format!("最多添加 {MAX_COINS} 个币种"));
+        if self.watchlist.len() > MAX_INSTRUMENTS {
+            return Err(format!("最多添加 {MAX_INSTRUMENTS} 个币种"));
         }
         let mut seen = HashSet::new();
-        for coin in &mut self.coins {
-            coin.symbol = coin.symbol.trim().to_uppercase();
-            coin.base = coin.base.trim().to_uppercase();
-            coin.quote = coin.quote.trim().to_uppercase();
-            let valid = |s: &str, max: usize| {
-                !s.is_empty() && s.chars().count() <= max && s.chars().all(char::is_alphanumeric)
-            };
-            if !valid(&coin.symbol, 24) || !valid(&coin.base, 16) || !valid(&coin.quote, 12) {
-                return Err(format!("无效的交易对：{}", coin.symbol));
+        for instrument in &mut self.watchlist {
+            instrument.provider.provider().validate(instrument)?;
+            if instrument.decimals.is_some_and(|d| d > 12) {
+                instrument.decimals = None;
             }
-            if coin.symbol != format!("{}{}", coin.base, coin.quote) {
-                return Err(format!("交易对与币种不匹配：{}", coin.symbol));
-            }
-            if coin.decimals.is_some_and(|d| d > 12) {
-                coin.decimals = None;
-            }
-            if !seen.insert(coin.symbol.clone()) {
-                return Err(format!("重复的交易对：{}", coin.symbol));
+            if !seen.insert(instrument.id()) {
+                return Err(format!("重复的交易对：{}", instrument.symbol));
             }
         }
-        // The menu bar shows one pair; files from when it showed several keep the first.
-        let mut found = false;
-        for coin in &mut self.coins {
-            if coin.pinned {
-                coin.pinned = !found;
-                found = true;
-            }
+        if self.watchlist.iter().filter(|instrument| instrument.pinned).count() > 1 {
+            return Err("菜单栏只能显示一个币种".to_owned());
         }
         Ok(self)
     }
 
-    /// The pair shown in the menu bar, if any.
-    pub fn pinned(&self) -> Option<&Coin> {
-        self.coins.iter().find(|coin| coin.pinned)
+    /// The entry shown in the menu bar, if any.
+    pub fn pinned(&self) -> Option<&Instrument> {
+        self.watchlist.iter().find(|instrument| instrument.pinned)
     }
 
-    /// Stream subscriptions: the symbol set only, order and flags don't matter.
-    pub fn symbols(&self) -> Vec<String> {
-        let mut symbols: Vec<String> = self.coins.iter().map(|c| c.symbol.clone()).collect();
-        symbols.sort();
+    pub fn instrument(&self, id: &str) -> Option<&Instrument> {
+        self.watchlist.iter().find(|instrument| instrument.id() == id)
+    }
+
+    /// What each provider streams: the symbol sets only, order and flags don't matter.
+    pub fn symbols(&self) -> BTreeMap<ProviderId, Vec<String>> {
+        let mut symbols: BTreeMap<ProviderId, Vec<String>> = BTreeMap::new();
+        for instrument in &self.watchlist {
+            symbols.entry(instrument.provider).or_default().push(instrument.symbol.clone());
+        }
+        for list in symbols.values_mut() {
+            list.sort();
+        }
         symbols
     }
 }
@@ -173,22 +180,28 @@ pub struct Quote {
     pub open: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Status {
-    NoCoins,
+    /// Nothing to stream.
+    Idle,
     Paused,
+    #[default]
     Connecting,
     Live(Route),
-    Retrying { reason: String, retry_in_secs: u64 },
+    Retrying {
+        reason: String,
+        retry_in_secs: u64,
+    },
 }
 
 impl Status {
-    /// Short line under the coins in the dropdown; empty (hidden) while live.
-    pub fn caption(&self) -> String {
+    /// Short line under the watchlist in the dropdown; empty (hidden) while
+    /// live. `source` names the provider.
+    pub fn caption(&self, source: &str) -> String {
         match self {
-            Self::NoCoins | Self::Live(_) => String::new(),
+            Self::Idle | Self::Live(_) => String::new(),
             Self::Paused => "已暂停".to_owned(),
-            Self::Connecting => "正在连接币安…".to_owned(),
+            Self::Connecting => format!("正在连接{source}…"),
             Self::Retrying { retry_in_secs, .. } => {
                 format!("连接失败 · {retry_in_secs} 秒后重试")
             }
@@ -198,7 +211,7 @@ impl Status {
     /// Full description for the settings window, including the route.
     pub fn label(&self) -> String {
         match self {
-            Self::NoCoins => "未添加币种".to_owned(),
+            Self::Idle => "未添加币种".to_owned(),
             Self::Paused => "已暂停（屏幕休眠）".to_owned(),
             Self::Connecting => "连接中…".to_owned(),
             Self::Live(route) => format!("实时 · {route}"),
@@ -214,30 +227,35 @@ impl Status {
             Self::Live(_) => "live",
             Self::Retrying { .. } => "error",
             Self::Connecting => "busy",
-            Self::NoCoins | Self::Paused => "idle",
+            Self::Idle | Self::Paused => "idle",
         }
     }
 }
 
-/// What the stream task needs to know: which symbols, and whether to run at all.
+/// What the feed tasks need to know: which symbols, and whether to run at all.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FeedControl {
-    pub symbols: Vec<String>,
+    pub symbols: BTreeMap<ProviderId, Vec<String>>,
     /// Bit set of reasons the machine is not being looked at (see `macos::Pause`).
     pub paused: u8,
 }
 
 pub struct Model {
     pub settings: Settings,
+    /// By instrument id.
     pub quotes: HashMap<String, Quote>,
-    pub status: Status,
-    /// Prices on screen may be old: set when a connection fails, cleared on
-    /// the next successful connection.
-    pub stale: bool,
-    /// The pair the chart window shows (or last showed). The page reads it on
-    /// load, since a switch requested while it was still loading can't reach
-    /// it as an event.
-    pub chart_symbol: Option<String>,
+    pub feeds: Feeds,
+    /// The instrument id the chart window shows (or last showed). The page
+    /// reads it on load, since a switch requested while it was still loading
+    /// can't reach it as an event.
+    pub chart: Option<String>,
+}
+
+impl Model {
+    /// Whether prices from `provider` may be old.
+    pub fn stale(&self, provider: ProviderId) -> bool {
+        self.feeds.get(&provider).is_some_and(|feed| feed.stale)
+    }
 }
 
 pub struct Shared {
@@ -245,6 +263,9 @@ pub struct Shared {
     pub control: watch::Sender<FeedControl>,
     pub render_pending: AtomicBool,
     pub settings_path: PathBuf,
+    /// The chart window's live streams; dropping a sender stops its stream.
+    pub streams: Mutex<HashMap<u32, oneshot::Sender<()>>>,
+    pub next_stream: AtomicU32,
 }
 
 impl Shared {
@@ -254,13 +275,14 @@ impl Shared {
             model: Mutex::new(Model {
                 settings,
                 quotes: HashMap::new(),
-                status: Status::Connecting,
-                stale: false,
-                chart_symbol: None,
+                feeds: Feeds::new(),
+                chart: None,
             }),
             control,
             render_pending: AtomicBool::new(false),
             settings_path,
+            streams: Mutex::new(HashMap::new()),
+            next_stream: AtomicU32::new(1),
         };
         (shared, rx)
     }
@@ -277,15 +299,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keeps_only_the_first_pinned_pair() {
+    fn at_most_one_entry_is_pinned() {
         let mut settings = Settings::default();
-        for coin in &mut settings.coins {
-            coin.pinned = coin.base != "BTC";
-        }
+        settings.watchlist[1].pinned = true;
+        assert!(settings.clone().validated().is_err());
+        settings.watchlist[0].pinned = false;
         let settings = settings.validated().unwrap();
-        let pinned: Vec<&str> =
-            settings.coins.iter().filter(|c| c.pinned).map(|c| c.base.as_str()).collect();
-        assert_eq!(pinned, ["ETH"]);
-        assert_eq!(settings.pinned().map(|c| c.base.as_str()), Some("ETH"));
+        assert_eq!(settings.pinned().map(|i| i.base.as_str()), Some("ETH"));
     }
 }

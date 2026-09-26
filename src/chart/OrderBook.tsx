@@ -1,8 +1,8 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { cn } from "cn";
 
+import type { Book, Level } from "@/lib/api";
 import { fmtPrice, fmtQty } from "@/lib/format";
-import type { Book, Level } from "./market";
 
 interface Row extends Level {
   total: number;

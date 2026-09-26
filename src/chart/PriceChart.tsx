@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent } 
 import { ChevronsRight } from "lucide-react";
 import { Liveline, type CandlePoint } from "liveline";
 
+import type { ChartMode, Interval } from "@/lib/api";
 import { fmtPrice } from "@/lib/format";
-import type { ChartData, ChartMode, Interval, Market } from "./market";
+import type { ChartData, Market } from "./market";
 import type { ChartColors } from "./palette";
 import { load, store } from "./prefs";
 import { clampBars, DEFAULT_BARS, Viewport } from "./viewport";
@@ -57,6 +58,8 @@ export function PriceChart(props: {
   paletteKey: number;
   decimals: number;
   offline: boolean;
+  /** The provider's name, for the offline message. */
+  source: string;
   onStats: (stats: VisibleStats | null) => void;
 }) {
   const { market, interval, onStats } = props;
@@ -272,7 +275,7 @@ export function PriceChart(props: {
 
       {!ready && props.offline && (
         <p className="absolute inset-x-0 bottom-3 text-center text-xs text-muted-foreground">
-          无法连接币安，正在重试…
+          无法连接{props.source}，正在重试…
         </p>
       )}
     </div>

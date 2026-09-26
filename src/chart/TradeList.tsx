@@ -1,8 +1,8 @@
 import { LoaderCircle } from "lucide-react";
 import { cn } from "cn";
 
+import type { Trade } from "@/lib/api";
 import { fmtClock, fmtPrice, fmtQty } from "@/lib/format";
-import type { Trade } from "./market";
 
 export function TradeList(props: { trades: Trade[]; decimals: number; base: string; quote: string }) {
   return (

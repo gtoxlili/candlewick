@@ -1,12 +1,16 @@
 //! IPC surface for the settings and chart windows.
 
+use std::sync::atomic::Ordering;
+
 use serde::{Serialize, Serializer};
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Manager, State, WebviewWindow, ipc::Channel};
+use tokio::sync::oneshot;
 
 use crate::{
     macos,
-    model::{self, Settings, Shared},
-    net, tray,
+    market::{self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade},
+    model::{self, Instrument, Settings, Shared},
+    tray,
     window::{self, StatusView},
 };
 
@@ -18,6 +22,8 @@ pub enum CommandError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     LoginItem(String),
+    #[error(transparent)]
+    Market(#[from] market::Error),
     #[error(transparent)]
     Tauri(#[from] tauri::Error),
 }
@@ -47,7 +53,7 @@ pub fn save_settings(
     model::save(&shared.settings_path, &settings)?;
     {
         let mut model = shared.model();
-        model.quotes.retain(|symbol, _| settings.coins.iter().any(|c| &c.symbol == symbol));
+        model.quotes.retain(|id, _| settings.instrument(id).is_some());
         model.settings = settings.clone();
     }
     let symbols = settings.symbols();
@@ -64,7 +70,7 @@ pub fn save_settings(
 
 #[tauri::command]
 pub fn get_status(shared: State<'_, Shared>) -> StatusView {
-    StatusView::from(&shared.model().status)
+    StatusView::from(&*shared.model())
 }
 
 #[tauri::command]
@@ -86,36 +92,97 @@ pub fn window_ready(window: WebviewWindow) -> CmdResult<()> {
     Ok(())
 }
 
-/// The pair the chart window should show.
+/// Instruments matching the query, from every provider.
 #[tauri::command]
-pub fn get_chart_symbol(shared: State<'_, Shared>) -> Option<String> {
-    shared.model().chart_symbol.clone()
+pub async fn search_instruments(query: String) -> Search {
+    let mut all = Search::default();
+    for provider in ProviderId::ALL {
+        let found = provider.provider().search(&query).await;
+        all.candidates.extend(found.candidates);
+        all.degraded |= found.degraded;
+    }
+    all
 }
 
-/// Shows `symbol` in the chart window (switching it if already open).
+/// The instrument id the chart window should show.
 #[tauri::command]
-pub fn open_chart(app: AppHandle, symbol: String) -> CmdResult<()> {
-    window::open_chart(&app, &symbol)?;
+pub fn get_chart_instrument(shared: State<'_, Shared>) -> Option<String> {
+    shared.model().chart.clone()
+}
+
+/// Shows the instrument `id` in the chart window (switching it if already open).
+#[tauri::command]
+pub fn open_chart(app: AppHandle, id: String) -> CmdResult<()> {
+    window::open_chart(&app, &id)?;
     Ok(())
 }
 
-/// Opens the pair's spot trading page on binance.com in the default browser.
 #[tauri::command]
-pub fn open_in_binance(shared: State<'_, Shared>, symbol: String) -> CmdResult<()> {
-    let url = {
-        let model = shared.model();
-        let coin = model
-            .settings
-            .coins
-            .iter()
-            .find(|c| c.symbol == symbol)
-            .ok_or_else(|| CommandError::Invalid(format!("未知的交易对：{symbol}")))?;
-        format!(
-            "https://www.binance.com/zh-CN/trade/{}_{}?type=spot",
-            net::percent_encode(&coin.base),
-            net::percent_encode(&coin.quote)
-        )
-    };
-    macos::open_url(&url);
+pub fn chart_spec(shared: State<'_, Shared>, id: String) -> CmdResult<ChartSpec> {
+    let instrument = instrument(&shared, &id)?;
+    Ok(instrument.provider.provider().chart_spec(&instrument))
+}
+
+#[tauri::command]
+pub async fn chart_history(
+    shared: State<'_, Shared>,
+    id: String,
+    interval: u32,
+    end: Option<f64>,
+    limit: usize,
+) -> CmdResult<Vec<Candle>> {
+    let instrument = instrument(&shared, &id)?;
+    Ok(instrument.provider.provider().history(&instrument, interval, end, limit).await?)
+}
+
+#[tauri::command]
+pub async fn chart_trades(
+    shared: State<'_, Shared>,
+    id: String,
+    limit: usize,
+) -> CmdResult<Vec<Trade>> {
+    let instrument = instrument(&shared, &id)?;
+    Ok(instrument.provider.provider().recent_trades(&instrument, limit).await?)
+}
+
+/// Starts streaming `id` into `events`; returns a handle for `chart_stream_stop`.
+#[tauri::command]
+pub fn chart_stream(
+    app: AppHandle,
+    shared: State<'_, Shared>,
+    id: String,
+    events: Channel<LiveEvent>,
+) -> CmdResult<u32> {
+    let instrument = instrument(&shared, &id)?;
+    let (stop, stopped) = oneshot::channel();
+    let handle = shared.next_stream.fetch_add(1, Ordering::Relaxed);
+    shared.streams.lock().unwrap_or_else(|e| e.into_inner()).insert(handle, stop);
+    let stream = instrument.provider.provider().stream(instrument, stopped, events);
+    tauri::async_runtime::spawn(async move {
+        stream.await;
+        // A stream also ends on its own once its page is gone.
+        app.state::<Shared>().streams.lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
+    });
+    Ok(handle)
+}
+
+#[tauri::command]
+pub fn chart_stream_stop(shared: State<'_, Shared>, handle: u32) {
+    shared.streams.lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
+}
+
+/// Opens the instrument's page on its provider's website in the browser.
+#[tauri::command]
+pub fn open_link(shared: State<'_, Shared>, id: String) -> CmdResult<()> {
+    let instrument = instrument(&shared, &id)?;
+    if let Some(link) = instrument.provider.provider().chart_spec(&instrument).link {
+        macos::open_url(&link.url);
+    }
     Ok(())
+}
+
+fn instrument(shared: &Shared, id: &str) -> CmdResult<Instrument> {
+    let model = shared.model();
+    let found = model.settings.instrument(id).cloned();
+    found.ok_or_else(|| CommandError::Invalid(format!("未知的交易对：{id}")))
 }

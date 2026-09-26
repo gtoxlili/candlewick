@@ -1,5 +1,6 @@
-//! Opens the market-data websocket, following the macOS system proxy the way
-//! Safari would (HTTPS proxy via CONNECT, else SOCKS5, honoring exceptions).
+//! Opens the market-data websockets, following the macOS system proxy the way
+//! Safari would (HTTPS proxy via CONNECT, else SOCKS5, honoring exceptions),
+//! and gives the HTTP client (`http.rs`) the same route and TLS setup.
 
 use std::{
     fmt, io,
@@ -95,6 +96,21 @@ pub async fn connect(host: &str, path_and_query: &str) -> Result<(Socket, Route)
         client_async_tls_with_config(url, tcp, Some(config), Some(Connector::Rustls(tls_config())))
             .await?;
     Ok((socket, route))
+}
+
+/// The system proxy for `host` as a proxy URL, or `None` to go direct.
+pub fn proxy_url(host: &str) -> Option<String> {
+    match system_route(host) {
+        Route::Direct => None,
+        Route::Http { host, port } => Some(format!("http://{host}:{port}")),
+        // `socks5h`: the proxy resolves the name, as `socks5_connect` has it do.
+        Route::Socks5 { host, port } => Some(format!("socks5h://{host}:{port}")),
+    }
+}
+
+/// The websockets' TLS setup (ring, platform certificate verifier).
+pub fn tls_client_config() -> rustls::ClientConfig {
+    (*tls_config()).clone()
 }
 
 /// Percent-encodes everything except RFC 3986 unreserved characters.

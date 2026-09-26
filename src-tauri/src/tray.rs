@@ -23,14 +23,14 @@ use tauri::{
 use crate::{
     format::{self, Direction},
     macos,
-    model::{Coin, ColorScheme, Quote, Settings, Shared},
+    model::{ColorScheme, Instrument, Model, Quote, Shared},
     ticker::{self, Ticker},
     window,
 };
 
 const ID_SETTINGS: &str = "settings";
 const ID_QUIT: &str = "quit";
-const COIN_PREFIX: &str = "coin:";
+const INSTRUMENT_PREFIX: &str = "instrument:";
 
 fn template_icon() -> Image<'static> {
     tauri::include_image!("icons/tray-template.png")
@@ -44,9 +44,9 @@ struct Ui {
     tray: TrayIcon<Wry>,
     status_item: Option<Retained<NSStatusItem>>,
     fonts: Fonts,
-    /// Coins the current menu was built for; a change rebuilds the menu.
-    /// `None` until the first build, so even an empty list gets a menu.
-    layout: Option<Vec<Coin>>,
+    /// The watchlist the current menu was built for; a change rebuilds the
+    /// menu. `None` until the first build, so even an empty list gets a menu.
+    layout: Option<Vec<Instrument>>,
     /// Column widths in points. They only grow while the layout stays the
     /// same, so an open menu never shifts as prices tick.
     columns: Columns,
@@ -143,7 +143,7 @@ pub fn request_render(app: &AppHandle) {
 }
 
 struct View {
-    coins: Vec<Coin>,
+    watchlist: Vec<Instrument>,
     rows: Vec<Row>,
     ticker: Option<Ticker>,
     caption: String,
@@ -155,10 +155,10 @@ fn render(app: &AppHandle) {
         let shared = app.state::<Shared>();
         let model = shared.model();
         View {
-            coins: model.settings.coins.clone(),
-            rows: rows(&model.settings.coins, &model.quotes),
-            ticker: ticker(&model.settings, &model.quotes, model.stale),
-            caption: model.status.caption(),
+            watchlist: model.settings.watchlist.clone(),
+            rows: rows(&model.settings.watchlist, &model.quotes),
+            ticker: ticker(&model),
+            caption: caption(&model),
             scheme: model.settings.color_scheme,
         }
     };
@@ -174,10 +174,10 @@ fn render(app: &AppHandle) {
 impl Ui {
     fn apply(&mut self, app: &AppHandle, view: View) -> tauri::Result<()> {
         let mtm = MainThreadMarker::new().expect("tray renders on the main thread");
-        if self.layout.as_ref() != Some(&view.coins) {
-            log::debug!("menu rebuilt for {} coins", view.coins.len());
-            self.tray.set_menu(Some(build_menu(app, &view.coins)?))?;
-            self.layout = Some(view.coins);
+        if self.layout.as_ref() != Some(&view.watchlist) {
+            log::debug!("menu rebuilt for {} instruments", view.watchlist.len());
+            self.tray.set_menu(Some(build_menu(app, &view.watchlist)?))?;
+            self.layout = Some(view.watchlist);
             self.columns = Columns::default();
             self.rows.clear();
             self.caption = None;
@@ -211,10 +211,10 @@ impl Ui {
         }
         self.rows = view.rows;
 
-        let coin_count = self.layout.as_ref().map_or(0, Vec::len);
-        if coin_count > 0 && self.caption.as_ref() != Some(&view.caption) {
+        let count = self.layout.as_ref().map_or(0, Vec::len);
+        if count > 0 && self.caption.as_ref() != Some(&view.caption) {
             log::debug!("caption: {:?}", view.caption);
-            set_caption(&menu, coin_count, &view.caption, &self.fonts.caption);
+            set_caption(&menu, count, &view.caption, &self.fonts.caption);
             self.caption = Some(view.caption);
         }
 
@@ -329,7 +329,7 @@ fn tab_stops(columns: Columns, font_size: f64) -> Retained<NSMutableParagraphSty
     style
 }
 
-/// A small dimmed line under the coin rows, shown only when the feed is not
+/// A small dimmed line under the watchlist rows, shown only when a feed is not
 /// live (connecting, retrying, paused); hidden items take no space.
 fn set_caption(menu: &NSMenu, index: usize, text: &str, font: &NSFont) {
     let Some(item) = menu.itemAtIndex(index as isize) else {
@@ -375,14 +375,14 @@ fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-fn build_menu(app: &AppHandle, coins: &[Coin]) -> tauri::Result<Menu<Wry>> {
+fn build_menu(app: &AppHandle, watchlist: &[Instrument]) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::new(app)?;
-    if coins.is_empty() {
+    if watchlist.is_empty() {
         menu.append(&MenuItem::with_id(app, "empty", "在设置中添加币种", false, None::<&str>)?)?;
     } else {
-        for coin in coins {
-            let id = format!("{COIN_PREFIX}{}", coin.symbol);
-            menu.append(&MenuItem::with_id(app, id, coin.pair_label(), true, None::<&str>)?)?;
+        for instrument in watchlist {
+            let id = format!("{INSTRUMENT_PREFIX}{}", instrument.id());
+            menu.append(&MenuItem::with_id(app, id, instrument.pair_label(), true, None::<&str>)?)?;
         }
         // Status caption, styled and shown/hidden natively by `set_caption`.
         menu.append(&MenuItem::with_id(app, "status", "", false, None::<&str>)?)?;
@@ -395,36 +395,52 @@ fn build_menu(app: &AppHandle, coins: &[Coin]) -> tauri::Result<Menu<Wry>> {
     Ok(menu)
 }
 
-/// The pinned pair as the menu bar shows it; `None` when nothing is pinned.
-fn ticker(settings: &Settings, quotes: &HashMap<String, Quote>, stale: bool) -> Option<Ticker> {
-    let coin = settings.pinned()?;
-    let quote = quotes.get(&coin.symbol);
+/// The pinned entry as the menu bar shows it; `None` when nothing is pinned.
+fn ticker(model: &Model) -> Option<Ticker> {
+    let settings = &model.settings;
+    let pinned = settings.pinned()?;
+    let quote = model.quotes.get(&pinned.id());
     Some(Ticker {
-        symbol: settings.show_symbol.then(|| coin.short_label()),
+        symbol: settings.show_symbol.then(|| pinned.short_label()),
         price: quote.map_or_else(
             || "—".to_owned(),
-            |q| format::price(q.last, format::compact_decimals(q.last, coin.decimals)),
+            |q| format::price(q.last, format::compact_decimals(q.last, pinned.decimals)),
         ),
         change: quote
             .filter(|_| settings.show_change)
             .and_then(|q| format::change_pct(q.last, q.open))
             .map(|pct| (format::change_signed(pct), format::direction(pct))),
         two_rows: settings.show_change,
-        stale,
+        stale: model.stale(pinned.provider),
     })
 }
 
-fn rows(coins: &[Coin], quotes: &HashMap<String, Quote>) -> Vec<Row> {
-    coins
+/// The first feed that isn't live explains itself; empty while all are.
+fn caption(model: &Model) -> String {
+    model
+        .settings
+        .symbols()
+        .into_keys()
+        .map(|provider| {
+            let status =
+                model.feeds.get(&provider).map(|feed| feed.status.clone()).unwrap_or_default();
+            status.caption(provider.name())
+        })
+        .find(|caption| !caption.is_empty())
+        .unwrap_or_default()
+}
+
+fn rows(watchlist: &[Instrument], quotes: &HashMap<String, Quote>) -> Vec<Row> {
+    watchlist
         .iter()
-        .map(|coin| {
-            let quote = quotes.get(&coin.symbol);
+        .map(|instrument| {
+            let quote = quotes.get(&instrument.id());
             Row {
-                base: coin.base.clone(),
-                quote: format!("/{}", coin.quote),
+                base: instrument.base.clone(),
+                quote: format!("/{}", instrument.quote),
                 price: quote.map_or_else(
                     || "—".to_owned(),
-                    |q| format::price(q.last, format::decimals(q.last, coin.decimals)),
+                    |q| format::price(q.last, format::decimals(q.last, instrument.decimals)),
                 ),
                 change: quote
                     .and_then(|q| format::change_pct(q.last, q.open))
@@ -441,8 +457,8 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
             app.exit(0);
             Ok(())
         }
-        id => match id.strip_prefix(COIN_PREFIX) {
-            Some(symbol) => window::open_chart(app, symbol),
+        id => match id.strip_prefix(INSTRUMENT_PREFIX) {
+            Some(instrument) => window::open_chart(app, instrument),
             None => Ok(()),
         },
     };
