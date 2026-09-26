@@ -1,6 +1,6 @@
 [package]
 name = "candlewick"
-version = "0.5.0"
+version = "0.6.0"
 description = "Live crypto and stock prices in the macOS menu bar and the Windows taskbar"
 repository = "https://github.com/gtoxlili/candlewick"
 homepage = "https://github.com/gtoxlili/candlewick"
