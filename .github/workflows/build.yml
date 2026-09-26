@@ -1,0 +1,469 @@
+name: Build Candlewick
+
+# Builds the installers and releases from main on its own. A push to main
+# that changes the app gets its version from the commits since the last
+# release, a `chore: release vX.Y.Z` commit, a GitHub release with the
+# installers, and the tag that comes with it. Nobody maintains versions or
+# tags by hand. Pull requests build and test the Windows installer, and
+# release nothing.
+#
+# Signing: the macOS build only runs for a release, in the `release`
+# environment, which main alone may use: it holds the Apple secrets, so no
+# other branch or pull request ever sees them. The Windows installer is not
+# signed yet; it earns a SmartScreen prompt on first install. See
+# docs/release.md.
+#
+# Secrets (environment `release`):
+#   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY
+#   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+
+on:
+  push:
+    branches: [main]
+    paths: &app
+      - "src/**"
+      - "src-tauri/**"
+      - "index.html"
+      - "chart.html"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "patches/**"
+      - "tsconfig.json"
+      - "vite.config.ts"
+      - ".github/workflows/build.yml"
+  pull_request:
+    branches: [main]
+    paths: *app
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # What counts as the app when deciding whether to release and what goes
+  # into the notes. The workflow itself is not in it: changing only the
+  # workflow builds, and releases nothing.
+  APP_PATHS: src src-tauri index.html chart.html package.json pnpm-lock.yaml pnpm-workspace.yaml patches tsconfig.json vite.config.ts
+
+jobs:
+  # Works out whether this push is a release and which version it is, and
+  # if so writes that version into the repository first, so the builds below
+  # are made from a commit that says what it is.
+  version:
+    name: Decide the version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # The release commit.
+      contents: write
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      version: ${{ steps.decide.outputs.version }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # The tags and the whole range since the last one.
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Conventional Commits decide the bump: `type!:` or a BREAKING CHANGE
+      # footer bumps minor before 1.0 and major after, `feat:` bumps minor,
+      # anything else bumps patch. Only commits touching the app count. When
+      # the files already hold a version no tag names (a hand bump, or a
+      # release whose run did not finish), that version ships as it is.
+      - name: Decide
+        id: decide
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(jq -r .version src-tauri/tauri.conf.json)
+          [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::unexpected version ${current}"; exit 1; }
+          echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "version=${current}" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git rev-parse -q --verify "refs/tags/v${current}" >/dev/null; then
+            # shellcheck disable=SC2086
+            subjects=$(git log "v${current}..HEAD" --format=%s -- $APP_PATHS)
+            # shellcheck disable=SC2086
+            bodies=$(git log "v${current}..HEAD" --format=%b -- $APP_PATHS)
+            if [[ -z "$subjects" ]]; then
+              echo "::notice::nothing in the app changed since v${current}; not releasing"
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            IFS=. read -r major minor patch <<< "$current"
+            if grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "$subjects" || grep -q '^BREAKING CHANGE' <<< "$bodies"; then
+              if (( major == 0 )); then minor=$((minor + 1)); else major=$((major + 1)); minor=0; fi
+              patch=0
+            elif grep -qE '^feat(\([^)]*\))?:' <<< "$subjects"; then
+              minor=$((minor + 1)); patch=0
+            else
+              patch=$((patch + 1))
+            fi
+            next="${major}.${minor}.${patch}"
+          else
+            next="$current"
+          fi
+
+          if [[ "$next" != "$current" ]]; then
+            sed -i "s/^  \"version\": \"${current}\",$/  \"version\": \"${next}\",/" src-tauri/tauri.conf.json package.json
+            sed -i "s/^version = \"${current}\"$/version = \"${next}\"/" src-tauri/Cargo.toml
+            sed -i "/^name = \"candlewick\"$/{n;s/^version = \"${current}\"$/version = \"${next}\"/}" src-tauri/Cargo.lock
+            # Every file must now say it; a pattern that missed fails here.
+            [[ "$(jq -r .version src-tauri/tauri.conf.json)" == "$next" ]]
+            [[ "$(jq -r .version package.json)" == "$next" ]]
+            grep -qx "version = \"${next}\"" src-tauri/Cargo.toml
+            grep -A1 -x 'name = "candlewick"' src-tauri/Cargo.lock | grep -qx "version = \"${next}\""
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qam "chore: release v${next}"
+            # A push that lands in between makes this fail; the next run
+            # computes the same version on top of it and tries again.
+            git push origin HEAD:main
+            echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=${next}" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "releasing v${next}"
+
+  windows:
+    name: Windows
+    needs: version
+    runs-on: windows-latest
+    # Backstop for a step that hangs; a healthy build takes about 20 minutes.
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+
+      - &check-version
+        name: Check the checked-out version
+        if: needs.version.outputs.release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          want="${{ needs.version.outputs.version }}"
+          json() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "$1"; }
+          for have in "$(json src-tauri/tauri.conf.json)" "$(json package.json)" \
+            "$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -1)"; do
+            if [[ "$have" != "$want" ]]; then
+              echo "::error::releasing ${want}, but the checkout says ${have}"
+              exit 1
+            fi
+          done
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: x86_64-pc-windows-msvc
+
+      - &setup-pnpm
+        name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: latest
+
+      - &setup-node
+        name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - &install
+        name: Install page dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      - name: Build installer
+        run: pnpm tauri build --target x86_64-pc-windows-msvc
+
+      # The upload takes seconds when it works; when the connection stalls,
+      # the action neither fails nor returns, so the bound comes from here.
+      - name: Upload installer
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v7
+        with:
+          name: candlewick-x86_64-pc-windows-msvc
+          retention-days: 7
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: macos-latest
+    environment: release
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+
+      - *check-version
+
+      # A release must be signed and notarized: an unsigned DMG is one
+      # Gatekeeper calls damaged. Say which secret is missing instead of
+      # letting the bundler fail on an empty certificate.
+      - name: Check the signing secrets
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=0
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::the release environment has no ${name}"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: aarch64-apple-darwin
+
+      - *setup-pnpm
+      - *setup-node
+      - *install
+
+      - name: Lint
+        working-directory: src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+      # codesign asks trustd to chain the certificate up to Apple's root, and
+      # trustd does not take the intermediate from the temporary keychain the
+      # bundler makes from the p12. Without it in the login keychain the DMG
+      # signature fails with "unable to build chain to self-signed root". It is
+      # Apple's public Developer ID G2 CA, fetched from Apple; verify-cert
+      # proves it chains to the Apple Root CA in the system trust store.
+      - name: Install Apple's intermediate certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cert="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          curl -fsSL --retry 3 -o "$cert" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          keychain="$HOME/Library/Keychains/login.keychain-db"
+          security verify-cert -c "$cert" -p basic
+          # add-certificates exits 1 when the certificate is already there.
+          security add-certificates -k "$keychain" "$cert" || true
+          security find-certificate -c "Developer ID Certification Authority" "$keychain" >/dev/null
+
+      # The bundler imports the p12 into a throwaway keychain, signs every
+      # binary with the hardened runtime, notarizes the app and staples it,
+      # then builds and signs the DMG. The secrets reach this step alone.
+      - name: Build installer
+        timeout-minutes: 40
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # The bundler skips the DMG's Finder layout (window size, icon
+          # positions) on CI; the hosted Mac can script Finder, so keep it.
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+        run: pnpm tauri build --target aarch64-apple-darwin
+
+      # Until tauri-apps/tauri#7533 is fixed, the bundler only signs the DMG.
+      # Users install from the DMG, so it gets its own notarization and
+      # ticket; the app inside is checked the way Gatekeeper will see it.
+      - name: Notarize and verify the DMG
+        timeout-minutes: 30
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          app="$bundle/macos/Candlewick.app"
+          dmgs=("$bundle"/dmg/*.dmg)
+          [[ ${#dmgs[@]} -eq 1 && -s "${dmgs[0]}" ]]
+          dmg="${dmgs[0]}"
+
+          # Apple publishes a ticket shortly after accepting the upload, so a
+          # staple right after can lose that race; retry instead.
+          staple() {
+            for attempt in 1 2 3 4 5; do
+              xcrun stapler staple "$1" && return 0
+              [[ "$attempt" -lt 5 ]] && { echo "stapling $1 failed (attempt ${attempt}), retrying in 30s"; sleep 30; }
+            done
+            echo "::error::could not staple a notarization ticket onto $1"
+            return 1
+          }
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          codesign --verify --strict --verbose=2 "$dmg"
+
+          auth=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID")
+          result="$RUNNER_TEMP/dmg-notarization.json"
+          submit_status=0
+          xcrun notarytool submit "$dmg" "${auth[@]}" \
+            --wait --timeout 20m --output-format json > "$result" || submit_status=$?
+          cat "$result"
+          status=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$result")
+          if [[ "$submit_status" -ne 0 || "$status" != "Accepted" ]]; then
+            submission=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("id", ""))' "$result")
+            if [[ -n "$submission" ]]; then
+              xcrun notarytool log "$submission" "${auth[@]}" || true
+            fi
+            echo "::error::DMG notarization did not finish with Accepted"
+            exit 1
+          fi
+          staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+
+          # What the user drags out of the DMG. The bundler stapled it before
+          # building the DMG but ignores a failed staple; without the ticket
+          # the first launch needs to reach Apple, which a download just did.
+          mount="$RUNNER_TEMP/candlewick-dmg"
+          mkdir -p "$mount"
+          hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mount" "$dmg" >/dev/null
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+          codesign --verify --deep --strict --verbose=2 "$mount/Candlewick.app"
+          spctl --assess --type execute --verbose=2 "$mount/Candlewick.app"
+          if ! xcrun stapler validate "$mount/Candlewick.app"; then
+            echo "::warning::the app inside the DMG has no stapled ticket; it opens online only the first time"
+          fi
+
+      - name: Upload installer
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v7
+        with:
+          name: candlewick-aarch64-apple-darwin
+          retention-days: 7
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+  # The release and its tag come last: a tag means the installers are there.
+  # A run that dies before this point leaves the version in the files
+  # untagged, and the next run ships it again rather than bumping.
+  publish:
+    name: Publish the release
+    needs: [version, windows, macos]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SHA: ${{ needs.version.outputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download installers
+        uses: actions/download-artifact@v8
+        with:
+          pattern: candlewick-*
+          path: release
+          merge-multiple: true
+
+      # The notes list the app's commits since the previous release, then
+      # how to install, and the checksums.
+      - name: Write the notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="Candlewick_${VERSION}_aarch64.dmg"
+          exe="Candlewick_${VERSION}_x64-setup.exe"
+          for f in "$dmg" "$exe"; do
+            test -s "release/$f" || { echo "::error::missing release/$f"; ls -l release; exit 1; }
+          done
+          [[ $(find release -type f | wc -l) -eq 2 ]] || { echo "::error::unexpected files"; ls -l release; exit 1; }
+
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "${SHA}^" 2>/dev/null || true)
+          # shellcheck disable=SC2086
+          changes=$(git log "${previous:+${previous}..}${SHA}" --no-merges --invert-grep \
+            --grep='^chore: release v' --format='- %s' -- $APP_PATHS)
+          {
+            if [[ -n "$changes" ]]; then
+              printf '%s\n\n' "$changes"
+            fi
+            cat <<EOF
+          ## 安装
+
+          macOS：下载 \`${dmg}\`，打开后把 Candlewick 拖进「应用程序」。需要 macOS 15 或更高，仅支持 Apple 芯片的 Mac。安装包用 Developer ID 签名并经过苹果公证，双击即可打开。
+
+          Windows：下载 \`${exe}\`，双击安装，不需要管理员权限。需要 Windows 10 或 11。安装包暂未签名，第一次运行时如果出现「Windows 已保护你的电脑」，点「更多信息」再点「仍要运行」。
+
+          SHA-256：
+          EOF
+            for f in "$dmg" "$exe"; do
+              # shellcheck disable=SC2016 # Markdown backticks, not a command
+              printf -- '- `%s`：`%s`\n' "$f" "$(sha256sum "release/$f" | cut -d' ' -f1)"
+            done
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A draft left by a run that died mid-upload would block the name.
+          if [[ "$(gh release view "v${VERSION}" --json isDraft --jq .isDraft 2>/dev/null || true)" == "true" ]]; then
+            gh release delete "v${VERSION}" --yes
+          fi
+          gh release create "v${VERSION}" release/* \
+            --target "$SHA" --title "Candlewick ${VERSION}" --notes-file notes.md --latest
+          [[ $(gh release view "v${VERSION}" --json assets --jq '.assets | length') -eq 2 ]]
+          echo "published https://github.com/${GH_REPO}/releases/tag/v${VERSION}"

@@ -1,2 +1,7 @@
+# Install new releases right away. pnpm's default one-day minimum release age
+# would fail `--frozen-lockfile` in CI whenever the lockfile holds a package
+# published that day.
+minimumReleaseAge: 0
+
 patchedDependencies:
   liveline@0.0.7: patches/liveline@0.0.7.patch
