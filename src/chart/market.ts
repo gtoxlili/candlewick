@@ -15,7 +15,7 @@ export interface ChartData {
   candles: CandlePoint[];
   /** The forming candle. */
   live: CandlePoint | null;
-  /** Candle closes, then trade-by-trade detail from since the window opened. */
+  /** Closes of the closed candles; the chart draws on to `price`. */
   line: LivelinePoint[];
   /** Latest trade price. */
   price: number | null;
@@ -37,8 +37,6 @@ export interface MarketEvents {
 const PAGE = 1000;
 /** Bounds memory and per-frame work however far back someone scrolls. */
 const MAX_CANDLES = 6000;
-/** Line detail kept: ten minutes of one-second candles at four points a second. */
-const MAX_TRAIL = 2400;
 /** Trades held while an interval's history loads. */
 const MAX_PENDING = 5000;
 /** Trades arrive in batches every 100 ms; the chart eases between these updates. */
@@ -56,10 +54,8 @@ const OLDER_RETRY_MAX_MS = 60_000;
 class Series {
   candles: CandlePoint[] = [];
   live: CandlePoint | null = null;
-  /** Trade detail for the line, one point per `step` seconds. */
-  trail: LivelinePoint[] = [];
-  /** Candle closes before the trail starts; rebuilt after history changes. */
-  private history: LivelinePoint[] | null = null;
+  /** The line, rebuilt after the candles change. */
+  private points: LivelinePoint[] | null = null;
   /** History is current, so trades apply directly instead of waiting in `pending`. */
   ready = false;
   pending: { price: number; time: number }[] = [];
@@ -72,14 +68,9 @@ class Series {
 
   constructor(readonly interval: Interval) {}
 
-  /** A point per sixtieth of a candle, at most four a second. */
-  private get step(): number {
-    return Math.max(this.interval.secs / 60, 0.25);
-  }
-
   /**
-   * One trade: fold it into the forming candle and the line's detail. Returns
-   * true when it belongs to a candle only the provider can start.
+   * One trade: fold it into the forming candle. Returns true when it belongs
+   * to a candle only the provider can start.
    */
   add(price: number, time: number): boolean {
     const secs = this.interval.secs;
@@ -101,17 +92,6 @@ class Series {
       if (time >= live.time + secs) return true;
       this.live = { ...live, high: Math.max(live.high, price), low: Math.min(live.low, price), close: price };
     }
-
-    const last = this.trail.at(-1);
-    if (last && Math.floor(last.time / this.step) === Math.floor(time / this.step)) {
-      this.trail[this.trail.length - 1] = { time: last.time, value: price };
-    } else if (!last || time > last.time) {
-      this.trail.push({ time, value: price });
-      if (this.trail.length > MAX_TRAIL) {
-        this.trail.splice(0, this.trail.length - MAX_TRAIL);
-        this.history = null;
-      }
-    }
     return false;
   }
 
@@ -132,7 +112,7 @@ class Series {
         this.live = candle;
       }
     }
-    this.history = null;
+    this.points = null;
   }
 
   private close(candle: CandlePoint): void {
@@ -143,14 +123,13 @@ class Series {
     } else {
       this.candles = candles;
     }
-    this.history = null;
+    this.points = null;
   }
 
   /**
    * The newest page from REST. Pages already scrolled in stay only if they
    * join up with it: after a long gap they would leave a hole that paging back
-   * never reaches. The trail always goes, or the line would bridge the gap
-   * straight. Returns whether older pages were kept.
+   * never reaches. Returns whether older pages were kept.
    */
   replaceRecent(fresh: CandlePoint[]): boolean {
     const live = fresh.pop() ?? null;
@@ -160,35 +139,25 @@ class Series {
     if (last && last.time + this.interval.secs < from) kept = [];
     this.candles = [...kept, ...fresh].slice(-MAX_CANDLES);
     this.live = live;
-    this.trail = [];
-    this.history = null;
+    this.points = null;
     return kept.length > 0;
   }
 
   prepend(page: CandlePoint[]): void {
     const first = this.candles[0]?.time ?? Infinity;
     this.candles = [...page.filter((c) => c.time < first), ...this.candles];
-    this.history = null;
+    this.points = null;
   }
 
   /**
-   * The line: each candle's close at its center (where the candle/line morph
-   * puts it), then the trade detail. Where the detail exists it replaces the
-   * closes, so the two never zigzag against each other.
+   * The line: each closed candle's close at its center (where the
+   * candle/line morph puts it), the same density before and after the window
+   * opened; the chart carries it on to the latest price.
    */
   line(): LivelinePoint[] {
-    if (!this.history) {
-      const cut = this.trail[0]?.time ?? Infinity;
-      const half = this.interval.secs / 2;
-      const points: LivelinePoint[] = [];
-      for (const c of this.candles) {
-        const time = c.time + half;
-        if (time >= cut) break;
-        points.push({ time, value: c.close });
-      }
-      this.history = points;
-    }
-    return this.trail.length ? this.history.concat(this.trail) : this.history;
+    const half = this.interval.secs / 2;
+    this.points ??= this.candles.map((c) => ({ time: c.time + half, value: c.close }));
+    return this.points;
   }
 }
 
