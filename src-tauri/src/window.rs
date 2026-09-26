@@ -7,7 +7,7 @@ use tauri::{
     menu::{AboutMetadata, Menu, PredefinedMenuItem, Submenu},
 };
 
-use crate::model::Status;
+use crate::{macos, model::Status};
 
 pub const LABEL: &str = "settings";
 pub const STATUS_EVENT: &str = "status";
@@ -25,13 +25,15 @@ impl From<&Status> for StatusView {
 }
 
 pub fn open(app: &AppHandle) -> tauri::Result<()> {
+    // A regular app while the window is open: Dock icon, Cmd-Tab, app menu.
+    app.set_activation_policy(ActivationPolicy::Regular)?;
+    // Now, while still handling the click; see `activate_app`.
+    macos::activate_app();
     if let Some(window) = app.get_webview_window(LABEL) {
         window.unminimize()?;
         window.show()?;
         return window.set_focus();
     }
-    // A regular app while the window is open: Dock icon, Cmd-Tab, app menu.
-    app.set_activation_policy(ActivationPolicy::Regular)?;
     WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
         .title("Coin Tray 设置")
         .inner_size(460.0, 640.0)

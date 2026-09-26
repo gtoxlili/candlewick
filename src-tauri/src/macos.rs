@@ -5,10 +5,10 @@ use std::{path::Path, ptr::NonNull, sync::Arc};
 use block2::RcBlock;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
-    NSFont, NSFontWeightRegular, NSStatusItem, NSWorkspace, NSWorkspaceDidWakeNotification,
-    NSWorkspaceScreensDidSleepNotification, NSWorkspaceScreensDidWakeNotification,
-    NSWorkspaceSessionDidBecomeActiveNotification, NSWorkspaceSessionDidResignActiveNotification,
-    NSWorkspaceWillSleepNotification,
+    NSApplication, NSFont, NSFontWeightRegular, NSStatusItem, NSWorkspace,
+    NSWorkspaceDidWakeNotification, NSWorkspaceScreensDidSleepNotification,
+    NSWorkspaceScreensDidWakeNotification, NSWorkspaceSessionDidBecomeActiveNotification,
+    NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillSleepNotification,
 };
 use objc2_foundation::{NSNotification, NSString, NSURL};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
@@ -47,6 +47,16 @@ pub fn observe_pauses(on_change: impl Fn(Pause, bool) + Send + Sync + 'static) {
             center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block)
         };
         std::mem::forget(token);
+    }
+}
+
+/// Brings the app to the front. Must run while handling the user's action
+/// (menu click, reopen): since macOS 14 activation is cooperative, and a
+/// request made later — e.g. once the settings page has loaded — is ignored,
+/// leaving the window behind whatever app was frontmost.
+pub fn activate_app() {
+    if let Some(mtm) = MainThreadMarker::new() {
+        NSApplication::sharedApplication(mtm).activate();
     }
 }
 
