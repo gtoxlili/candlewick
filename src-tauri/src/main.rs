@@ -10,6 +10,7 @@ mod format;
 mod macos;
 mod model;
 mod net;
+mod ticker;
 mod tray;
 mod window;
 

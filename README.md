@@ -23,7 +23,7 @@ Coin Tray is a free, open-source macOS menu bar app that shows live prices of Bi
 
 ## Features
 
-- Prices in the menu bar: pinned pairs show their last price, optionally with the symbol and the 24-hour change, and the dropdown lists every pair you track
+- The price in the menu bar: the pinned pair shows its last price, optionally with its symbol and 24-hour change stacked in two compact rows, and the dropdown lists every pair you track
 - A live chart: line or candlesticks at intervals from 1 second to 1 day, updated by every trade and animated by [Liveline](https://github.com/benjitaylor/liveline); drag to scroll back through history, scroll or pinch to zoom
 - The top 20 levels of the order book with buy and sell pressure, and a live list of recent trades
 - Any Binance spot pair, up to 30: search, pin and reorder them

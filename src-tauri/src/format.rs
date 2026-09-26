@@ -64,16 +64,7 @@ pub fn direction(pct: f64) -> Direction {
     }
 }
 
-/// Menu bar style: `▲1.23%`, `▼0.41%`, `0.00%`.
-pub fn change_arrow(pct: f64) -> String {
-    match direction(pct) {
-        Direction::Up => format!("▲{:.2}%", pct),
-        Direction::Down => format!("▼{:.2}%", -pct),
-        Direction::Flat => "0.00%".to_owned(),
-    }
-}
-
-/// Dropdown style: `+1.23%`, `−0.41%` (U+2212, same width as `+`), `0.00%`.
+/// `+1.23%`, `−0.41%` (U+2212, same width as `+`), `0.00%`.
 pub fn change_signed(pct: f64) -> String {
     match direction(pct) {
         Direction::Up => format!("+{:.2}%", pct),
@@ -113,13 +104,12 @@ mod tests {
         assert_eq!(decimals(0.0, None), 2);
     }
 
-    // A change that rounds to zero must read as flat, not "▼0.00%".
+    // A change that rounds to zero must read as flat, not "−0.00%".
     #[test]
     fn change_rounding_decides_direction() {
-        assert_eq!(change_arrow(1.234), "▲1.23%");
-        assert_eq!(change_arrow(-0.41), "▼0.41%");
-        assert_eq!(change_arrow(-0.004), "0.00%");
+        assert_eq!(change_signed(1.234), "+1.23%");
         assert_eq!(change_signed(-0.41), "\u{2212}0.41%");
+        assert_eq!(change_signed(-0.004), "0.00%");
         assert_eq!(change_pct(110.0, 100.0), Some(10.0));
         assert_eq!(change_pct(1.0, 0.0), None);
     }

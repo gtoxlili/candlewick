@@ -24,6 +24,7 @@ use crate::{
     format::{self, Direction},
     macos,
     model::{Coin, ColorScheme, Quote, Settings, Shared},
+    ticker::{self, Ticker},
     window,
 };
 
@@ -54,8 +55,9 @@ struct Ui {
     rows: Vec<Row>,
     /// `None` until applied to the current menu.
     caption: Option<String>,
-    /// `None` shows the template icon instead of text.
-    title: Option<String>,
+    /// What the status item shows: `None` is the template icon. `Some(None)`
+    /// only before the first render, so that one always applies.
+    ticker: Option<Option<Ticker>>,
 }
 
 struct Fonts {
@@ -106,7 +108,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         scheme: ColorScheme::default(),
         rows: Vec::new(),
         caption: None,
-        title: None,
+        ticker: None,
     }));
     // Runs inline: we are already on the main thread.
     tray.with_inner_tray_icon(|inner| {
@@ -143,7 +145,7 @@ pub fn request_render(app: &AppHandle) {
 struct View {
     coins: Vec<Coin>,
     rows: Vec<Row>,
-    title: Option<String>,
+    ticker: Option<Ticker>,
     caption: String,
     scheme: ColorScheme,
 }
@@ -155,7 +157,7 @@ fn render(app: &AppHandle) {
         View {
             coins: model.settings.coins.clone(),
             rows: rows(&model.settings.coins, &model.quotes),
-            title: title(&model.settings, &model.quotes, model.stale),
+            ticker: ticker(&model.settings, &model.quotes, model.stale),
             caption: model.status.caption(),
             scheme: model.settings.color_scheme,
         }
@@ -190,7 +192,8 @@ impl Ui {
                 columns = columns.fit(row, &self.fonts.row);
             }
         }
-        let mut restyle_all = self.scheme != view.scheme;
+        let scheme_changed = self.scheme != view.scheme;
+        let mut restyle_all = scheme_changed;
         if columns != self.columns {
             self.columns = columns;
             self.tabs = tab_stops(columns, self.fonts.row.pointSize());
@@ -215,21 +218,40 @@ impl Ui {
             self.caption = Some(view.caption);
         }
 
-        if self.title != view.title {
-            match &view.title {
-                Some(text) => {
-                    if self.title.is_none() {
-                        self.tray.set_icon(None)?;
-                    }
-                    log::debug!("title: {text}");
-                    self.tray.set_title(Some(text))?;
-                }
-                None => {
-                    self.tray.set_title(Some(""))?;
-                    self.tray.set_icon_with_as_template(Some(template_icon()), true)?;
-                }
+        // The drawn block also carries the trend colors.
+        let redraw = scheme_changed && view.ticker.as_ref().is_some_and(|t| t.two_rows);
+        if redraw || self.ticker.as_ref() != Some(&view.ticker) {
+            self.show(view.ticker.as_ref(), mtm)?;
+            self.ticker = Some(view.ticker);
+        }
+        Ok(())
+    }
+
+    fn show(&self, ticker: Option<&Ticker>, mtm: MainThreadMarker) -> tauri::Result<()> {
+        match ticker {
+            None => {
+                self.tray.set_title(Some(""))?;
+                self.tray.set_icon_with_as_template(Some(template_icon()), true)?;
             }
-            self.title = view.title;
+            Some(ticker) if ticker.two_rows => {
+                log::trace!("ticker: {ticker:?}");
+                if let Some(button) = self.status_item.as_ref().and_then(|item| item.button(mtm)) {
+                    button.setImage(Some(&ticker::image(ticker, self.scheme)));
+                }
+                // After the image: Tauri's setters also fit its click target
+                // to the button, whose width the image just changed.
+                self.tray.set_title(Some(""))?;
+            }
+            Some(ticker) => {
+                log::trace!("ticker: {ticker:?}");
+                // Coming from the icon or the drawn block: clear the image
+                // (Tauri's call clears whatever the button holds).
+                let was_text = matches!(&self.ticker, Some(Some(shown)) if !shown.two_rows);
+                if !was_text {
+                    self.tray.set_icon(None)?;
+                }
+                self.tray.set_title(Some(&ticker.line()))?;
+            }
         }
         Ok(())
     }
@@ -256,25 +278,17 @@ impl Ui {
                 NSRange::new(base_len, utf16_len(&row.quote)),
             );
         }
-        if let Some((change, direction)) = &row.change {
-            let color =
-                match (direction, self.scheme) {
-                    (Direction::Up, ColorScheme::GreenUp)
-                    | (Direction::Down, ColorScheme::RedUp) => Some(NSColor::systemGreenColor()),
-                    (Direction::Down, ColorScheme::GreenUp)
-                    | (Direction::Up, ColorScheme::RedUp) => Some(NSColor::systemRedColor()),
-                    (Direction::Flat, _) => None,
-                };
-            if let Some(color) = color {
-                let len = utf16_len(change);
-                // SAFETY: NSColor for the foreground color key.
-                unsafe {
-                    string.addAttribute_value_range(
-                        NSForegroundColorAttributeName,
-                        &color,
-                        NSRange::new(utf16_len(&text) - len, len),
-                    );
-                }
+        if let Some((change, direction)) = &row.change
+            && let Some(color) = ticker::trend_color(*direction, self.scheme)
+        {
+            let len = utf16_len(change);
+            // SAFETY: NSColor for the foreground color key.
+            unsafe {
+                string.addAttribute_value_range(
+                    NSForegroundColorAttributeName,
+                    &color,
+                    NSRange::new(utf16_len(&text) - len, len),
+                );
             }
         }
         string
@@ -381,41 +395,23 @@ fn build_menu(app: &AppHandle, coins: &[Coin]) -> tauri::Result<Menu<Wry>> {
     Ok(menu)
 }
 
-/// Menu bar text, e.g. `BTC 84,050  ETH 3,412 ▲1.20%`; `None` when nothing is pinned.
-fn title(settings: &Settings, quotes: &HashMap<String, Quote>, stale: bool) -> Option<String> {
-    let parts: Vec<String> = settings
-        .coins
-        .iter()
-        .filter(|coin| coin.pinned)
-        .map(|coin| {
-            let mut part = String::new();
-            if settings.show_symbol {
-                part.push_str(&coin.short_label());
-                part.push(' ');
-            }
-            match quotes.get(&coin.symbol) {
-                Some(q) => {
-                    part.push_str(&format::price(
-                        q.last,
-                        format::compact_decimals(q.last, coin.decimals),
-                    ));
-                    if settings.show_change
-                        && let Some(pct) = format::change_pct(q.last, q.open)
-                    {
-                        part.push(' ');
-                        part.push_str(&format::change_arrow(pct));
-                    }
-                }
-                None => part.push('—'),
-            }
-            part
-        })
-        .collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let joined = parts.join("  ");
-    Some(if stale { format!("⚠︎ {joined}") } else { joined })
+/// The pinned pair as the menu bar shows it; `None` when nothing is pinned.
+fn ticker(settings: &Settings, quotes: &HashMap<String, Quote>, stale: bool) -> Option<Ticker> {
+    let coin = settings.pinned()?;
+    let quote = quotes.get(&coin.symbol);
+    Some(Ticker {
+        symbol: settings.show_symbol.then(|| coin.short_label()),
+        price: quote.map_or_else(
+            || "—".to_owned(),
+            |q| format::price(q.last, format::compact_decimals(q.last, coin.decimals)),
+        ),
+        change: quote
+            .filter(|_| settings.show_change)
+            .and_then(|q| format::change_pct(q.last, q.open))
+            .map(|pct| (format::change_signed(pct), format::direction(pct))),
+        two_rows: settings.show_change,
+        stale,
+    })
 }
 
 fn rows(coins: &[Coin], quotes: &HashMap<String, Quote>) -> Vec<Row> {

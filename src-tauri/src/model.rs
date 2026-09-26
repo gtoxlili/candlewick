@@ -25,7 +25,7 @@ pub struct Coin {
     /// Decimals of the pair's tick size. `None` falls back to a magnitude rule.
     #[serde(default)]
     pub decimals: Option<u8>,
-    /// Shown in the menu bar title, not only in the dropdown.
+    /// Shown in the menu bar, not only in the dropdown. At most one pair is.
     #[serde(default)]
     pub pinned: bool,
 }
@@ -114,7 +114,20 @@ impl Settings {
                 return Err(format!("重复的交易对：{}", coin.symbol));
             }
         }
+        // The menu bar shows one pair; files from when it showed several keep the first.
+        let mut found = false;
+        for coin in &mut self.coins {
+            if coin.pinned {
+                coin.pinned = !found;
+                found = true;
+            }
+        }
         Ok(self)
+    }
+
+    /// The pair shown in the menu bar, if any.
+    pub fn pinned(&self) -> Option<&Coin> {
+        self.coins.iter().find(|coin| coin.pinned)
     }
 
     /// Stream subscriptions: the symbol set only, order and flags don't matter.
@@ -256,5 +269,23 @@ impl Shared {
         // A panic while holding the lock aborts the process (panic = "abort"),
         // so poisoning cannot be observed in release builds.
         self.model.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keeps_only_the_first_pinned_pair() {
+        let mut settings = Settings::default();
+        for coin in &mut settings.coins {
+            coin.pinned = coin.base != "BTC";
+        }
+        let settings = settings.validated().unwrap();
+        let pinned: Vec<&str> =
+            settings.coins.iter().filter(|c| c.pinned).map(|c| c.base.as_str()).collect();
+        assert_eq!(pinned, ["ETH"]);
+        assert_eq!(settings.pinned().map(|c| c.base.as_str()), Some("ETH"));
     }
 }

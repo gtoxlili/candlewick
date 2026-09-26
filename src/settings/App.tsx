@@ -96,6 +96,7 @@ export default function App() {
               />
               <SwitchRow
                 label="菜单栏显示 24 小时涨跌幅"
+                hint="价格与涨跌幅分上下两排显示"
                 checked={settings.showChange}
                 onChange={(showChange) => void update({ ...settings, showChange })}
               />
@@ -156,7 +157,7 @@ function CoinsSection(props: { coins: Coin[]; onChange: (coins: Coin[]) => void 
   return (
     <Section
       title="币种"
-      footnote="打开「菜单栏」的币种会直接显示在菜单栏上；点下拉菜单里的币种可查看 K 线与盘口。"
+      footnote="菜单栏只显示一个币种，打开哪个的「菜单栏」就显示哪个；点下拉菜单里的币种可查看 K 线与盘口。"
     >
       <CoinSearch
         existing={coins}
@@ -179,7 +180,12 @@ function CoinsSection(props: { coins: Coin[]; onChange: (coins: Coin[]) => void 
                   size="sm"
                   checked={coin.pinned}
                   onCheckedChange={(pinned) =>
-                    onChange(coins.map((c) => (c.symbol === coin.symbol ? { ...c, pinned } : c)))
+                    // One pair in the menu bar: switching one on switches the others off.
+                    onChange(
+                      coins.map((c) =>
+                        c.symbol === coin.symbol ? { ...c, pinned } : pinned ? { ...c, pinned: false } : c,
+                      ),
+                    )
                   }
                 />
               </Label>
