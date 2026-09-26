@@ -15,6 +15,8 @@ use windows::{
     core::{PCSTR, w},
 };
 
+/// What `GetProcAddress` hands back, before the cast to the real signature.
+type Export = unsafe extern "system" fn() -> isize;
 type AllowDarkModeForWindow = unsafe extern "system" fn(HWND, bool) -> bool;
 type Procedure = unsafe extern "system" fn();
 
@@ -38,13 +40,13 @@ fn uxtheme() -> Option<&'static Uxtheme> {
                     LoadLibraryExW(w!("uxtheme.dll"), None, LOAD_LIBRARY_SEARCH_SYSTEM32).ok()?;
                 let ordinal = |n: usize| GetProcAddress(module, PCSTR(n as *const u8));
                 Some(Uxtheme {
-                    allow_dark_mode_for_window: std::mem::transmute::<_, AllowDarkModeForWindow>(
+                    allow_dark_mode_for_window: std::mem::transmute::<Export, AllowDarkModeForWindow>(
                         ordinal(133)?,
                     ),
-                    refresh_immersive_color_policy_state: std::mem::transmute::<_, Procedure>(
+                    refresh_immersive_color_policy_state: std::mem::transmute::<Export, Procedure>(
                         ordinal(104)?,
                     ),
-                    flush_menu_themes: std::mem::transmute::<_, Procedure>(ordinal(136)?),
+                    flush_menu_themes: std::mem::transmute::<Export, Procedure>(ordinal(136)?),
                 })
             }
         })
