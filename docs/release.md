@@ -24,10 +24,19 @@
 |---|---|---|
 | macOS，Apple 芯片 | `Candlewick_<版本>_aarch64.dmg` | Developer ID 签名，应用和 DMG 都经过公证并装订票据 |
 | Windows x64 | `Candlewick_<版本>_x64-setup.exe` | 暂未签名 |
+| 自动更新 | `latest.json`、`Candlewick_<版本>_aarch64.app.tar.gz` | 更新包和 Windows 安装包都用更新密钥签名 |
 
 两个平台都在 GitHub 托管的机器上构建，构建前各跑一遍 clippy（有警告即失败）和单元测试，macOS 上还检查 rustfmt。
 
 全部成功后才创建 Release 和 tag。Release 说明里依次是这次的提交、安装方法和两个安装包的 SHA-256。中途失败不会打 tag，下一次推送会原样重发这个版本，版本号不会跳。
+
+## 自动更新
+
+已安装的应用从 `https://github.com/gtoxlili/candlewick/releases/latest/download/latest.json` 读取最新版本。这个文件是每个 Release 的附件，列出各平台更新包的地址和签名。macOS 的更新包是 `.app.tar.gz`，CI 确认应用已经装订了公证票据之后才打包，并解开检查一遍；Windows 直接用安装包。
+
+应用只接受能用公钥验证的更新包，公钥在 `tauri.conf.json` 的 `plugins.updater.pubkey`，私钥是 `release` 环境里的 `TAURI_SIGNING_PRIVATE_KEY`。换掉这对密钥，已经安装的版本就再也收不到更新，所以私钥要另外妥善备份。
+
+应用这边的逻辑在 `src-tauri/src/update.rs`：启动一分半后检查一次，之后每六小时一次；新版本下载并验证后，等到锁屏或显示器关闭、并且没有打开的窗口时才重新启动。不想等的话，下拉菜单和设置页里都能立即重启。设置里关掉「自动更新」后，只在手动点「检查更新」时才会检查。
 
 ## Pull request
 
@@ -35,7 +44,7 @@ PR 只构建和测试 Windows 安装包，不签名，也不发布；macOS 版�
 
 ## 签名凭据
 
-macOS 安装包的签名和公证凭据放在 GitHub 的 `release` 环境里。这个环境只允许 main 使用，其他分支和 PR 都读不到。
+macOS 安装包的签名和公证凭据，以及更新密钥，都放在 GitHub 的 `release` 环境里。这个环境只允许 main 使用，其他分支和 PR 都读不到。
 
 签名还需要 Apple 的 Developer ID G2 中间证书。它是公开证书，构建时从 apple.com 下载，确认能链到系统信任的 Apple 根证书后再装进钥匙串。
 

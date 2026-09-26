@@ -50,6 +50,25 @@ export interface Settings {
   showSymbol: boolean;
   showChange: boolean;
   colorScheme: ColorScheme;
+  /** Check for, download and apply updates on its own. */
+  autoUpdate: boolean;
+}
+
+/** What the updater is doing (update.rs). */
+export type UpdateState =
+  | { kind: "disabled" }
+  | { kind: "idle"; checked: boolean }
+  | { kind: "checking" }
+  | { kind: "unreachable" }
+  | { kind: "downloading"; version: string }
+  | { kind: "ready"; version: string }
+  | { kind: "restarting"; version: string }
+  | { kind: "failed"; version: string };
+
+export interface Update {
+  /** The running version. */
+  current: string;
+  state: UpdateState;
 }
 
 export interface Status {
@@ -180,6 +199,10 @@ export const api = {
   getStatus: () => invoke<Status>("get_status"),
   getLoginItem: () => invoke<boolean>("get_login_item"),
   setLoginItem: (enabled: boolean) => invoke<boolean>("set_login_item", { enabled }),
+  getUpdate: () => invoke<Update>("get_update"),
+  /** Starts a check; what it finds arrives through `onUpdate`. */
+  checkUpdate: () => invoke<void>("check_update"),
+  restartToUpdate: () => invoke<void>("restart_to_update"),
   /** Tells the app the page has content, so its hidden window can be shown. */
   ready: () => invoke<void>("window_ready"),
   /** Instruments matching the query; an empty query only starts loading the lists. */
@@ -209,6 +232,8 @@ export const api = {
   checkLongbridge: () => invoke<LongbridgeAccount>("check_longbridge"),
   onStatus: (handler: (status: Status) => void): Promise<UnlistenFn> =>
     listen<Status>("status", (event) => handler(event.payload)),
+  onUpdate: (handler: (update: Update) => void): Promise<UnlistenFn> =>
+    listen<Update>("update", (event) => handler(event.payload)),
   /** Saved settings, from whichever window saved them. */
   onSettings: (handler: (settings: Settings) => void): Promise<UnlistenFn> =>
     listen<Settings>("settings", (event) => handler(event.payload)),

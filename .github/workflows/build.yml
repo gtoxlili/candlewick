@@ -378,13 +378,47 @@ jobs:
             echo "::warning::the app inside the DMG has no stapled ticket; it opens online only the first time"
           fi
 
+      # The updater's package: the stapled app, archived and signed with the
+      # updater key. Made here rather than by the bundler, which archives the
+      # app before a failed staple could be retried; what users receive is
+      # then checked the way Gatekeeper will check it.
+      - name: Package the update
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          set -euo pipefail
+          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+          app="$bundle/Candlewick.app"
+          for attempt in 1 2 3 4 5; do
+            xcrun stapler validate "$app" >/dev/null && break
+            if [[ "$attempt" -eq 5 ]]; then
+              echo "::error::no notarization ticket on $app"
+              exit 1
+            fi
+            xcrun stapler staple "$app" || sleep 30
+          done
+          update="$bundle/Candlewick.app.tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "$update" -C "$bundle" Candlewick.app
+          pnpm tauri signer sign "$update"
+          test -s "$update.sig"
+          check=$(mktemp -d "$RUNNER_TEMP/update.XXXXXX")
+          tar -xzf "$update" -C "$check"
+          codesign --verify --deep --strict --verbose=2 "$check/Candlewick.app"
+          xcrun stapler validate "$check/Candlewick.app"
+          spctl --assess --type execute --verbose=2 "$check/Candlewick.app"
+
       - name: Upload installer
         timeout-minutes: 5
         uses: actions/upload-artifact@v7
         with:
           name: candlewick-aarch64-apple-darwin
           retention-days: 7
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          path: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Candlewick.app.tar.gz
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Candlewick.app.tar.gz.sig
           if-no-files-found: error
 
   # The release and its tag come last: a tag means the installers are there.
@@ -395,6 +429,8 @@ jobs:
     needs: [version, windows, macos]
     if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
+    # The updater key signs the Windows installer here.
+    environment: release
     timeout-minutes: 15
     permissions:
       contents: write
@@ -411,30 +447,75 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - *setup-pnpm
+      - *setup-node
+      - *install
+
       - name: Download installers
         uses: actions/download-artifact@v8
         with:
           pattern: candlewick-*
-          path: release
+          path: built
           merge-multiple: true
 
-      # The notes list the app's commits since the previous release, then
-      # how to install, and the checksums.
-      - name: Write the notes
+      # The installers under their release names, the updater's manifest
+      # (latest.json: each platform's package and its signature), and the
+      # notes: the app's commits since the previous release, how to install,
+      # and the checksums.
+      - name: Assemble the release
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |
           set -euo pipefail
-          dmg="Candlewick_${VERSION}_aarch64.dmg"
-          exe="Candlewick_${VERSION}_x64-setup.exe"
-          for f in "$dmg" "$exe"; do
-            test -s "release/$f" || { echo "::error::missing release/$f"; ls -l release; exit 1; }
+          built_dmg=$(find built -type f -name '*.dmg')
+          built_app=$(find built -type f -name 'Candlewick.app.tar.gz')
+          app_sig=$(find built -type f -name 'Candlewick.app.tar.gz.sig')
+          built_exe=$(find built -type f -name '*-setup.exe')
+          # Exactly one of each: two would be one path with a newline in it.
+          for f in "$built_dmg" "$built_app" "$app_sig" "$built_exe"; do
+            if [[ ! -f "$f" ]]; then
+              echo "::error::the build output is not one DMG, one update and one installer"
+              find built -type f
+              exit 1
+            fi
           done
-          [[ $(find release -type f | wc -l) -eq 2 ]] || { echo "::error::unexpected files"; ls -l release; exit 1; }
+          dmg="Candlewick_${VERSION}_aarch64.dmg"
+          app="Candlewick_${VERSION}_aarch64.app.tar.gz"
+          exe="Candlewick_${VERSION}_x64-setup.exe"
+          mkdir release
+          cp "$built_dmg" "release/$dmg"
+          cp "$built_app" "release/$app"
+          cp "$built_exe" "release/$exe"
+          # The installer doubles as the updater's package on Windows.
+          pnpm tauri signer sign "release/$exe"
+          exe_sig="release/$exe.sig"
 
           previous=$(git describe --tags --abbrev=0 --match 'v*' "${SHA}^" 2>/dev/null || true)
           # shellcheck disable=SC2086
           changes=$(git log "${previous:+${previous}..}${SHA}" --no-merges --invert-grep \
             --grep='^chore: release v' --format='- %s' -- $APP_PATHS)
+
+          base="https://github.com/${GH_REPO}/releases/download/v${VERSION}"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "$changes" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg mac "$base/$app" --rawfile mac_sig "$app_sig" \
+            --arg win "$base/$exe" --rawfile win_sig "$exe_sig" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $date,
+              platforms: {
+                "darwin-aarch64": {url: $mac, signature: ($mac_sig | rtrimstr("\n"))},
+                "windows-x86_64": {url: $win, signature: ($win_sig | rtrimstr("\n"))}
+              }
+            }' > release/latest.json
+          rm "$exe_sig"
+          cat release/latest.json
+
           {
             if [[ -n "$changes" ]]; then
               printf '%s\n\n' "$changes"
@@ -445,6 +526,8 @@ jobs:
           macOS：下载 \`${dmg}\`，打开后把 Candlewick 拖进「应用程序」。需要 macOS 15 或更高，仅支持 Apple 芯片的 Mac。安装包用 Developer ID 签名并经过苹果公证，双击即可打开。
 
           Windows：下载 \`${exe}\`，双击安装，不需要管理员权限。需要 Windows 10 或 11。安装包暂未签名，第一次运行时如果出现「Windows 已保护你的电脑」，点「更多信息」再点「仍要运行」。
+
+          已安装的 Candlewick 会自动更新到这个版本，\`latest.json\` 和 \`.app.tar.gz\` 是给它用的，不需要手动下载。
 
           SHA-256：
           EOF
@@ -465,5 +548,5 @@ jobs:
           fi
           gh release create "v${VERSION}" release/* \
             --target "$SHA" --title "Candlewick ${VERSION}" --notes-file notes.md --latest
-          [[ $(gh release view "v${VERSION}" --json assets --jq '.assets | length') -eq 2 ]]
+          [[ $(gh release view "v${VERSION}" --json assets --jq '.assets | length') -eq 4 ]]
           echo "published https://github.com/${GH_REPO}/releases/tag/v${VERSION}"

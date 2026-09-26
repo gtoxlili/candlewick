@@ -13,7 +13,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     format::{self, Direction},
     model::{ColorScheme, Instrument, Model, Quote, Session, Shared},
-    platform, window,
+    platform, update, window,
 };
 
 /// Everything the bar shows, taken from the model in one go.
@@ -25,6 +25,8 @@ pub struct View {
     /// Why a feed is not live; empty while all are.
     pub caption: String,
     pub scheme: ColorScheme,
+    /// The version of a downloaded update a restart would run.
+    pub update: Option<String>,
 }
 
 /// A dropdown row: `BTC` `/USDT` `84,002.01` `−0.24%`.
@@ -105,6 +107,8 @@ pub enum Action {
     /// The chart of the instrument with this id.
     Chart(String),
     Settings,
+    /// Restart into the downloaded update.
+    Update,
     Quit,
 }
 
@@ -112,6 +116,10 @@ pub fn perform(app: &AppHandle, action: Action) {
     let result = match action {
         Action::Chart(id) => window::open_chart(app, &id),
         Action::Settings => window::open_settings(app),
+        Action::Update => {
+            update::restart_now(app);
+            Ok(())
+        }
         Action::Quit => {
             app.exit(0);
             Ok(())
@@ -139,6 +147,7 @@ pub fn request_render(app: &AppHandle) {
 pub fn view(app: &AppHandle) -> View {
     let shared = app.state::<Shared>();
     shared.render_pending.store(false, Ordering::Release);
+    let update = update::ready(app);
     let model = shared.model();
     View {
         watchlist: model.settings.watchlist.clone(),
@@ -146,6 +155,7 @@ pub fn view(app: &AppHandle) -> View {
         ticker: ticker(&model),
         caption: caption(&model),
         scheme: model.settings.color_scheme,
+        update,
     }
 }
 

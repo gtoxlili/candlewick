@@ -119,6 +119,8 @@ pub struct Settings {
     pub show_symbol: bool,
     pub show_change: bool,
     pub color_scheme: ColorScheme,
+    /// Check for, download and apply updates on its own (`update.rs`).
+    pub auto_update: bool,
 }
 
 impl Default for Settings {
@@ -132,6 +134,7 @@ impl Default for Settings {
             show_symbol: true,
             show_change: false,
             color_scheme: ColorScheme::GreenUp,
+            auto_update: true,
         }
     }
 }

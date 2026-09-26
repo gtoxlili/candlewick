@@ -30,6 +30,7 @@ Candlewick shows live crypto and stock prices in the macOS menu bar, or in the W
 - The order book with buy and sell pressure, and a live list of recent trades
 - US pre-market, after-hours and overnight sessions
 - Green-up or red-up colors, and launch at login
+- Updates itself: a new version downloads in the background and takes over while the screen is off or locked
 
 ## Install
 
@@ -69,7 +70,7 @@ On a Mac, about 19 MB of memory and under 1% of one CPU core while prices stream
 
 ### Does it collect any data?
 
-No. It talks to Binance and, once you add keys, to Longbridge. Nothing else.
+No. It talks to Binance and, once you add keys, to Longbridge. It also asks GitHub for new versions, unless you turn off automatic updates in the settings.
 
 ### Is there an English interface, or a build for Intel Macs?
 

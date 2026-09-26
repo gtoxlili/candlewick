@@ -32,6 +32,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 prost = { version = "0.14", default-features = false, features = ["derive", "std"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 ring = "0.17"
+tauri-plugin-updater = "2"
 
 # The status item is Tauri's tray icon; Windows draws its own (platform/windows).
 [target.'cfg(target_os = "macos")'.dependencies]

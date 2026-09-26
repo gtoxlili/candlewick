@@ -22,6 +22,8 @@ import {
   type Search as SearchResults,
   type Settings,
   type Status,
+  type Update,
+  type UpdateState,
 } from "@/lib/api";
 
 export default function App() {
@@ -137,6 +139,13 @@ export default function App() {
                 disabled={loginItem === null}
                 onChange={(enabled) => void toggleLoginItem(enabled)}
               />
+              <SwitchRow
+                label="自动更新"
+                hint="在后台下载新版本，锁屏或显示器关闭时重新启动"
+                checked={settings.autoUpdate}
+                onChange={(autoUpdate) => void update({ ...settings, autoUpdate })}
+              />
+              <UpdateRow />
             </Group>
           </Section>
 
@@ -279,6 +288,80 @@ function SwitchRow(props: {
       />
     </div>
   );
+}
+
+/** The running version, what the updater is doing, and a button to check or restart. */
+function UpdateRow() {
+  const [update, setUpdate] = useState<Update | null>(null);
+
+  useEffect(() => {
+    // An event is always newer than the initial fetch below.
+    let gotEvent = false;
+    const stop = subscribe(
+      api.onUpdate((next) => {
+        gotEvent = true;
+        setUpdate(next);
+      }),
+    );
+    api
+      .getUpdate()
+      .then((found) => {
+        if (!gotEvent) setUpdate(found);
+      })
+      .catch(() => {});
+    return stop;
+  }, []);
+
+  if (!update) return null;
+  const { state } = update;
+  const busy = state.kind === "checking" || state.kind === "downloading" || state.kind === "restarting";
+  const note = updateNote(state);
+  return (
+    <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <p>版本 {update.current}</p>
+        {note && (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {busy && <LoaderCircle className="size-3 animate-spin" />}
+            {note}
+          </p>
+        )}
+      </div>
+      {state.kind === "ready" ? (
+        <Button size="sm" onClick={() => void api.restartToUpdate()}>
+          重新启动
+        </Button>
+      ) : (
+        state.kind !== "disabled" &&
+        !busy && (
+          <Button variant="ghost" size="sm" onClick={() => void api.checkUpdate()}>
+            检查更新
+          </Button>
+        )
+      )}
+    </div>
+  );
+}
+
+function updateNote(state: UpdateState): string | null {
+  switch (state.kind) {
+    case "disabled":
+      return "只有安装好的副本会检查更新";
+    case "idle":
+      return state.checked ? "已是最新版本" : null;
+    case "checking":
+      return "正在检查更新…";
+    case "unreachable":
+      return "暂时连不上更新服务器，稍后会再试";
+    case "downloading":
+      return `正在下载 ${state.version}…`;
+    case "ready":
+      return `${state.version} 已下载，重新启动后生效`;
+    case "restarting":
+      return "正在重新启动…";
+    case "failed":
+      return `${state.version} 没能装好，稍后会再试`;
+  }
 }
 
 /** "BTC/USDT", "AAPL 苹果 美股", "腾讯控股 700 港股": the name, then dimmed details. */

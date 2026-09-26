@@ -27,6 +27,7 @@ use crate::{
 };
 
 const ID_SETTINGS: &str = "settings";
+const ID_UPDATE: &str = "update";
 const ID_QUIT: &str = "quit";
 const INSTRUMENT_PREFIX: &str = "instrument:";
 
@@ -42,9 +43,10 @@ struct Ui {
     tray: TrayIcon<Wry>,
     status_item: Option<Retained<NSStatusItem>>,
     fonts: Fonts,
-    /// The watchlist the current menu was built for; a change rebuilds the
-    /// menu. `None` until the first build, so even an empty list gets a menu.
-    layout: Option<Vec<Instrument>>,
+    /// The watchlist and the offered update the current menu was built for;
+    /// a change to either rebuilds the menu. `None` until the first build, so
+    /// even an empty list gets a menu.
+    layout: Option<(Vec<Instrument>, Option<String>)>,
     /// Column widths in points. They only grow while the layout stays the
     /// same, so an open menu never shifts as prices tick.
     columns: Columns,
@@ -140,10 +142,11 @@ fn render(app: &AppHandle) {
 impl Ui {
     fn apply(&mut self, app: &AppHandle, view: View) -> tauri::Result<()> {
         let mtm = MainThreadMarker::new().expect("tray renders on the main thread");
-        if self.layout.as_ref() != Some(&view.watchlist) {
-            log::debug!("menu rebuilt for {} instruments", view.watchlist.len());
-            self.tray.set_menu(Some(build_menu(app, &view.watchlist)?))?;
-            self.layout = Some(view.watchlist);
+        let layout = (view.watchlist, view.update);
+        if self.layout.as_ref() != Some(&layout) {
+            log::debug!("menu rebuilt for {} instruments", layout.0.len());
+            self.tray.set_menu(Some(build_menu(app, &layout.0, layout.1.as_deref())?))?;
+            self.layout = Some(layout);
             self.columns = Columns::default();
             self.rows.clear();
             self.caption = None;
@@ -177,7 +180,7 @@ impl Ui {
         }
         self.rows = view.rows;
 
-        let count = self.layout.as_ref().map_or(0, Vec::len);
+        let count = self.layout.as_ref().map_or(0, |(watchlist, _)| watchlist.len());
         if count > 0 && self.caption.as_ref() != Some(&view.caption) {
             log::debug!("caption: {:?}", view.caption);
             set_caption(&menu, count, &view.caption, &self.fonts.caption);
@@ -369,7 +372,11 @@ fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-fn build_menu(app: &AppHandle, watchlist: &[Instrument]) -> tauri::Result<Menu<Wry>> {
+fn build_menu(
+    app: &AppHandle,
+    watchlist: &[Instrument],
+    update: Option<&str>,
+) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::new(app)?;
     if watchlist.is_empty() {
         menu.append(&MenuItem::with_id(app, "empty", "在设置中添加自选", false, None::<&str>)?)?;
@@ -382,6 +389,10 @@ fn build_menu(app: &AppHandle, watchlist: &[Instrument]) -> tauri::Result<Menu<W
         menu.append(&MenuItem::with_id(app, "status", "", false, None::<&str>)?)?;
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
+    if let Some(version) = update {
+        let title = format!("更新到 {version} 并重新启动");
+        menu.append(&MenuItem::with_id(app, ID_UPDATE, title, true, None::<&str>)?)?;
+    }
     // No key equivalents: AppKit reserves a shortcut column on every row, which
     // would leave a wide empty band to the right of the prices.
     menu.append(&MenuItem::with_id(app, ID_SETTINGS, "设置…", true, None::<&str>)?)?;
@@ -392,6 +403,7 @@ fn build_menu(app: &AppHandle, watchlist: &[Instrument]) -> tauri::Result<Menu<W
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     let action = match event.id().as_ref() {
         ID_SETTINGS => Action::Settings,
+        ID_UPDATE => Action::Update,
         ID_QUIT => Action::Quit,
         id => match id.strip_prefix(INSTRUMENT_PREFIX) {
             Some(instrument) => Action::Chart(instrument.to_owned()),

@@ -12,6 +12,7 @@ use crate::{
     market::{self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, longbridge},
     model::{self, Instrument, Settings, Shared},
     platform,
+    update::{self, UpdateView},
     window::{self, StatusView},
 };
 
@@ -83,6 +84,22 @@ pub fn get_login_item() -> bool {
 pub fn set_login_item(enabled: bool) -> CmdResult<bool> {
     platform::set_login_item(enabled).map_err(CommandError::LoginItem)?;
     Ok(platform::login_item_enabled())
+}
+
+#[tauri::command]
+pub fn get_update(app: AppHandle) -> UpdateView {
+    update::view(&app)
+}
+
+/// Starts a check; the result arrives as `update` events.
+#[tauri::command]
+pub fn check_update(app: AppHandle) {
+    update::check_now(&app);
+}
+
+#[tauri::command]
+pub fn restart_to_update(app: AppHandle) {
+    update::restart_now(&app);
 }
 
 /// The page has content; now its window can appear without a blank flash.

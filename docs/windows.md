@@ -90,6 +90,8 @@ pnpm tauri build   # 安装程序
 
 `src-tauri/icons/icon.ico` 含 16、20、24、32、40、48、64、256 八个尺寸，256 用 PNG 压缩。它和 macOS 图标用的是同一套插画，但去掉了 macOS 风格的投影，底板占画布约 92%，更接近 Windows 图标的比例；32 像素及以下用 `app-icon-small.svg` 的简化插画。生成方法是用 Chrome 无头模式把 SVG 在每个目标尺寸上直接渲染成 PNG，再合成 ICO。
 
+自动更新时，应用先把托盘图标和任务栏上的价格移除，再以 passive 模式运行验证过的安装包：只显示一个进度条，装完自动重新打开，全程不需要点任何按钮。
+
 安装包暂未签名，第一次运行时 SmartScreen 会拦一下，需要点「更多信息 → 仍要运行」。接入代码签名的做法见 [release.md](release.md)。
 
 CI（`.github/workflows/build.yml`）在 GitHub 的 Windows 机器上构建 x64 安装包，先跑 clippy 和单元测试。每个 PR 都会构建，安装包在运行页面的 Artifacts 里，可以下载到 Windows 上试；合并到 main 后，它随新版本一起发布。版本号和发布流程见 [release.md](release.md)。

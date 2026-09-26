@@ -1,8 +1,8 @@
 //! The dropdown: a native popup menu of the watchlist, like the macOS one. A
 //! row per entry (its price and change right-aligned in a column of their
 //! own, a small colored triangle for the direction), a status line while a
-//! feed isn't live, then settings and quit. It stays live while open: rows
-//! update in place as prices tick.
+//! feed isn't live, then a downloaded update to restart into, settings and
+//! quit. It stays live while open: rows update in place as prices tick.
 
 use windows::{
     Win32::{
@@ -34,6 +34,7 @@ use crate::{
 const SETTINGS: u32 = 1;
 const QUIT: u32 = 2;
 const STATUS: u32 = 3;
+const UPDATE: u32 = 4;
 /// Row n has this id plus n.
 const FIRST_ROW: u32 = 100;
 
@@ -83,6 +84,10 @@ impl Open {
                 }
             }
             AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+            if let Some(version) = &view.update {
+                let title = escape(&format!("更新到 {version} 并重新启动"));
+                AppendMenuW(menu, MF_STRING, UPDATE as usize, &HSTRING::from(title))?;
+            }
             AppendMenuW(menu, MF_STRING, SETTINGS as usize, w!("设置…"))?;
             AppendMenuW(menu, MF_STRING, QUIT as usize, w!("退出 Candlewick"))?;
             Ok(open)
@@ -132,6 +137,7 @@ impl Open {
     pub fn action(&self, command: u32) -> Option<Action> {
         match command {
             SETTINGS => Some(Action::Settings),
+            UPDATE => Some(Action::Update),
             QUIT => Some(Action::Quit),
             id if id >= FIRST_ROW => {
                 self.ids.get((id - FIRST_ROW) as usize).cloned().map(Action::Chart)

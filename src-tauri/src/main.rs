@@ -18,6 +18,7 @@ mod market;
 mod model;
 mod net;
 mod platform;
+mod update;
 mod window;
 
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
@@ -40,12 +41,16 @@ fn main() {
     tauri::async_runtime::set(runtime.handle().clone());
 
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::save_settings,
             commands::get_status,
             commands::get_login_item,
             commands::set_login_item,
+            commands::get_update,
+            commands::check_update,
+            commands::restart_to_update,
             commands::window_ready,
             commands::search_instruments,
             commands::get_chart_instrument,
@@ -94,6 +99,8 @@ fn main() {
                 let quotes = provider.provider().watch(app.handle().clone(), control.clone());
                 tauri::async_runtime::spawn(quotes);
             }
+
+            update::start(app.handle());
 
             // Meant to run all the time: register as a login item the first
             // time it runs from an install location, once. The marker keeps a
