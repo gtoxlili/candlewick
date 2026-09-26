@@ -60,36 +60,41 @@ export function OrderBook(props: {
         <span className="text-right">{props.quote ? `数量(${props.base})` : "数量"}</span>
         <span className="text-right">累计</span>
       </div>
-      {/* Best ask sits at the bottom, next to the price; far levels clip at the top. */}
-      <div className="flex min-h-0 flex-1 flex-col-reverse overflow-hidden [mask-image:linear-gradient(to_bottom,transparent,black_2.5rem)]">
-        {asks.map((row) => (
-          <BookRow key={row.price} row={row} side="ask" decimals={decimals} deepest={deepest} />
-        ))}
-      </div>
-      {empty && <p className="shrink-0 px-3 pb-1 text-center text-muted-foreground">暂无挂单</p>}
-      <div className="flex h-10 shrink-0 items-center gap-1 px-3">
-        <span
-          className={cn(
-            "text-base font-semibold tracking-tight transition-colors duration-500",
-            props.lastDirection > 0 && "text-up",
-            props.lastDirection < 0 && "text-down",
-          )}
-        >
-          {props.last === null ? "—" : fmtPrice(props.last, decimals)}
-        </span>
-        {props.lastDirection > 0 && <ArrowUp className="size-3.5 text-up" strokeWidth={2.5} />}
-        {props.lastDirection < 0 && <ArrowDown className="size-3.5 text-down" strokeWidth={2.5} />}
-        {spread !== null && (
-          <span className="ml-auto rounded-full bg-black/5 px-2 py-0.5 text-[11px] text-muted-foreground dark:bg-white/8">
-            价差 {fmtPrice(spread, decimals)}
-          </span>
-        )}
-      </div>
-      <div className="min-h-0 flex-1 overflow-hidden [mask-image:linear-gradient(to_top,transparent,black_2.5rem)]">
-        {bids.map((row) => (
-          <BookRow key={row.price} row={row} side="bid" decimals={decimals} deepest={deepest} />
-        ))}
-      </div>
+      {empty ? (
+        <div className="flex flex-1 items-center justify-center text-muted-foreground">暂无挂单</div>
+      ) : (
+        <>
+          {/* Best ask sits at the bottom, next to the price; far levels clip at the top. */}
+          <div className="flex min-h-0 flex-1 flex-col-reverse overflow-hidden [mask-image:linear-gradient(to_bottom,transparent,black_2.5rem)]">
+            {asks.map((row) => (
+              <BookRow key={row.price} row={row} side="ask" decimals={decimals} deepest={deepest} />
+            ))}
+          </div>
+          <div className="flex h-10 shrink-0 items-center gap-1 px-3">
+            <span
+              className={cn(
+                "text-base font-semibold tracking-tight transition-colors duration-500",
+                props.lastDirection > 0 && "text-up",
+                props.lastDirection < 0 && "text-down",
+              )}
+            >
+              {props.last === null ? "—" : fmtPrice(props.last, decimals)}
+            </span>
+            {props.lastDirection > 0 && <ArrowUp className="size-3.5 text-up" strokeWidth={2.5} />}
+            {props.lastDirection < 0 && <ArrowDown className="size-3.5 text-down" strokeWidth={2.5} />}
+            {spread !== null && (
+              <span className="ml-auto rounded-full bg-black/5 px-2 py-0.5 text-[11px] text-muted-foreground dark:bg-white/8">
+                价差 {fmtPrice(spread, decimals)}
+              </span>
+            )}
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden [mask-image:linear-gradient(to_top,transparent,black_2.5rem)]">
+            {bids.map((row) => (
+              <BookRow key={row.price} row={row} side="bid" decimals={decimals} deepest={deepest} />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
