@@ -1,7 +1,7 @@
 {
   "name": "candlewick",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Live crypto and stock prices in the macOS menu bar",
   "keywords": ["macos", "menu-bar", "crypto", "bitcoin", "stocks", "binance", "longbridge", "price-ticker", "tauri"],
   "homepage": "https://github.com/gtoxlili/candlewick",
