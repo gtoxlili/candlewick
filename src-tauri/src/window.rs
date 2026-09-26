@@ -104,6 +104,27 @@ fn retarget_chart(app: &AppHandle, symbol: &str) -> tauri::Result<Option<String>
     Ok(Some(title))
 }
 
+/// The Dock icon was clicked, or the app was launched again while running.
+/// Activation already brings open windows forward (and unhides them after
+/// Cmd-H); one still loading shows itself once its page is ready. So only when
+/// every window is minimized is one restored, the chart first. Only with no
+/// window open does settings open: the status item can hide behind the notch
+/// or a crowded menu bar, so this is the way back in.
+pub fn reopen(app: &AppHandle) -> tauri::Result<()> {
+    let open: Vec<WebviewWindow> =
+        [CHART, SETTINGS].into_iter().filter_map(|label| app.get_webview_window(label)).collect();
+    let Some(first) = open.first() else {
+        return open_settings(app);
+    };
+    if open.iter().any(|w| !w.is_minimized().unwrap_or(false)) {
+        return Ok(());
+    }
+    first.unminimize()?;
+    first.show()?;
+    bring_to_front(first);
+    Ok(())
+}
+
 /// After settings change: an open chart whose pair was removed moves to the
 /// first remaining pair, or closes when none are left.
 pub fn sync_chart(app: &AppHandle) {

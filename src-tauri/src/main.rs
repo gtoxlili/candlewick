@@ -96,12 +96,9 @@ fn main() {
             // Closing the settings window must not quit the menu bar app.
             // Explicit quits (tray menu, Cmd-Q) carry an exit code or bypass this.
             RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
-            // Opened again from Finder or Spotlight while running. The status
-            // item can be hidden (notch, crowded menu bar), so this is the way
-            // back in.
             RunEvent::Reopen { .. } => {
-                if let Err(e) = window::open_settings(app) {
-                    log::error!("cannot open settings: {e}");
+                if let Err(e) = window::reopen(app) {
+                    log::error!("cannot reopen a window: {e}");
                 }
             }
             _ => {}
