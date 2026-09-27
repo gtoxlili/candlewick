@@ -18,13 +18,12 @@ use std::{
     time::Duration,
 };
 
-use reqwest::Proxy;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::{
-    bar,
+    bar, http,
     model::Shared,
     net,
     platform::{self, Pause},
@@ -328,9 +327,7 @@ fn client(app: &AppHandle) -> tauri_plugin_updater::Result<tauri_plugin_updater:
     app.updater_builder()
         .timeout(CHECK_TIMEOUT)
         .configure_client(|client| {
-            client
-                .use_preconfigured_tls(net::tls_client_config())
-                .proxy(Proxy::custom(|url| url.host_str().and_then(net::proxy_url)))
+            client.use_preconfigured_tls(net::tls_client_config()).proxy(http::system_proxy())
         })
         // Windows: the installer is about to replace the app; the tray icon
         // and the taskbar ticker go first, as at quit.

@@ -22,6 +22,8 @@ use crate::platform;
 
 pub type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+/// How a connection reaches its host. A proxy `host` is a name or an IP
+/// literal, IPv6 without brackets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     Direct,
@@ -33,9 +35,32 @@ impl fmt::Display for Route {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Direct => f.write_str("直连"),
-            Self::Http { host, port } => write!(f, "HTTP 代理 {host}:{port}"),
-            Self::Socks5 { host, port } => write!(f, "SOCKS5 代理 {host}:{port}"),
+            Self::Http { host, port } => write!(f, "HTTP 代理 {}", Authority(host, *port)),
+            Self::Socks5 { host, port } => write!(f, "SOCKS5 代理 {}", Authority(host, *port)),
         }
+    }
+}
+
+impl Route {
+    /// The proxy as a URL, or `None` to go direct.
+    fn url(&self) -> Option<String> {
+        match self {
+            Self::Direct => None,
+            Self::Http { host, port } => Some(format!("http://{}", Authority(host, *port))),
+            // `socks5h`: the proxy resolves the name, as `socks5_connect` has it do.
+            Self::Socks5 { host, port } => Some(format!("socks5h://{}", Authority(host, *port))),
+        }
+    }
+}
+
+/// `host:port` as URLs and CONNECT requests write it: an IPv6 literal goes in
+/// brackets, or its colons would run into the port's.
+struct Authority<'a>(&'a str, u16);
+
+impl fmt::Display for Authority<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self(host, port) = self;
+        if host.contains(':') { write!(f, "[{host}]:{port}") } else { write!(f, "{host}:{port}") }
     }
 }
 
@@ -81,7 +106,8 @@ pub async fn connect_with_headers(
                     tcp
                 }
                 Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => {
-                    log::warn!("proxy {proxy_host}:{proxy_port} refused, connecting directly");
+                    let proxy = Authority(&proxy_host, proxy_port);
+                    log::warn!("proxy {proxy} refused, connecting directly");
                     route = Route::Direct;
                     TcpStream::connect((host, PORT)).await?
                 }
@@ -114,12 +140,7 @@ pub async fn connect_with_headers(
 
 /// The system proxy for `host` as a proxy URL, or `None` to go direct.
 pub fn proxy_url(host: &str) -> Option<String> {
-    match platform::proxy::route(host) {
-        Route::Direct => None,
-        Route::Http { host, port } => Some(format!("http://{host}:{port}")),
-        // `socks5h`: the proxy resolves the name, as `socks5_connect` has it do.
-        Route::Socks5 { host, port } => Some(format!("socks5h://{host}:{port}")),
-    }
+    platform::proxy::route(host).url()
 }
 
 /// The websockets' TLS setup (ring, platform certificate verifier).
@@ -156,7 +177,8 @@ fn tls_config() -> Arc<rustls::ClientConfig> {
 }
 
 async fn http_connect(tcp: &mut TcpStream, host: &str, port: u16) -> Result<(), Error> {
-    let request = format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n");
+    let target = Authority(host, port);
+    let request = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n");
     tcp.write_all(request.as_bytes()).await?;
     // The proxy sends nothing after its header until we start TLS, so reading
     // in chunks cannot swallow tunnel bytes.
@@ -217,4 +239,44 @@ async fn socks5_connect(tcp: &mut TcpStream, host: &str, port: u16) -> Result<()
     let mut rest = vec![0u8; addr_len + 2];
     tcp.read_exact(&mut rest).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn http(host: &str, port: u16) -> Route {
+        Route::Http { host: host.to_owned(), port }
+    }
+
+    fn socks5(host: &str, port: u16) -> Route {
+        Route::Socks5 { host: host.to_owned(), port }
+    }
+
+    // reqwest goes direct without a word when it cannot parse a proxy URL, so
+    // each route must give one that parses back to the same host and port.
+    #[test]
+    fn proxy_urls() {
+        let cases = [
+            (http("127.0.0.1", 7890), "http://127.0.0.1:7890", "127.0.0.1", 7890),
+            (http("proxy.lan", 8080), "http://proxy.lan:8080", "proxy.lan", 8080),
+            (http("::1", 7890), "http://[::1]:7890", "[::1]", 7890),
+            (socks5("127.0.0.1", 1080), "socks5h://127.0.0.1:1080", "127.0.0.1", 1080),
+            (socks5("::1", 1080), "socks5h://[::1]:1080", "[::1]", 1080),
+        ];
+        for (route, expected, host, port) in cases {
+            let url = route.url().expect("a proxy route");
+            assert_eq!(url, expected);
+            let parsed = reqwest::Url::parse(&url).expect("a valid URL");
+            assert_eq!((parsed.host_str(), parsed.port()), (Some(host), Some(port)));
+            assert!(reqwest::Proxy::all(&url).is_ok(), "reqwest rejects {url}");
+        }
+        assert_eq!(Route::Direct.url(), None);
+    }
+
+    #[test]
+    fn route_labels() {
+        assert_eq!(http("::1", 7890).to_string(), "HTTP 代理 [::1]:7890");
+        assert_eq!(socks5("127.0.0.1", 1080).to_string(), "SOCKS5 代理 127.0.0.1:1080");
+    }
 }

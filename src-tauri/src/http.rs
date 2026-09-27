@@ -4,7 +4,7 @@
 
 use std::{error::Error as _, io, sync::LazyLock, time::Duration};
 
-use reqwest::{Client, Proxy, RequestBuilder, Response};
+use reqwest::{Client, Proxy, RequestBuilder, Response, Url};
 use serde::de::DeserializeOwned;
 
 use crate::net;
@@ -18,11 +18,22 @@ struct Clients {
 
 static CLIENTS: LazyLock<Clients> = LazyLock::new(|| Clients {
     routed: builder()
-        .proxy(Proxy::custom(|url| url.host_str().and_then(net::proxy_url)))
+        .proxy(system_proxy())
         .build()
         .expect("HTTP client with a preconfigured TLS setup"),
     direct: builder().no_proxy().build().expect("HTTP client with a preconfigured TLS setup"),
 });
+
+/// The system proxy, looked up per request. reqwest would skip a proxy URL it
+/// cannot parse without a word and go direct; this at least says so.
+pub fn system_proxy() -> Proxy {
+    Proxy::custom(|url| {
+        let proxy = net::proxy_url(url.host_str()?)?;
+        Url::parse(&proxy)
+            .inspect_err(|e| log::warn!("proxy {proxy} unusable ({e}), connecting directly"))
+            .ok()
+    })
+}
 
 fn builder() -> reqwest::ClientBuilder {
     Client::builder()
