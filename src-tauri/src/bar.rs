@@ -107,6 +107,7 @@ pub enum Action {
     /// The chart of the instrument with this id.
     Chart(String),
     Settings,
+    CheckUpdate,
     /// Restart into the downloaded update.
     Update,
     Quit,
@@ -116,6 +117,7 @@ pub fn perform(app: &AppHandle, action: Action) {
     let result = match action {
         Action::Chart(id) => window::open_chart(app, &id),
         Action::Settings => window::open_settings(app),
+        Action::CheckUpdate => window::open_settings(app).map(|()| update::check_now(app)),
         Action::Update => {
             update::restart_now(app);
             Ok(())

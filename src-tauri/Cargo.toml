@@ -9,6 +9,12 @@ edition = "2024"
 rust-version = "1.98"
 publish = false
 
+[[test]]
+name = "macos_bar"
+path = "tests/macos_bar.rs"
+# AppKit must run on the process's main thread, not a libtest worker.
+harness = false
+
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
 
@@ -37,6 +43,9 @@ tauri-plugin-updater = "2"
 # The status item is Tauri's tray icon; Windows draws its own (platform/windows).
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri = { version = "2.12", features = ["tray-icon"] }
+# Match Tauri's tray backend so the native menu can be owned independently
+# of NSStatusItem.menu, which is only attached while the dropdown is open.
+tray-icon = { version = "0.25", default-features = false }
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [

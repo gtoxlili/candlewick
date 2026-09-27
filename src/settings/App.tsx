@@ -21,14 +21,12 @@ import {
   type LongbridgeKeys,
   type Search as SearchResults,
   type Settings,
-  type Status,
   type Update,
   type UpdateState,
 } from "@/lib/api";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [status, setStatus] = useState<Status | null>(null);
   const [loginItem, setLoginItem] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scrolled, setScrolled] = useState(false);
@@ -37,19 +35,10 @@ export default function App() {
   const saved = useRef<Settings | null>(null);
 
   useEffect(() => {
-    // A status event is always newer than the initial fetch below.
-    let gotEvent = false;
-    const stop = subscribe(
-      api.onStatus((next) => {
-        gotEvent = true;
-        setStatus(next);
-      }),
-    );
-    Promise.all([api.getSettings(), api.getStatus(), api.getLoginItem()])
-      .then(([s, st, login]) => {
+    Promise.all([api.getSettings(), api.getLoginItem()])
+      .then(([s, login]) => {
         saved.current = s;
         setSettings(s);
-        if (!gotEvent) setStatus(st);
         setLoginItem(login);
       })
       .catch((e: unknown) => setError(String(e)))
@@ -57,7 +46,6 @@ export default function App() {
       // requestAnimationFrame: WebKit doesn't render a hidden window, so that
       // callback would never fire.
       .finally(() => void api.ready());
-    return stop;
   }, []);
 
   // Apply immediately, then adopt the app's normalized copy (or roll back if
@@ -145,7 +133,6 @@ export default function App() {
                 checked={settings.autoUpdate}
                 onChange={(autoUpdate) => void update({ ...settings, autoUpdate })}
               />
-              <UpdateRow />
             </Group>
           </Section>
 
@@ -155,18 +142,7 @@ export default function App() {
         </div>
       )}
 
-      <footer className="flex h-8 shrink-0 items-center gap-2 border-t px-5 text-xs text-muted-foreground">
-        <span
-          className={cn(
-            "size-2 shrink-0 rounded-full",
-            status?.tone === "live" && "bg-(--green)",
-            status?.tone === "busy" && "bg-amber-400",
-            status?.tone === "error" && "bg-(--red)",
-            (!status || status.tone === "idle") && "bg-muted-foreground/40",
-          )}
-        />
-        <span className="truncate">{status?.label ?? "—"}</span>
-      </footer>
+      <AppFooter />
     </main>
   );
 }
@@ -290,9 +266,10 @@ function SwitchRow(props: {
   );
 }
 
-/** The running version, what the updater is doing, and a button to check or restart. */
-function UpdateRow() {
+/** App identity and a persistent place for update progress and results. */
+function AppFooter() {
   const [update, setUpdate] = useState<Update | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // An event is always newer than the initial fetch below.
@@ -300,6 +277,7 @@ function UpdateRow() {
     const stop = subscribe(
       api.onUpdate((next) => {
         gotEvent = true;
+        setError(null);
         setUpdate(next);
       }),
     );
@@ -308,51 +286,71 @@ function UpdateRow() {
       .then((found) => {
         if (!gotEvent) setUpdate(found);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!gotEvent) setError("暂时无法读取版本信息");
+      });
     return stop;
   }, []);
 
-  if (!update) return null;
-  const { state } = update;
-  const busy = state.kind === "checking" || state.kind === "downloading" || state.kind === "restarting";
-  const note = updateNote(state);
+  const state = update?.state;
+  const busy =
+    state?.kind === "checking" || state?.kind === "downloading" || state?.kind === "restarting";
+  const note = error ?? (state ? updateNote(state) : null);
+  const act = async () => {
+    setError(null);
+    try {
+      if (state?.kind === "ready") await api.restartToUpdate();
+      else await api.checkUpdate();
+    } catch {
+      setError("操作未完成，请重试");
+    }
+  };
   return (
-    <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <p>版本 {update.current}</p>
-        {note && (
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            {busy && <LoaderCircle className="size-3 animate-spin" />}
-            {note}
-          </p>
+    <footer className="shrink-0 border-t bg-card/40 px-5 py-3">
+      <div className="flex min-h-6 items-center justify-between gap-3">
+        <p className="flex items-baseline gap-2">
+          <span className="text-xs font-medium text-foreground/75">Candlewick</span>
+          {update && (
+            <span className="text-2xs tabular-nums text-muted-foreground">v{update.current}</span>
+          )}
+        </p>
+        {state && state.kind !== "disabled" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "-mr-2 h-6 px-2 text-xs",
+              state.kind === "ready" ? "text-primary" : "text-muted-foreground",
+            )}
+            disabled={busy}
+            onClick={() => void act()}
+          >
+            {busy && <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />}
+            {state.kind === "ready" ? "重新启动更新" : "检查更新"}
+          </Button>
         )}
       </div>
-      {state.kind === "ready" ? (
-        <Button size="sm" onClick={() => void api.restartToUpdate()}>
-          重新启动
-        </Button>
-      ) : (
-        state.kind !== "disabled" &&
-        !busy && (
-          <Button variant="ghost" size="sm" onClick={() => void api.checkUpdate()}>
-            检查更新
-          </Button>
-        )
-      )}
-    </div>
+      <p
+        role="status"
+        aria-live="polite"
+        className={cn("text-2xs leading-relaxed text-muted-foreground", note && "mt-1")}
+      >
+        {note}
+      </p>
+    </footer>
   );
 }
 
 function updateNote(state: UpdateState): string | null {
   switch (state.kind) {
     case "disabled":
-      return "只有安装好的副本会检查更新";
+      return "此副本不支持应用内更新";
     case "idle":
       return state.checked ? "已是最新版本" : null;
     case "checking":
       return "正在检查更新…";
     case "unreachable":
-      return "暂时连不上更新服务器，稍后会再试";
+      return "暂时无法检查更新，请稍后重试";
     case "downloading":
       return `正在下载 ${state.version}…`;
     case "ready":
@@ -360,7 +358,7 @@ function updateNote(state: UpdateState): string | null {
     case "restarting":
       return "正在重新启动…";
     case "failed":
-      return `${state.version} 没能装好，稍后会再试`;
+      return `${state.version} 更新失败，请重试`;
   }
 }
 

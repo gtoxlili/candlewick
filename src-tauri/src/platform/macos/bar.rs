@@ -16,9 +16,10 @@ use objc2_foundation::{NSArray, NSDictionary, NSMutableAttributedString, NSRange
 use tauri::{
     ActivationPolicy, AppHandle, Wry,
     image::Image,
-    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    menu::MenuEvent,
     tray::{TrayIcon, TrayIconBuilder},
 };
+use tray_icon::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem};
 
 use super::ticker;
 use crate::{
@@ -28,6 +29,7 @@ use crate::{
 
 const ID_SETTINGS: &str = "settings";
 const ID_UPDATE: &str = "update";
+const ID_CHECK_UPDATE: &str = "check-update";
 const ID_QUIT: &str = "quit";
 const INSTRUMENT_PREFIX: &str = "instrument:";
 
@@ -41,6 +43,9 @@ thread_local! {
 
 struct Ui {
     tray: TrayIcon<Wry>,
+    native_tray: tray_icon::TrayIcon,
+    /// The menu exists even when tray-icon detaches it from the status item.
+    menu: Option<Retained<NSMenu>>,
     status_item: Option<Retained<NSStatusItem>>,
     fonts: Fonts,
     /// The watchlist and the offered update the current menu was built for;
@@ -85,35 +90,30 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(on_menu_event)
         .build(app)?;
 
-    let menu_font_size = NSFont::menuFontOfSize(0.0).pointSize();
-    // SAFETY: reading an immutable AppKit constant.
-    let regular = unsafe { NSFontWeightRegular };
-    UI.set(Some(Ui {
-        tray: tray.clone(),
-        status_item: None,
-        fonts: Fonts {
-            row: NSFont::monospacedDigitSystemFontOfSize_weight(menu_font_size, regular),
-            caption: NSFont::menuFontOfSize(NSFont::smallSystemFontSize()),
-        },
-        layout: None,
-        columns: Columns::default(),
-        tabs: NSMutableParagraphStyle::new(),
-        scheme: ColorScheme::default(),
-        rows: Vec::new(),
-        caption: None,
-        ticker: None,
-    }));
-    // Runs inline: we are already on the main thread.
-    tray.with_inner_tray_icon(|inner| {
-        let item = inner.ns_status_item();
-        if let Some(item) = &item {
-            use_tabular_digits(item);
-        }
-        UI.with_borrow_mut(|ui| {
-            if let Some(ui) = ui {
-                ui.status_item = item;
-            }
-        });
+    // This callback runs inline on the main thread. Both handles refer to
+    // the same tray; native menu ownership stays on this thread.
+    let handle = tray.clone();
+    tray.with_inner_tray_icon(move |inner| {
+        let menu_font_size = NSFont::menuFontOfSize(0.0).pointSize();
+        // SAFETY: reading an immutable AppKit constant.
+        let regular = unsafe { NSFontWeightRegular };
+        UI.set(Some(Ui {
+            tray: handle,
+            native_tray: inner.clone(),
+            menu: None,
+            status_item: inner.ns_status_item().inspect(|item| use_tabular_digits(item)),
+            fonts: Fonts {
+                row: NSFont::monospacedDigitSystemFontOfSize_weight(menu_font_size, regular),
+                caption: NSFont::menuFontOfSize(NSFont::smallSystemFontSize()),
+            },
+            layout: None,
+            columns: Columns::default(),
+            tabs: NSMutableParagraphStyle::new(),
+            scheme: ColorScheme::default(),
+            rows: Vec::new(),
+            caption: None,
+            ticker: None,
+        }));
     })?;
     render(app);
     Ok(())
@@ -132,7 +132,7 @@ fn render(app: &AppHandle) {
     let view = bar::view(app);
     UI.with_borrow_mut(|ui| {
         if let Some(ui) = ui
-            && let Err(e) = ui.apply(app, view)
+            && let Err(e) = ui.apply(view)
         {
             log::error!("tray update failed: {e}");
         }
@@ -140,20 +140,22 @@ fn render(app: &AppHandle) {
 }
 
 impl Ui {
-    fn apply(&mut self, app: &AppHandle, view: View) -> tauri::Result<()> {
+    fn apply(&mut self, view: View) -> tauri::Result<()> {
         let mtm = MainThreadMarker::new().expect("tray renders on the main thread");
         let layout = (view.watchlist, view.update);
         if self.layout.as_ref() != Some(&layout) {
             log::debug!("menu rebuilt for {} instruments", layout.0.len());
-            self.tray.set_menu(Some(build_menu(app, &layout.0, layout.1.as_deref())?))?;
+            let menu = build_menu(&layout.0, layout.1.as_deref())?;
+            // SAFETY: muda returns its live NSMenu on macOS. Retain it on
+            // the main thread before transferring the menu to tray-icon.
+            self.menu = unsafe { Retained::retain(menu.ns_menu().cast::<NSMenu>()) };
+            self.native_tray.set_menu(Some(Box::new(menu)));
             self.layout = Some(layout);
             self.columns = Columns::default();
             self.rows.clear();
             self.caption = None;
         }
-        let Some(menu) = self.status_item.as_ref().and_then(|item| item.menu(mtm)) else {
-            return Ok(());
-        };
+        let menu = self.menu.clone().expect("the tray menu has been built");
 
         let mut columns = self.columns;
         for (index, row) in view.rows.iter().enumerate() {
@@ -372,31 +374,29 @@ fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-fn build_menu(
-    app: &AppHandle,
-    watchlist: &[Instrument],
-    update: Option<&str>,
-) -> tauri::Result<Menu<Wry>> {
-    let menu = Menu::new(app)?;
+fn build_menu(watchlist: &[Instrument], update: Option<&str>) -> tauri::Result<Menu> {
+    let menu = Menu::new();
     if watchlist.is_empty() {
-        menu.append(&MenuItem::with_id(app, "empty", "在设置中添加自选", false, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id("empty", "在设置中添加自选", false, None))?;
     } else {
         for instrument in watchlist {
             let id = format!("{INSTRUMENT_PREFIX}{}", instrument.id());
-            menu.append(&MenuItem::with_id(app, id, instrument.pair_label(), true, None::<&str>)?)?;
+            menu.append(&MenuItem::with_id(id, instrument.pair_label(), true, None))?;
         }
         // Status caption, styled and shown/hidden natively by `set_caption`.
-        menu.append(&MenuItem::with_id(app, "status", "", false, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id("status", "", false, None))?;
     }
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&PredefinedMenuItem::separator())?;
     if let Some(version) = update {
         let title = format!("更新到 {version} 并重新启动");
-        menu.append(&MenuItem::with_id(app, ID_UPDATE, title, true, None::<&str>)?)?;
+        menu.append(&MenuItem::with_id(ID_UPDATE, title, true, None))?;
+    } else {
+        menu.append(&MenuItem::with_id(ID_CHECK_UPDATE, "检查更新…", true, None))?;
     }
     // No key equivalents: AppKit reserves a shortcut column on every row, which
     // would leave a wide empty band to the right of the prices.
-    menu.append(&MenuItem::with_id(app, ID_SETTINGS, "设置…", true, None::<&str>)?)?;
-    menu.append(&MenuItem::with_id(app, ID_QUIT, "退出 Candlewick", true, None::<&str>)?)?;
+    menu.append(&MenuItem::with_id(ID_SETTINGS, "设置…", true, None))?;
+    menu.append(&MenuItem::with_id(ID_QUIT, "退出 Candlewick", true, None))?;
     Ok(menu)
 }
 
@@ -404,6 +404,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     let action = match event.id().as_ref() {
         ID_SETTINGS => Action::Settings,
         ID_UPDATE => Action::Update,
+        ID_CHECK_UPDATE => Action::CheckUpdate,
         ID_QUIT => Action::Quit,
         id => match id.strip_prefix(INSTRUMENT_PREFIX) {
             Some(instrument) => Action::Chart(instrument.to_owned()),
@@ -412,3 +413,8 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     };
     bar::perform(app, action);
 }
+
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "bar_tests.rs"]
+pub(crate) mod tests;

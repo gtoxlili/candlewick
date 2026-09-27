@@ -213,8 +213,12 @@ impl Updater {
         let Ok(_busy) = self.busy.try_lock() else {
             return;
         };
-        // One is already waiting for its restart.
-        if matches!(self.state(), UpdateState::Ready { .. } | UpdateState::Restarting { .. }) {
+        // A development/uninstalled copy must never replace itself. A
+        // verified update already waiting for restart needs no new check.
+        if matches!(
+            self.state(),
+            UpdateState::Disabled | UpdateState::Ready { .. } | UpdateState::Restarting { .. }
+        ) {
             return;
         }
         self.set(app, UpdateState::Checking);
