@@ -1,7 +1,7 @@
 {
   "name": "candlewick",
   "private": true,
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Live crypto and stock prices in the macOS menu bar and the Windows taskbar",
   "keywords": [
     "macos",
