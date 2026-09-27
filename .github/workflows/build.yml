@@ -1,8 +1,9 @@
 name: Build Candlewick
 
 # Builds the installers and releases from main on its own. A push to main
-# that changes the app gets its version from the commits since the last
-# release, a `chore: release vX.Y.Z` commit, a GitHub release with the
+# that changes the app increments the patch version. A manual run can
+# explicitly select a minor release. Both create a `chore: release vX.Y.Z`
+# commit, a GitHub release with the
 # installers, and the tag that comes with it. Nobody maintains versions or
 # tags by hand. Pull requests build and test the Windows installer, and
 # release nothing.
@@ -18,6 +19,16 @@ name: Build Candlewick
 #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
 
 on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump (main only; an unfinished release keeps its version)"
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
   push:
     branches: [main]
     paths: &app
@@ -73,40 +84,43 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # Conventional Commits decide the bump: `type!:` or a BREAKING CHANGE
-      # footer bumps minor before 1.0 and major after, `feat:` bumps minor,
-      # anything else bumps patch. Only commits touching the app count. When
+      # Automatic releases always bump patch, regardless of commit type.
+      # A workflow_dispatch on main can explicitly bump minor. When
       # the files already hold a version no tag names (a hand bump, or a
       # release whose run did not finish), that version ships as it is.
       - name: Decide
         id: decide
         shell: bash
+        env:
+          RELEASE_BUMP: ${{ inputs.bump || 'patch' }}
         run: |
           set -euo pipefail
           current=$(jq -r .version src-tauri/tauri.conf.json)
           [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::unexpected version ${current}"; exit 1; }
           echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           echo "version=${current}" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" != "refs/heads/main" ]]; then
+          if [[ "$GITHUB_REF" != "refs/heads/main" || ( "$GITHUB_EVENT_NAME" != "push" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ) ]]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          bump=patch
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            case "$RELEASE_BUMP" in
+              patch|minor) bump="$RELEASE_BUMP" ;;
+              *) echo "::error::unsupported version bump"; exit 1 ;;
+            esac
           fi
 
           if git rev-parse -q --verify "refs/tags/v${current}" >/dev/null; then
             # shellcheck disable=SC2086
             subjects=$(git log "v${current}..HEAD" --format=%s -- $APP_PATHS)
-            # shellcheck disable=SC2086
-            bodies=$(git log "v${current}..HEAD" --format=%b -- $APP_PATHS)
-            if [[ -z "$subjects" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == "push" && -z "$subjects" ]]; then
               echo "::notice::nothing in the app changed since v${current}; not releasing"
               echo "release=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             IFS=. read -r major minor patch <<< "$current"
-            if grep -qE '^[a-z]+(\([^)]*\))?!:' <<< "$subjects" || grep -q '^BREAKING CHANGE' <<< "$bodies"; then
-              if (( major == 0 )); then minor=$((minor + 1)); else major=$((major + 1)); minor=0; fi
-              patch=0
-            elif grep -qE '^feat(\([^)]*\))?:' <<< "$subjects"; then
+            if [[ "$bump" == "minor" ]]; then
               minor=$((minor + 1)); patch=0
             else
               patch=$((patch + 1))

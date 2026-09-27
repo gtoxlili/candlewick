@@ -8,15 +8,19 @@
 
 ## 版本号
 
-版本号由上一个 tag 之后、改动了应用的提交决定，提交信息要符合 Conventional Commits：
+日常发布只递增修订号 `z`，次版本号 `y` 留给明确的阶段性发布：
 
-- `feat:` 升次版本号，0.5.0 变 0.6.0
-- 带 `!` 的提交（如 `feat!:`），或正文里有 `BREAKING CHANGE`：1.0 之前升次版本号，之后升主版本号
-- 其余提交升修订号，0.5.0 变 0.5.1
+- 自动发布：main 上有应用改动时，`feat:`、`fix:` 和其他提交都升 `z`，例如 `0.8.0 → 0.8.1`。一次发布只加一，不按提交数量累加。`!` 和 `BREAKING CHANGE` 也不再自动决定版本跨度。
+- 阶段性发布：在 GitHub 的 **Actions → Build Candlewick → Run workflow** 中选择 `main`，将 `bump` 设为 `minor`，例如 `0.8.7 → 0.9.0`。允许在没有新应用提交时主动发布这个里程碑版本。
+- 手动运行的默认选项为 `patch`。PR 和其他分支不会发布。
+
+提交信息仍使用 Conventional Commits，方便阅读发布说明，但提交类型不再触发次版本号或主版本号递增。
 
 机器人把新版本写进 `src-tauri/tauri.conf.json`、`package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`，提交 `chore: release vX.Y.Z` 并推到 main，安装包从这个提交构建。所以本地推送前先 `git pull --rebase`。
 
 要跳到指定版本（比如 1.0.0），手动把这四个文件改成那个版本再推送。文件里的版本还没有对应的 tag，工作流就原样发布它，不再加一。
+
+发布失败后同样复用文件中的版本号，即使重试时选择了 `minor`，也会先完成尚未打 tag 的版本。完成后再次手动选择 `minor`，才会升到下一个次版本。
 
 ## 产物
 

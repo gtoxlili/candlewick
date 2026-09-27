@@ -266,7 +266,7 @@ function SwitchRow(props: {
   );
 }
 
-/** App identity and a persistent place for update progress and results. */
+/** A single-line utility bar; update feedback never changes its height. */
 function AppFooter() {
   const [update, setUpdate] = useState<Update | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -299,46 +299,63 @@ function AppFooter() {
   const act = async () => {
     setError(null);
     try {
-      if (state?.kind === "ready") await api.restartToUpdate();
+      if (!state) setUpdate(await api.getUpdate());
+      else if (state.kind === "ready") await api.restartToUpdate();
       else await api.checkUpdate();
     } catch {
       setError("操作未完成，请重试");
     }
   };
   return (
-    <footer className="shrink-0 border-t bg-card/40 px-5 py-3">
-      <div className="flex min-h-6 items-center justify-between gap-3">
-        <p className="flex items-baseline gap-2">
-          <span className="text-xs font-medium text-foreground/75">Candlewick</span>
-          {update && (
-            <span className="text-2xs tabular-nums text-muted-foreground">v{update.current}</span>
-          )}
-        </p>
-        {state && state.kind !== "disabled" && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "-mr-2 h-6 px-2 text-xs",
-              state.kind === "ready" ? "text-primary" : "text-muted-foreground",
-            )}
-            disabled={busy}
-            onClick={() => void act()}
-          >
-            {busy && <LoaderCircle className="size-3 animate-spin" aria-hidden="true" />}
-            {state.kind === "ready" ? "重新启动更新" : "检查更新"}
-          </Button>
-        )}
-      </div>
-      <p
-        role="status"
-        aria-live="polite"
-        className={cn("text-2xs leading-relaxed text-muted-foreground", note && "mt-1")}
-      >
-        {note}
+    <footer className="flex h-8 shrink-0 items-center justify-between gap-4 border-t px-5 text-2xs text-muted-foreground">
+      <p className="flex shrink-0 items-baseline gap-1.5">
+        <span>Candlewick</span>
+        {update && <span className="tabular-nums opacity-70">v{update.current}</span>}
       </p>
+      {state?.kind === "disabled" ? (
+        <span title={note ?? undefined}>更新不可用</span>
+      ) : state || error ? (
+        <button
+          type="button"
+          className={cn(
+            "-mr-1 flex h-6 min-w-0 items-center gap-1.5 rounded px-1 font-normal outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none",
+            state?.kind === "ready" && "text-primary",
+          )}
+          disabled={busy}
+          title={state?.kind === "idle" && state.checked ? "再次检查更新" : note ?? "检查是否有新版本"}
+          aria-label={state?.kind === "idle" && state.checked ? "已是最新版本，再次检查更新" : undefined}
+          onClick={() => void act()}
+        >
+          {busy && <LoaderCircle className="size-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+          <span className="truncate">{error ? "操作失败，重试" : state && updateLabel(state)}</span>
+        </button>
+      ) : null}
+      <span role="status" aria-live="polite" className="sr-only">
+        {note}
+      </span>
     </footer>
   );
+}
+
+function updateLabel(state: UpdateState): string {
+  switch (state.kind) {
+    case "disabled":
+      return "更新不可用";
+    case "idle":
+      return state.checked ? "已是最新版本" : "检查更新";
+    case "checking":
+      return "检查中…";
+    case "downloading":
+      return "下载更新中…";
+    case "ready":
+      return "重启更新";
+    case "restarting":
+      return "重启中…";
+    case "unreachable":
+      return "检查失败，重试";
+    case "failed":
+      return "更新失败，重试";
+  }
 }
 
 function updateNote(state: UpdateState): string | null {
