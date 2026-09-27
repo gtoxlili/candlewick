@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "candlewick"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "block2",
  "flate2",
