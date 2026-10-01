@@ -289,9 +289,7 @@ async fn get<T: DeserializeOwned>(key: &ApiKey, path: &str, query: &str) -> Resu
         .await?;
         // Some endpoints refuse a key with a bare 401, saying no more.
         if status == StatusCode::UNAUTHORIZED {
-            return Err(Error::Message(
-                "Bybit 拒绝了这个 API Key：Key 或 Secret 不对，或者没有读取权限".to_owned(),
-            ));
+            return Err(Error::Message("API Key 或 Secret 不对，或没有读取权限".to_owned()));
         }
         let reply: Reply =
             serde_json::from_str(&body).map_err(|_| http::Error::Status(status.as_u16()))?;
@@ -325,11 +323,11 @@ async fn sync_clock() -> Result<(), Error> {
 
 fn refusal(code: i64, message: &str) -> String {
     match code {
-        10002 => "本机时间与 Bybit 相差太多，请校准系统时间".to_owned(),
-        10003 => "API Key 不存在或已删除".to_owned(),
-        10004 => "签名不对，请检查 API Secret".to_owned(),
-        10005 => "这个 API Key 没有读取这项数据的权限".to_owned(),
-        10010 => "这个 API Key 绑定的 IP 不包括本机".to_owned(),
+        10002 => "系统时间不准，请校准后重试".to_owned(),
+        10003 => "API Key 不存在".to_owned(),
+        10004 => "API Secret 不对".to_owned(),
+        10005 => "API Key 没有读取权限".to_owned(),
+        10010 => "API Key 绑定了其他 IP".to_owned(),
         33004 => "API Key 已过期".to_owned(),
         _ => format!("{message}（{code}）"),
     }

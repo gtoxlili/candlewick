@@ -294,13 +294,13 @@ async fn sync_clock() -> Result<(), Error> {
 
 fn refusal(code: &str, message: &str) -> String {
     match code {
-        "50102" => "本机时间与 OKX 相差太多，请校准系统时间".to_owned(),
+        "50102" => "系统时间不准，请校准后重试".to_owned(),
         "50105" => "Passphrase 不对".to_owned(),
-        "50110" => "这个 API Key 绑定的 IP 不包括本机".to_owned(),
-        "50111" | "50119" => "API Key 不存在，请检查是否填错".to_owned(),
-        "50113" => "签名不对，请检查 Secret Key".to_owned(),
-        "50120" | "50030" => "这个 API Key 没有读取这项数据的权限".to_owned(),
-        "50101" => "这是模拟盘的 API Key，请使用实盘 Key".to_owned(),
+        "50110" => "API Key 绑定了其他 IP".to_owned(),
+        "50111" | "50119" => "API Key 不存在".to_owned(),
+        "50113" => "Secret Key 不对".to_owned(),
+        "50120" | "50030" => "API Key 没有读取权限".to_owned(),
+        "50101" => "这是模拟盘的 API Key".to_owned(),
         _ => format!("{message}（{code}）"),
     }
 }

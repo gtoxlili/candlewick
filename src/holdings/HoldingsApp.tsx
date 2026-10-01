@@ -1,11 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { LoaderCircle } from "lucide-react";
 import { cn } from "cn";
 
 import { ChangeBadge } from "@/components/ChangeBadge";
 import { TitleBar } from "@/components/TitleBar";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -65,15 +68,19 @@ export default function HoldingsApp() {
       <TitleBar title="持仓" divider={scrolled} maximizable />
       {!portfolio ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
-          <LoaderCircle className="size-5 animate-spin" />
+          <Spinner className="size-5" aria-label="加载中" />
         </div>
       ) : portfolio.accounts.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground">
-          <p>在设置的「持仓」里填写交易所的 API Key 后，这里会显示持仓。</p>
-          <Button size="sm" onClick={() => void api.openSettings()}>
-            打开设置
-          </Button>
-        </div>
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>还没有填写 API Key</EmptyTitle>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button size="sm" onClick={() => void api.openSettings()}>
+              去设置
+            </Button>
+          </EmptyContent>
+        </Empty>
       ) : (
         <div
           className="flex-1 space-y-4 overflow-y-auto px-5 pt-2 pb-6"
@@ -123,47 +130,32 @@ function AccountCard(props: { account: ExchangeAccount; hideSmall: boolean }) {
   const shown = holdings?.assets.filter((a) => !hideSmall || (a.value ?? 0) >= SMALL) ?? [];
   const hidden = (holdings?.assets.length ?? 0) - shown.length;
   return (
-    <section className="rounded-xl border bg-card">
-      <header className="flex items-center gap-3 px-4 pt-3">
-        <h2 className="font-semibold">{account.name}</h2>
-        {holdings && (
-          <span className="tabular">
-            {fmtPrice(holdings.total, 2)} <span className="text-xs text-muted-foreground">USDT</span>
-          </span>
-        )}
+    // The border, not the card's ring: it follows the platform's divider color.
+    <Card size="sm" className="border ring-0">
+      <CardHeader className="flex items-center gap-3">
+        <CardTitle className="font-semibold">{account.name}</CardTitle>
+        {holdings && <span className="tabular">{fmtPrice(holdings.total, 2)}</span>}
         {holdings && <Change value={holdings.change} total={holdings.total} />}
-        <span className="flex-1" />
-        {account.updated !== null && (
-          <span className="text-2xs text-muted-foreground tabular">更新于 {fmtClock(account.updated)}</span>
+        <CardAction className="ml-auto self-center text-2xs text-muted-foreground tabular">
+          {account.updated === null ? <Spinner className="size-3.5" aria-label="加载中" /> : fmtClock(account.updated)}
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-3 px-2">
+        {holdings && holdings.wallets.length > 1 && (
+          <p className="px-2 text-xs text-muted-foreground tabular">
+            {holdings.wallets.map((w) => `${w.label} ${fmtPrice(w.value, 2)}`).join(" · ")}
+          </p>
         )}
-      </header>
-      {holdings && holdings.wallets.length > 0 && (
-        <p className="px-4 pt-1 text-xs text-muted-foreground tabular">
-          {holdings.wallets.map((w) => `${w.label} ${fmtPrice(w.value, 2)}`).join(" · ")}
-        </p>
-      )}
-      {account.error && (
-        <p className="mx-4 mt-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {holdings ? `刷新失败，显示的是上次的数据：${account.error}` : account.error}
-        </p>
-      )}
-      {!holdings && !account.error && (
-        <p className="flex items-center gap-2 px-4 py-4 text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" /> 正在读取持仓…
-        </p>
-      )}
-      {holdings && (
-        <div className="space-y-3 px-2 pt-1 pb-2">
-          {shown.length > 0 ? (
-            <AssetTable assets={shown} />
-          ) : (
-            holdings.positions.length === 0 && <p className="px-2 py-2 text-muted-foreground">没有资产</p>
-          )}
-          {hidden > 0 && <p className="px-2 text-xs text-muted-foreground">另有 {hidden} 个小额资产未显示</p>}
-          {holdings.positions.length > 0 && <PositionTable positions={holdings.positions} />}
-        </div>
-      )}
-    </section>
+        {account.error && (
+          <Alert variant="destructive" className="mx-2 w-auto border-transparent bg-destructive/10 text-xs">
+            {holdings ? `刷新失败：${account.error}` : account.error}
+          </Alert>
+        )}
+        {shown.length > 0 && <AssetTable assets={shown} />}
+        {hidden > 0 && <p className="px-2 text-xs text-muted-foreground">已隐藏 {hidden} 个小额资产</p>}
+        {holdings && holdings.positions.length > 0 && <PositionTable positions={holdings.positions} />}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -195,7 +187,7 @@ const NUMBER = "px-2 py-1.5 text-right align-top";
 function AssetTable(props: { assets: HeldAsset[] }) {
   const costs = props.assets.some((a) => a.cost !== null || a.pnl !== null);
   return (
-    <Columns head={["资产", "数量", "价格", "价值 USDT", "24h", ...(costs ? ["成本 / 浮动盈亏"] : [])]}>
+    <Columns head={["资产", "数量", "价格", "价值", "24h", ...(costs ? ["成本 / 盈亏"] : [])]}>
       {props.assets.map((asset) => (
         <TableRow key={asset.asset}>
           <TableCell className={NAME}>

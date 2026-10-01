@@ -387,7 +387,7 @@ impl Service {
                     &proto::QuoteProfileRequest { language: LANGUAGE.to_owned() },
                 )
                 .await?;
-            Ok::<_, Error>((connection, Account::from_profile(&profile, &keys), route))
+            Ok::<_, Error>((connection, Account::from_profile(&profile), route))
         };
         tokio::select! {
             result = timeout(CONNECT_TIMEOUT, login) => match result {

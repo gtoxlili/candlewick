@@ -19,10 +19,7 @@ use super::{
     BoxFuture, Candidate, Candle, ChartMode, ChartSpec, Error, IntervalSpec, Link, LiveEvent,
     Provider, ProviderId, Search, Trade,
 };
-use crate::{
-    credentials::LongbridgeKeys,
-    model::{FeedControl, Instrument},
-};
+use crate::model::{FeedControl, Instrument};
 
 pub struct Longbridge;
 
@@ -197,8 +194,6 @@ impl Provider for Longbridge {
 #[serde(rename_all = "camelCase")]
 pub struct Account {
     pub markets: Vec<MarketAccess>,
-    /// When the access token expires, epoch seconds.
-    pub token_expires: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -211,7 +206,7 @@ pub struct MarketAccess {
 }
 
 impl Account {
-    fn from_profile(profile: &proto::QuoteProfileResponse, keys: &LongbridgeKeys) -> Self {
+    fn from_profile(profile: &proto::QuoteProfileResponse) -> Self {
         let markets = [("US", "美股"), ("HK", "港股"), ("CN", "A 股")]
             .into_iter()
             .filter_map(|(code, market)| {
@@ -223,7 +218,7 @@ impl Account {
                 })
             })
             .collect();
-        Self { markets, token_expires: api::token_expiry(&keys.access_token) }
+        Self { markets }
     }
 }
 

@@ -1,6 +1,6 @@
-import { LoaderCircle } from "lucide-react";
 import { cn } from "cn";
 
+import { Spinner } from "@/components/ui/spinner";
 import type { Trade } from "@/lib/api";
 import { fmtClock, fmtPrice, fmtQty } from "@/lib/format";
 
@@ -14,7 +14,7 @@ export function TradeList(props: { trades: Trade[] | null; decimals: number; bas
       </div>
       {props.trades === null ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" />
+          <Spinner aria-label="加载中" />
         </div>
       ) : props.trades.length === 0 ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">暂无成交</div>

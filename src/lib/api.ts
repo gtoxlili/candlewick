@@ -186,8 +186,6 @@ export type LiveEvent =
 /** What a Longbridge account may see. */
 export interface LongbridgeAccount {
   markets: { market: string; packages: string[]; note: string | null }[];
-  /** When the access token expires, epoch seconds. */
-  tokenExpires: number | null;
 }
 
 export interface Longbridge {

@@ -15,7 +15,7 @@
 
 <p align="center"><a href="README.zh-CN.md">简体中文</a></p>
 
-Candlewick shows live crypto and stock prices in the macOS menu bar, or in the Windows taskbar next to the clock. Crypto comes from an exchange's public market data, Binance, Bybit or OKX, so any spot pair works without an account. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI keys. Click an entry in the dropdown to open a chart that moves with every trade. The interface is in Simplified Chinese.
+Crypto comes from Binance, Bybit or OKX public market data, no account needed. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI keys. The interface is in Simplified Chinese.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/chart-dark.png">
@@ -24,69 +24,40 @@ Candlewick shows live crypto and stock prices in the macOS menu bar, or in the W
 
 ## Features
 
-- One pinned entry in the menu bar or taskbar, with its name and change if you like, and your whole watchlist in the dropdown
-- Up to 30 entries, crypto and stocks side by side: any spot pair on the chosen exchange, plus stocks by code (AAPL, 700, 600519)
-- Pick Binance, Bybit or OKX in the settings; switching exchanges takes the old exchange's pairs off the watchlist
-- With an exchange's API key, the dropdown opens with your total holdings and their 24-hour change, and a holdings window lists spot, funding, earn and futures positions by exchange
-- A line or candlestick chart that updates with every trade, with intervals from 1 second to 1 day for crypto and 1 minute to 1 week for stocks. Drag to scroll back, pinch or scroll to zoom
-- The order book with buy and sell pressure, and a live list of recent trades
-- US pre-market, after-hours and overnight sessions
-- Green-up or red-up colors, and launch at login
-- Updates itself: a new version downloads in the background and takes over while the screen is off or locked
+- One instrument always in the menu bar or taskbar, and up to 30 in the dropdown
+- Crypto: Binance, Bybit or OKX, any spot pair
+- Stocks: US (including pre-market, after-hours and overnight), Hong Kong and China A-shares, by code
+- A chart that moves with every trade, with the order book and recent trades
+- With an exchange's API key, your total holdings and every account's positions
+- Red-up or green-up colors, launch at login, automatic updates
 
 ## Install
 
-### macOS
+**macOS**: get `Candlewick_<version>_aarch64.dmg` from the [latest release](https://github.com/gtoxlili/candlewick/releases/latest) and drag Candlewick into Applications. It needs macOS 15 or later on Apple silicon. It lives in the menu bar, with no Dock icon.
 
-Download `Candlewick_<version>_aarch64.dmg` from the [latest release](https://github.com/gtoxlili/candlewick/releases/latest), open it and drag Candlewick into Applications. It needs macOS 15 or later on Apple silicon, and it is signed and notarized by Apple. Candlewick lives in the menu bar and has no Dock icon.
+**Windows**: run `Candlewick_<version>_x64-setup.exe`. It needs Windows 10 or 11. If SmartScreen stops it, click More info, then Run anyway. The price appears beside the taskbar clock.
 
-### Windows
+## Stocks
 
-Download `Candlewick_<version>_x64-setup.exe` from the [latest release](https://github.com/gtoxlili/candlewick/releases/latest) and run it. It needs Windows 10 or 11, and no administrator rights. The installer isn't code-signed yet, so SmartScreen may stop it the first time. Click More info, then Run anyway.
-
-The price appears in the taskbar beside the clock. Click it for your watchlist and settings.
-
-## Stocks with Longbridge
-
-Stock prices need a Longbridge account with OpenAPI access.
-
-1. Sign in at [open.longbridge.com](https://open.longbridge.com/) and copy the App Key, App Secret and Access Token from the user center.
-2. Paste them into Settings → 长桥 (Longbridge) and save. Candlewick logs in and lists your quote access for each market.
+1. Copy the App Key, App Secret and Access Token from the user center at [open.longbridge.com](https://open.longbridge.com/).
+2. Paste them into Settings → 长桥 (Longbridge).
 3. Add stocks by code in the search field, such as AAPL, 700 or 600519.
 
-Candlewick keeps the keys on your computer only, and renews the access token before it expires.
+## Holdings
 
-## Your holdings
-
-1. On the exchange's API management page, create an API key; read permission is all it needs. OKX also asks you to set a passphrase.
-2. Paste it into Settings → 持仓 (Holdings) and save. Candlewick first checks with the exchange that the key works. It only ever reads with it, and never trades or withdraws.
-3. Your total holdings now head the dropdown. Click them for the holdings window.
-
-You can add keys for all three exchanges, whichever one the prices come from. Totals use each exchange's own USDT prices, with futures accounts at their margin balance (unrealized PnL included). The 24-hour change is what the last day's price moves made of what you hold now. OKX also shows your spot cost and unrealized PnL; Binance's and Bybit's APIs don't provide them.
-
-Holdings refresh every two minutes, every ten seconds while the holdings window is open, and when you open the dropdown.
+1. Create an API key on the exchange; read permission is all it needs. OKX also asks for a passphrase.
+2. Paste it into Settings → 持仓 (Holdings).
+3. Click 总资产 (Total) at the top of the dropdown to see every account's holdings.
 
 ## FAQ
 
-### Do I need an account?
+**Does it work where the exchange's website is blocked?** Yes. It goes through your system proxy and switches to backup addresses when the main ones don't answer.
 
-Not for crypto prices. Stocks need your own Longbridge keys, and holdings an exchange's API key. Candlewick only reads with them. It never trades.
+**How much does it use?** About 19 MB of memory and under 1% of one CPU core on a Mac.
 
-### Does it work where the exchange's website is blocked?
+**Does it collect any data?** No. It only talks to the exchanges and Longbridge you use, and to GitHub for updates (you can turn that off in the settings). Keys stay on your computer, and Candlewick never trades.
 
-It goes through your system proxy, and falls back to other hosts when the main ones are unreachable: Binance's public data hosts on `binance.vision`, Bybit's on `bytick.com`, and port 443 instead of 8443 for OKX's stream.
-
-### How much memory and CPU does it use?
-
-On a Mac, about 19 MB of memory and under 1% of one CPU core while prices stream. The chart, holdings and settings windows exist only while they are open.
-
-### Does it collect any data?
-
-No. It talks to the exchange you picked and, once you add keys, to Longbridge and the exchanges they belong to. It also asks GitHub for new versions, unless you turn off automatic updates in the settings.
-
-### Is there an English interface, or a build for Intel Macs?
-
-Not yet.
+**Is there an English interface, or a build for Intel Macs?** Not yet.
 
 ## Build from source
 
@@ -104,8 +75,8 @@ pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
 
 - `src-tauri/src/`: the Rust side, with what the bar shows, the windows and settings
 - `src-tauri/src/platform/`: the parts that differ between macOS and Windows
-- `src-tauri/src/market/`: market data behind one interface. The three exchanges share search, live streams and the order book in `crypto/` and only spell out what differs (`binance/`, `bybit.rs`, `okx.rs`); Longbridge lives in `longbridge/`. How to add a provider: [docs/market-data-providers.md](docs/market-data-providers.md)
-- `src-tauri/src/portfolio.rs` and each exchange's `account.rs`: holdings read with exchange API keys, valued in USDT
+- `src-tauri/src/market/`: prices and holdings, one implementation per source. How to add one: [docs/market-data-providers.md](docs/market-data-providers.md)
+- `src-tauri/src/portfolio.rs`: what holdings are worth
 - `src/settings/`, `src/chart/` and `src/holdings/`: the settings, chart and holdings windows, the chart built on [Liveline](https://github.com/benjitaylor/liveline)
 - `patches/liveline@0.0.7.patch`: dragging, zooming and the color setting for Liveline
 

@@ -1,12 +1,15 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, LoaderCircle, Search, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { cn } from "cn";
 
 import { Picker } from "@/components/Picker";
 import { TitleBar } from "@/components/TitleBar";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { BAR } from "@/lib/platform";
 import {
@@ -85,7 +88,7 @@ export default function App() {
 
       {!settings ? (
         <div className="flex flex-1 items-center justify-center p-6 text-muted-foreground">
-          {error ?? <LoaderCircle className="size-5 animate-spin" />}
+          {error ?? <Spinner className="size-5" aria-label="加载中" />}
         </div>
       ) : (
         <div
@@ -116,13 +119,11 @@ export default function App() {
               />
               <SwitchRow
                 label={`${BAR}显示涨跌幅`}
-                hint="价格与涨跌幅分上下两排显示"
                 checked={settings.showChange}
                 onChange={(showChange) => void update({ ...settings, showChange })}
               />
               <SwitchRow
                 label="红涨绿跌"
-                hint={__WINDOWS__ ? "任务栏、菜单与 K 线图的涨跌配色" : "下拉菜单与 K 线图的涨跌配色"}
                 checked={settings.colorScheme === "redUp"}
                 onChange={(redUp) =>
                   void update({ ...settings, colorScheme: redUp ? "redUp" : "greenUp" })
@@ -135,14 +136,12 @@ export default function App() {
             <Group>
               <SwitchRow
                 label={__WINDOWS__ ? "开机时启动" : "登录时启动"}
-                hint={`开机后自动出现在${BAR}`}
                 checked={loginItem ?? false}
                 disabled={loginItem === null}
                 onChange={(enabled) => void toggleLoginItem(enabled)}
               />
               <SwitchRow
                 label="自动更新"
-                hint="在后台下载新版本，锁屏或显示器关闭时重新启动"
                 checked={settings.autoUpdate}
                 onChange={(autoUpdate) => void update({ ...settings, autoUpdate })}
               />
@@ -150,7 +149,7 @@ export default function App() {
           </Section>
 
           {error && (
-            <p className="rounded-lg bg-destructive/10 px-3 py-2 text-destructive">{error}</p>
+            <Problem>{error}</Problem>
           )}
         </div>
       )}
@@ -160,9 +159,7 @@ export default function App() {
   );
 }
 
-const WATCHLIST_FOOTNOTE = __WINDOWS__
-  ? "任务栏只显示一个，打开哪个的「任务栏」就显示哪个；点任务栏上的行情或托盘图标，在菜单里选名称可查看 K 线与盘口。"
-  : "菜单栏只显示一个，打开哪个的「菜单栏」就显示哪个；点下拉菜单里的名称可查看 K 线与盘口。";
+const WATCHLIST_FOOTNOTE = `点${BAR}菜单里的名称，可打开行情图。`;
 
 function WatchlistSection(props: {
   exchange: Exchange;
@@ -254,7 +251,7 @@ const EXCHANGE_PICKER = __WINDOWS__
 function ExchangeSection(props: { exchange: Exchange; onChange: (exchange: Exchange) => void }) {
   const current = EXCHANGES.find((e) => e.value === props.exchange);
   return (
-    <Section title="加密货币" footnote="公开行情，无需账号。换一家交易所，会从自选中移除原交易所的币对。">
+    <Section title="加密货币" footnote="切换后，原交易所的币对会从自选中移除。">
       <Group>
         <div className="flex min-h-10 items-center justify-between gap-4 px-3.5 py-2">
           <span>交易所</span>
@@ -332,7 +329,7 @@ function ApiKeysSection() {
   return (
     <Section
       title="持仓"
-      footnote="填写 API Key 后，菜单里会显示总资产，持仓窗口列出现货、资金、理财和合约。Candlewick 只用它读取，不会下单或提币，创建时勾选读取权限就够了。Key 只保存在这台电脑上。"
+      footnote="只用于读取持仓，不会下单。Key 只保存在本机。"
     >
       <Group>
         {keys.map(({ exchange, key }) => {
@@ -365,22 +362,20 @@ function ApiKeysSection() {
                 )}
               </div>
               {open && (
-                <div className="space-y-2 px-3.5 pb-3">
-                  {fields.map(({ field, label, secret }) => (
-                    <label key={field} className="flex items-center gap-3">
-                      <span className="w-24 shrink-0 text-muted-foreground">{label}</span>
-                      <Input
-                        type={secret ? "password" : "text"}
+                <div className="space-y-3 px-3.5 pb-3">
+                  <FieldGroup className="gap-2.5">
+                    {fields.map(({ field, label, secret }) => (
+                      <CredentialField
+                        key={field}
+                        label={label}
+                        secret={secret}
                         value={form[field] ?? ""}
-                        className="h-7 rounded-md font-mono text-xs"
-                        spellCheck={false}
-                        autoCorrect="off"
                         disabled={saving}
-                        onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+                        onChange={(value) => setForm({ ...form, [field]: value })}
                       />
-                    </label>
-                  ))}
-                  <div className="flex items-center justify-end gap-2 pt-1">
+                    ))}
+                  </FieldGroup>
+                  <div className="flex items-center justify-end gap-2">
                     <a
                       href={API_PAGES[exchange]}
                       target="_blank"
@@ -393,16 +388,14 @@ function ApiKeysSection() {
                       取消
                     </Button>
                     <Button size="sm" disabled={!complete || saving} onClick={() => save(exchange, form)}>
-                      {saving && <LoaderCircle className="animate-spin" />}
-                      {saving ? "正在验证" : "保存"}
+                      {saving && <Spinner aria-label="正在验证" />}
+                      保存
                     </Button>
                   </div>
                 </div>
               )}
               {problem?.exchange === exchange && (
-                <p className="mx-3.5 mb-3 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                  {problem.message}
-                </p>
+                <Problem className="mx-3.5 mb-3 w-auto">{problem.message}</Problem>
               )}
             </div>
           );
@@ -435,9 +428,48 @@ function Group({ children }: { children: ReactNode }) {
   return <div className="divide-y rounded-xl border bg-card">{children}</div>;
 }
 
+/** One line of a credentials form. */
+function CredentialField(props: {
+  label: string;
+  secret: boolean;
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const id = useId();
+  return (
+    <Field className="gap-1">
+      <FieldLabel htmlFor={id} className="text-xs font-normal text-muted-foreground">
+        {props.label}
+      </FieldLabel>
+      <Input
+        id={id}
+        type={props.secret ? "password" : "text"}
+        value={props.value}
+        className="h-7 rounded-md font-mono text-xs"
+        spellCheck={false}
+        autoCorrect="off"
+        disabled={props.disabled}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
+    </Field>
+  );
+}
+
+/** Why something the user asked for didn't happen. */
+function Problem(props: { className?: string; children: ReactNode }) {
+  return (
+    <Alert
+      variant="destructive"
+      className={cn("border-transparent bg-destructive/10 px-3 py-2 text-xs", props.className)}
+    >
+      {props.children}
+    </Alert>
+  );
+}
+
 function SwitchRow(props: {
   label: string;
-  hint?: string;
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
@@ -445,12 +477,9 @@ function SwitchRow(props: {
   const id = useId();
   return (
     <div className="flex min-h-10 items-center justify-between gap-4 px-3.5 py-2">
-      <div className="space-y-0.5">
-        <Label htmlFor={id} className="font-normal">
-          {props.label}
-        </Label>
-        {props.hint && <p className="text-xs text-muted-foreground">{props.hint}</p>}
-      </div>
+      <Label htmlFor={id} className="font-normal">
+        {props.label}
+      </Label>
       <Switch
         id={id}
         checked={props.checked}
@@ -521,7 +550,7 @@ function AppFooter() {
           aria-label={state?.kind === "idle" && state.checked ? "已是最新版本，再次检查更新" : undefined}
           onClick={() => void act()}
         >
-          {busy && <LoaderCircle className="size-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+          {busy && <Spinner className="size-3 motion-reduce:animate-none" aria-hidden="true" />}
           <span className="truncate">{error ? "操作失败，重试" : state && updateLabel(state)}</span>
         </button>
       ) : null}
@@ -669,7 +698,7 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
           {options.length === 0 ? (
             loading ? (
               <p className="flex items-center gap-2 px-2.5 py-1.5 text-muted-foreground">
-                <LoaderCircle className="size-4 animate-spin" /> 正在搜索…
+                <Spinner aria-hidden /> 正在搜索…
               </p>
             ) : (
               <div className="space-y-1 px-2.5 py-1.5 text-muted-foreground">
@@ -771,23 +800,19 @@ function LongbridgeSection() {
 
   if (!state) return null;
   const configured = state.appKey !== null && !editing;
-  const expires = state.account?.tokenExpires;
 
   return (
     <Section
       title="长桥"
-      footnote={configured ? undefined : "填写长桥 OpenAPI 凭证后，可以添加美股、港股和 A 股。"}
+      footnote={configured ? undefined : "填写后可添加美股、港股和 A 股。"}
     >
       <Group>
         {configured ? (
           <>
             <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
-              <div className="min-w-0 flex-1 space-y-0.5">
-                <p>
-                  App Key <span className="font-mono text-xs text-muted-foreground">{state.appKey}</span>
-                </p>
-                {expires && <p className="text-xs text-muted-foreground">Access Token {fmtDate(expires)}到期，到期前会自动续期</p>}
-              </div>
+              <p className="min-w-0 flex-1">
+                App Key <span className="font-mono text-xs text-muted-foreground">{state.appKey}</span>
+              </p>
               <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
                 更换
               </Button>
@@ -798,7 +823,7 @@ function LongbridgeSection() {
             <div className="space-y-1 px-3.5 py-2 text-xs">
               {checking ? (
                 <p className="flex items-center gap-2 text-muted-foreground">
-                  <LoaderCircle className="size-3.5 animate-spin" /> 正在登录长桥…
+                  <Spinner className="size-3.5" aria-hidden /> 正在登录长桥…
                 </p>
               ) : state.account ? (
                 state.account.markets.map((m) => (
@@ -815,21 +840,19 @@ function LongbridgeSection() {
             </div>
           </>
         ) : (
-          <div className="space-y-2 px-3.5 py-3">
-            {LONGBRIDGE_FIELDS.map((field) => (
-              <label key={field.key} className="flex items-center gap-3">
-                <span className="w-24 shrink-0 text-muted-foreground">{field.label}</span>
-                <Input
-                  type={field.secret ? "password" : "text"}
+          <div className="space-y-3 px-3.5 py-3">
+            <FieldGroup className="gap-2.5">
+              {LONGBRIDGE_FIELDS.map((field) => (
+                <CredentialField
+                  key={field.key}
+                  label={field.label}
+                  secret={field.secret}
                   value={keys[field.key]}
-                  className="h-7 rounded-md font-mono text-xs"
-                  spellCheck={false}
-                  autoCorrect="off"
-                  onChange={(e) => setKeys({ ...keys, [field.key]: e.target.value })}
+                  onChange={(value) => setKeys({ ...keys, [field.key]: value })}
                 />
-              </label>
-            ))}
-            <div className="flex items-center justify-end gap-2 pt-1">
+              ))}
+            </FieldGroup>
+            <div className="flex items-center justify-end gap-2">
               <a
                 href="https://open.longbridge.com/"
                 target="_blank"
@@ -854,14 +877,7 @@ function LongbridgeSection() {
           </div>
         )}
       </Group>
-      {problem && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{problem}</p>}
+      {problem && <Problem>{problem}</Problem>}
     </Section>
   );
-}
-
-/** Epoch seconds → "12 月 25 日", with the year when it isn't this one. */
-function fmtDate(secs: number): string {
-  const d = new Date(secs * 1000);
-  const year = d.getFullYear() === new Date().getFullYear() ? "" : `${d.getFullYear()} 年 `;
-  return `${year}${d.getMonth() + 1} 月 ${d.getDate()} 日`;
 }

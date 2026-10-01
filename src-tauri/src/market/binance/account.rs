@@ -40,7 +40,7 @@ impl Account for Binance {
         let restrictions: Restrictions =
             get(key, Method::GET, SPOT, "/sapi/v1/account/apiRestrictions", "").await?;
         if !restrictions.enable_reading {
-            return Err(Error::Message("这个 API Key 没有读取权限".to_owned()));
+            return Err(Error::Message("API Key 没有读取权限".to_owned()));
         }
         Ok(())
     }
@@ -391,12 +391,10 @@ async fn sync_clock() -> Result<(), Error> {
 
 fn refused(code: i64, message: &str) -> String {
     match code {
-        -1021 => "本机时间与币安相差太多，请校准系统时间".to_owned(),
-        -1022 => "签名不对，请检查 API Secret".to_owned(),
-        -2008 | -2014 => "API Key 不存在，请检查是否填错".to_owned(),
-        -2015 => {
-            "币安拒绝了这个 API Key：Key 无效、没有读取权限，或者绑定的 IP 不包括本机".to_owned()
-        }
+        -1021 => "系统时间不准，请校准后重试".to_owned(),
+        -1022 => "API Secret 不对".to_owned(),
+        -2008 | -2014 => "API Key 不存在".to_owned(),
+        -2015 => "API Key 无效、没有读取权限，或绑定了其他 IP".to_owned(),
         _ => format!("{message}（{code}）"),
     }
 }

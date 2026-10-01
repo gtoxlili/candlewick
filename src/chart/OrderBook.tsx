@@ -1,7 +1,8 @@
-import { ArrowDown, ArrowUp, LoaderCircle } from "lucide-react";
+import { ArrowDown, ArrowUp } from "lucide-react";
 import { cn } from "cn";
 
 import { Picker } from "@/components/Picker";
+import { Spinner } from "@/components/ui/spinner";
 import type { Book, Level } from "@/lib/api";
 import { fmtPrice, fmtQty } from "@/lib/format";
 
@@ -71,7 +72,7 @@ export function OrderBook(props: {
       </div>
       {book === null ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" />
+          <Spinner aria-label="加载中" />
         </div>
       ) : empty ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">暂无挂单</div>
