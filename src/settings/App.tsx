@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode 
 import { ChevronDown, ChevronUp, LoaderCircle, Search, X } from "lucide-react";
 import { cn } from "cn";
 
+import { Picker } from "@/components/Picker";
 import { TitleBar } from "@/components/TitleBar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,12 +11,14 @@ import { Switch } from "@/components/ui/switch";
 import { BAR } from "@/lib/platform";
 import {
   api,
+  EXCHANGES,
   instrumentId,
   instrumentLabel,
   marketLabel,
   MAX_INSTRUMENTS,
   subscribe,
   type Candidate,
+  type Exchange,
   type Instrument,
   type Longbridge,
   type LongbridgeKeys,
@@ -88,8 +91,14 @@ export default function App() {
           onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
         >
           <WatchlistSection
+            exchange={settings.exchange}
             watchlist={settings.watchlist}
             onChange={(watchlist) => void update({ ...settings, watchlist })}
+          />
+
+          <ExchangeSection
+            exchange={settings.exchange}
+            onChange={(exchange) => void update({ ...settings, exchange })}
           />
 
           <LongbridgeSection />
@@ -151,7 +160,11 @@ const WATCHLIST_FOOTNOTE = __WINDOWS__
   ? "任务栏只显示一个，打开哪个的「任务栏」就显示哪个；点任务栏上的行情或托盘图标，在菜单里选名称可查看 K 线与盘口。"
   : "菜单栏只显示一个，打开哪个的「菜单栏」就显示哪个；点下拉菜单里的名称可查看 K 线与盘口。";
 
-function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist: Instrument[]) => void }) {
+function WatchlistSection(props: {
+  exchange: Exchange;
+  watchlist: Instrument[];
+  onChange: (watchlist: Instrument[]) => void;
+}) {
   const { watchlist, onChange } = props;
   const move = (index: number, delta: number) => {
     const next = [...watchlist];
@@ -162,6 +175,8 @@ function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist
   return (
     <Section title="自选" footnote={WATCHLIST_FOOTNOTE}>
       <InstrumentSearch
+        // Another exchange clears the search: its results were the old exchange's pairs.
+        key={props.exchange}
         existing={watchlist}
         full={watchlist.length >= MAX_INSTRUMENTS}
         onAdd={(added) => onChange([...watchlist, { ...added, pinned: watchlist.length === 0 }])}
@@ -220,6 +235,32 @@ function WatchlistSection(props: { watchlist: Instrument[]; onChange: (watchlist
             </div>
           ))
         )}
+      </Group>
+    </Section>
+  );
+}
+
+/** Which exchange the pairs come from. */
+function ExchangeSection(props: { exchange: Exchange; onChange: (exchange: Exchange) => void }) {
+  const current = EXCHANGES.find((e) => e.value === props.exchange);
+  return (
+    <Section title="加密货币" footnote="公开行情，无需账号。换一家交易所，会从自选中移除原交易所的币对。">
+      <Group>
+        <div className="flex min-h-10 items-center justify-between gap-4 px-3.5 py-2">
+          <span>交易所</span>
+          <Picker
+            label="交易所"
+            value={props.exchange}
+            options={EXCHANGES}
+            onChange={(value) => {
+              const picked = EXCHANGES.find((e) => e.value === value);
+              if (picked) props.onChange(picked.value);
+            }}
+            className="-mr-1.5 flex h-7 items-center gap-1 rounded-md px-2 hover:bg-accent"
+          >
+            <span>{current?.label}</span>
+          </Picker>
+        </div>
       </Group>
     </Section>
   );
@@ -387,7 +428,7 @@ function InstrumentName(props: { instrument: Instrument; className?: string; dim
   return (
     <span className={props.className}>
       <span className="font-medium">{name}</span>
-      {detail && <span className={dim}>{props.instrument.provider === "binance" ? detail : ` ${detail}`}</span>}
+      {detail && <span className={dim}>{detail}</span>}
       {market && <span className={cn("ml-1.5 text-xs", dim)}>{market}</span>}
     </span>
   );

@@ -368,6 +368,7 @@ impl Service {
             let headers = [("accept-language", LANGUAGE)];
             let (socket, route) = net::connect_with_headers(
                 hosts.quote,
+                443,
                 "/v2?version=1&codec=1&platform=9",
                 &headers,
             )

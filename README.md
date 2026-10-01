@@ -15,7 +15,7 @@
 
 <p align="center"><a href="README.zh-CN.md">简体中文</a></p>
 
-Candlewick shows live crypto and stock prices in the macOS menu bar, or in the Windows taskbar next to the clock. Crypto comes from Binance's public market data, so any spot pair works without an account. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI keys. Click an entry in the dropdown to open a chart that moves with every trade. The interface is in Simplified Chinese.
+Candlewick shows live crypto and stock prices in the macOS menu bar, or in the Windows taskbar next to the clock. Crypto comes from an exchange's public market data, Binance, Bybit or OKX, so any spot pair works without an account. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI keys. Click an entry in the dropdown to open a chart that moves with every trade. The interface is in Simplified Chinese.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/chart-dark.png">
@@ -25,7 +25,8 @@ Candlewick shows live crypto and stock prices in the macOS menu bar, or in the W
 ## Features
 
 - One pinned entry in the menu bar or taskbar, with its name and change if you like, and your whole watchlist in the dropdown
-- Up to 30 entries, crypto and stocks side by side: any Binance spot pair, plus stocks by code (AAPL, 700, 600519)
+- Up to 30 entries, crypto and stocks side by side: any spot pair on the chosen exchange, plus stocks by code (AAPL, 700, 600519)
+- Pick Binance, Bybit or OKX in the settings; switching exchanges takes the old exchange's pairs off the watchlist
 - A line or candlestick chart that updates with every trade, with intervals from 1 second to 1 day for crypto and 1 minute to 1 week for stocks. Drag to scroll back, pinch or scroll to zoom
 - The order book with buy and sell pressure, and a live list of recent trades
 - US pre-market, after-hours and overnight sessions
@@ -60,9 +61,9 @@ Candlewick keeps the keys on your computer only, and renews the access token bef
 
 Not for crypto. Stocks need your own Longbridge keys, which Candlewick only uses to read quotes. It never trades.
 
-### Does it work where binance.com is blocked?
+### Does it work where the exchange's website is blocked?
 
-Yes. It goes through your system proxy, and when `binance.com` is unreachable it switches to Binance's public data hosts on `binance.vision`.
+It goes through your system proxy, and falls back to other hosts when the main ones are unreachable: Binance's public data hosts on `binance.vision`, Bybit's on `bytick.com`, and port 443 instead of 8443 for OKX's stream.
 
 ### How much memory and CPU does it use?
 
@@ -70,7 +71,7 @@ On a Mac, about 19 MB of memory and under 1% of one CPU core while prices stream
 
 ### Does it collect any data?
 
-No. It talks to Binance and, once you add keys, to Longbridge. It also asks GitHub for new versions, unless you turn off automatic updates in the settings.
+No. It talks to the exchange you picked and, once you add keys, to Longbridge. It also asks GitHub for new versions, unless you turn off automatic updates in the settings.
 
 ### Is there an English interface, or a build for Intel Macs?
 
@@ -92,7 +93,7 @@ pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
 
 - `src-tauri/src/`: the Rust side, with what the bar shows, the windows and settings
 - `src-tauri/src/platform/`: the parts that differ between macOS and Windows
-- `src-tauri/src/market/`: market data behind one interface, with a provider for Binance and one for Longbridge
+- `src-tauri/src/market/`: market data behind one interface. The three exchanges share search, live streams and the order book in `crypto/` and only spell out what differs (`binance/`, `bybit.rs`, `okx.rs`); Longbridge lives in `longbridge/`. How to add a provider: [docs/market-data-providers.md](docs/market-data-providers.md)
 - `src/settings/` and `src/chart/`: the settings and chart windows, the chart built on [Liveline](https://github.com/benjitaylor/liveline)
 - `patches/liveline@0.0.7.patch`: dragging, zooming and the color setting for Liveline
 
@@ -100,4 +101,4 @@ Built with [Tauri 2](https://tauri.app), Rust, React 19 and Tailwind CSS.
 
 ## License
 
-[GPL-3.0](LICENSE). Candlewick is not affiliated with Binance or Longbridge. Prices are for reference only and are not financial advice.
+[GPL-3.0](LICENSE). Candlewick is not affiliated with Binance, Bybit, OKX or Longbridge. Prices are for reference only and are not financial advice.

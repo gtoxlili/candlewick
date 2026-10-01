@@ -15,7 +15,7 @@
 
 <p align="center"><a href="README.md">English</a></p>
 
-Candlewick 把加密货币和股票的实时价格放在 macOS 菜单栏里，或者 Windows 任务栏的时钟旁边。加密货币用的是币安公开行情，任意现货交易对都能看，不需要账号。美股、港股和 A 股来自长桥，用你自己的 OpenAPI 凭证。点下拉菜单里的任意一个，就能打开随每笔成交跳动的行情图。
+Candlewick 把加密货币和股票的实时价格放在 macOS 菜单栏里，或者 Windows 任务栏的时钟旁边。加密货币用的是交易所的公开行情，币安、Bybit、OKX 三选一，任意现货交易对都能看，不需要账号。美股、港股和 A 股来自长桥，用你自己的 OpenAPI 凭证。点下拉菜单里的任意一个，就能打开随每笔成交跳动的行情图。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/chart-dark.png">
@@ -25,7 +25,8 @@ Candlewick 把加密货币和股票的实时价格放在 macOS 菜单栏里，�
 ## 功能
 
 - 在菜单栏或任务栏上固定一个标的，可以附带名称和涨跌幅，下拉菜单列出全部自选
-- 最多 30 个，加密货币和股票放在一起：任意币安现货交易对，以及按代码添加的股票（AAPL、700、600519）
+- 最多 30 个，加密货币和股票放在一起：所选交易所的任意现货交易对，以及按代码添加的股票（AAPL、700、600519）
+- 在设置里选币安、Bybit 或 OKX；换交易所时，自选里原交易所的币对会被移除
 - 折线图或 K 线随每笔成交更新，加密货币周期从 1 秒到 1 天，股票从 1 分钟到 1 周。拖动回看历史，滚动或双指捏合缩放
 - 盘口和买卖力量对比，以及实时的最近成交
 - 美股盘前、盘后和夜盘
@@ -60,9 +61,9 @@ Candlewick 把加密货币和股票的实时价格放在 macOS 菜单栏里，�
 
 看加密货币不需要。看股票要用你自己的长桥凭证，Candlewick 只用它读取行情，从不下单。
 
-### 访问不了 binance.com 也能用吗？
+### 访问不了交易所的网站也能用吗？
 
-能。它走系统代理，`binance.com` 连不上时会自动改用币安在 `binance.vision` 上的公开行情域名。
+它走系统代理。主域名连不上时还会换备用域名：币安是 `binance.vision` 上的公开行情域名，Bybit 是 `bytick.com`，OKX 的行情连接会从 8443 端口换到 443 端口。
 
 ### 占用多少内存和 CPU？
 
@@ -70,7 +71,7 @@ Candlewick 把加密货币和股票的实时价格放在 macOS 菜单栏里，�
 
 ### 会收集数据吗？
 
-不会。它只连币安，填了凭证后再连长桥；另外会去 GitHub 检查新版本，在设置里关掉「自动更新」就不会了。
+不会。它只连你选的那家交易所，填了凭证后再连长桥；另外会去 GitHub 检查新版本，在设置里关掉「自动更新」就不会了。
 
 ### 有英文界面或 Intel 版本吗？
 
@@ -92,7 +93,7 @@ Windows 版是怎么实现的，见 [docs/windows.md](docs/windows.md)。main �
 
 - `src-tauri/src/`：Rust 侧，包括菜单栏和任务栏显示的内容、窗口与设置
 - `src-tauri/src/platform/`：macOS 和 Windows 之间不同的部分
-- `src-tauri/src/market/`：统一接口下的行情数据，币安和长桥各有一个数据源实现
+- `src-tauri/src/market/`：统一接口下的行情数据。三家交易所共用 `crypto/` 里的搜索、实时流和盘口，各自只写不同的部分（`binance/`、`bybit.rs`、`okx.rs`）；长桥在 `longbridge/`。接入说明见 [docs/market-data-providers.md](docs/market-data-providers.md)
 - `src/settings/` 与 `src/chart/`：设置窗口和行情窗口，图表基于 [Liveline](https://github.com/benjitaylor/liveline)
 - `patches/liveline@0.0.7.patch`：给 Liveline 加上拖动、缩放和涨跌配色
 
@@ -100,4 +101,4 @@ Windows 版是怎么实现的，见 [docs/windows.md](docs/windows.md)。main �
 
 ## 许可
 
-[GPL-3.0](LICENSE)。本项目与币安、长桥均无关联，价格仅供参考，不构成投资建议。
+[GPL-3.0](LICENSE)。本项目与币安、Bybit、OKX、长桥均无关联，价格仅供参考，不构成投资建议。

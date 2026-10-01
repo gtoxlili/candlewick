@@ -66,37 +66,35 @@ impl Instrument {
     /// The bar's name for it: `BTC` for USD-like quotes, `ETH/BTC`
     /// otherwise; US tickers as they are, other stocks by name.
     pub fn short_label(&self) -> String {
-        match self.provider {
-            ProviderId::Binance if is_usd_like(&self.quote) => self.base.clone(),
-            ProviderId::Binance => self.pair_label(),
-            ProviderId::Longbridge => match &self.name {
-                Some(name) if !self.symbol.ends_with(".US") => name.clone(),
-                _ => self.base.clone(),
-            },
+        if self.provider.is_exchange() {
+            return if is_usd_like(&self.quote) { self.base.clone() } else { self.pair_label() };
+        }
+        match &self.name {
+            Some(name) if !self.symbol.ends_with(".US") => name.clone(),
+            _ => self.base.clone(),
         }
     }
 
     /// `BTC/USDT`, or a stock's name and code: `苹果 AAPL`, `腾讯控股 700`.
     pub fn pair_label(&self) -> String {
-        match (self.provider, &self.name) {
-            (ProviderId::Binance, _) => format!("{}/{}", self.base, self.quote),
-            (ProviderId::Longbridge, Some(name)) => format!("{name} {}", self.base),
-            (ProviderId::Longbridge, None) => self.base.clone(),
+        if self.provider.is_exchange() {
+            return format!("{}/{}", self.base, self.quote);
+        }
+        match &self.name {
+            Some(name) => format!("{name} {}", self.base),
+            None => self.base.clone(),
         }
     }
 
     /// The dropdown row's name and the dimmed part after it: `BTC` `/USDT`,
     /// `AAPL` ` 苹果`, `腾讯控股` ` 700`.
     pub fn row_label(&self) -> (String, String) {
-        match self.provider {
-            ProviderId::Binance => (self.base.clone(), format!("/{}", self.quote)),
-            ProviderId::Longbridge => {
-                let short = self.short_label();
-                let other =
-                    if short == self.base { self.name.clone() } else { Some(self.base.clone()) };
-                (short, other.map(|other| format!(" {other}")).unwrap_or_default())
-            }
+        if self.provider.is_exchange() {
+            return (self.base.clone(), format!("/{}", self.quote));
         }
+        let short = self.short_label();
+        let other = if short == self.base { self.name.clone() } else { Some(self.base.clone()) };
+        (short, other.map(|other| format!(" {other}")).unwrap_or_default())
     }
 }
 
@@ -112,9 +110,16 @@ pub enum ColorScheme {
     RedUp,
 }
 
+/// Decimals of a tick size past this are taken as unknown; exchanges quote no
+/// finer than 10^-13.
+const MAX_DECIMALS: u8 = 18;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// The crypto exchange every pair comes from (one of
+    /// [`ProviderId::EXCHANGES`]); the watchlist holds no other's.
+    pub exchange: ProviderId,
     pub watchlist: Vec<Instrument>,
     pub show_symbol: bool,
     pub show_change: bool,
@@ -126,6 +131,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            exchange: ProviderId::Binance,
             watchlist: vec![
                 Instrument::preset("BTC", true),
                 Instrument::preset("ETH", false),
@@ -140,15 +146,24 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Normalizes and checks settings coming from the webview.
+    /// Normalizes and checks settings coming from the webview. Pairs of
+    /// another exchange than the one picked are dropped: picking another one
+    /// takes them off the watchlist.
     pub fn validated(mut self) -> Result<Self, String> {
+        if !self.exchange.is_exchange() {
+            return Err(format!("不支持的交易所：{}", self.exchange.name()));
+        }
+        let exchange = self.exchange;
+        self.watchlist.retain(|instrument| {
+            !instrument.provider.is_exchange() || instrument.provider == exchange
+        });
         if self.watchlist.len() > MAX_INSTRUMENTS {
             return Err(format!("最多添加 {MAX_INSTRUMENTS} 个"));
         }
         let mut seen = HashSet::new();
         for instrument in &mut self.watchlist {
             instrument.provider.provider().validate(instrument)?;
-            if instrument.decimals.is_some_and(|d| d > 12) {
+            if instrument.decimals.is_some_and(|d| d > MAX_DECIMALS) {
                 instrument.decimals = None;
             }
             if !seen.insert(instrument.id()) {
@@ -378,6 +393,29 @@ impl Shared {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn another_exchange_takes_the_pairs_off_the_watchlist() {
+        let mut settings = Settings::default();
+        settings.watchlist.push(Instrument {
+            provider: ProviderId::Longbridge,
+            symbol: "AAPL.US".into(),
+            base: "AAPL".into(),
+            quote: "USD".into(),
+            name: Some("苹果".into()),
+            decimals: None,
+            pinned: false,
+        });
+        settings.exchange = ProviderId::Okx;
+        let settings = settings.validated().unwrap();
+        let symbols: Vec<&str> = settings.watchlist.iter().map(|i| i.symbol.as_str()).collect();
+        assert_eq!(symbols, ["AAPL.US"]);
+        assert!(settings.pinned().is_none());
+
+        let mut stocks = settings.clone();
+        stocks.exchange = ProviderId::Longbridge;
+        assert!(stocks.validated().is_err());
+    }
 
     #[test]
     fn at_most_one_entry_is_pinned() {

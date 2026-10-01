@@ -74,34 +74,38 @@ pub enum Error {
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
 }
 
-/// Connects to `wss://{host}{path}` through whatever route the system proxy
-/// settings prescribe. A configured proxy that is not listening (a proxy app
-/// that quit without restoring settings) falls back to a direct connection.
-pub async fn connect(host: &str, path_and_query: &str) -> Result<(Socket, Route), Error> {
-    connect_with_headers(host, path_and_query, &[]).await
+/// Connects to `wss://{host}:{port}{path}` through whatever route the system
+/// proxy settings prescribe. A configured proxy that is not listening (a proxy
+/// app that quit without restoring settings) falls back to a direct connection.
+pub async fn connect(
+    host: &str,
+    port: u16,
+    path_and_query: &str,
+) -> Result<(Socket, Route), Error> {
+    connect_with_headers(host, port, path_and_query, &[]).await
 }
 
 /// [`connect`], with extra headers on the upgrade request.
 pub async fn connect_with_headers(
     host: &str,
+    port: u16,
     path_and_query: &str,
     headers: &[(&'static str, &str)],
 ) -> Result<(Socket, Route), Error> {
-    const PORT: u16 = 443;
     let mut route = platform::proxy::route(host);
     let proxy = match &route {
         Route::Direct => None,
         Route::Http { host, port } | Route::Socks5 { host, port } => Some((host.clone(), *port)),
     };
     let tcp = match proxy {
-        None => TcpStream::connect((host, PORT)).await?,
+        None => TcpStream::connect((host, port)).await?,
         Some((proxy_host, proxy_port)) => {
             match TcpStream::connect((proxy_host.as_str(), proxy_port)).await {
                 Ok(mut tcp) => {
                     if matches!(route, Route::Http { .. }) {
-                        http_connect(&mut tcp, host, PORT).await?;
+                        http_connect(&mut tcp, host, port).await?;
                     } else {
-                        socks5_connect(&mut tcp, host, PORT).await?;
+                        socks5_connect(&mut tcp, host, port).await?;
                     }
                     tcp
                 }
@@ -109,7 +113,7 @@ pub async fn connect_with_headers(
                     let proxy = Authority(&proxy_host, proxy_port);
                     log::warn!("proxy {proxy} refused, connecting directly");
                     route = Route::Direct;
-                    TcpStream::connect((host, PORT)).await?
+                    TcpStream::connect((host, port)).await?
                 }
                 Err(e) => return Err(e.into()),
             }
@@ -123,7 +127,8 @@ pub async fn connect_with_headers(
         .write_buffer_size(0)
         .max_message_size(Some(256 * 1024))
         .max_frame_size(Some(256 * 1024));
-    let mut request = format!("wss://{host}{path_and_query}").into_client_request()?;
+    let authority = if port == 443 { host.to_owned() } else { Authority(host, port).to_string() };
+    let mut request = format!("wss://{authority}{path_and_query}").into_client_request()?;
     for (name, value) in headers {
         let value = HeaderValue::from_str(value).map_err(|e| Error::Proxy(e.to_string()))?;
         request.headers_mut().insert(*name, value);

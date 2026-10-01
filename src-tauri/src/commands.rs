@@ -110,10 +110,12 @@ pub fn window_ready(window: WebviewWindow) -> CmdResult<()> {
     Ok(())
 }
 
-/// Instruments matching the query, from every provider.
+/// Instruments matching the query: pairs on the exchange picked, and stocks.
 #[tauri::command]
-pub async fn search_instruments(query: String) -> Search {
-    let searches = ProviderId::ALL.map(|provider| provider.provider().search(&query));
+pub async fn search_instruments(app: AppHandle, query: String) -> Search {
+    let exchange = app.state::<Shared>().model().settings.exchange;
+    let searches =
+        [exchange, ProviderId::Longbridge].map(|provider| provider.provider().search(&query));
     let mut all = Search::default();
     for found in futures_util::future::join_all(searches).await {
         all.candidates.extend(found.candidates);

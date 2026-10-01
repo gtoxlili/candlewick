@@ -3,12 +3,22 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type ColorScheme = "greenUp" | "redUp";
 
-export type ProviderId = "binance" | "longbridge";
+/** The crypto exchanges; the settings pick one for every pair. */
+export type Exchange = "binance" | "bybit" | "okx";
+
+export type ProviderId = Exchange | "longbridge";
+
+/** Named as the app names them (`ProviderId::name`). */
+export const EXCHANGES = [
+  { value: "binance", label: "币安" },
+  { value: "bybit", label: "Bybit" },
+  { value: "okx", label: "OKX" },
+] as const satisfies readonly { value: Exchange; label: string }[];
 
 /** A watchlist entry. */
 export interface Instrument {
   provider: ProviderId;
-  /** The provider's symbol, e.g. BTCUSDT, AAPL.US. */
+  /** The provider's symbol, e.g. BTCUSDT, BTC-USDT, AAPL.US. */
   symbol: string;
   /** Crypto: the base asset (BTC). Stocks: the code (AAPL, 700). */
   base: string;
@@ -27,15 +37,15 @@ export const instrumentId = (instrument: Pick<Instrument, "provider" | "symbol">
   `${instrument.provider}:${instrument.symbol}`;
 
 /**
- * The name and a dimmed detail, as the dropdown shows them (see
- * `Instrument::row_label` in the app): BTC /USDT, AAPL 苹果, 腾讯控股 700.
+ * The name and the dimmed part after it, as the dropdown shows them (see
+ * `Instrument::row_label` in the app): "BTC" "/USDT", "AAPL" " 苹果", "腾讯控股" " 700".
  */
 export function instrumentLabel(instrument: Instrument): { name: string; detail: string } {
-  if (instrument.provider === "binance") return { name: instrument.base, detail: `/${instrument.quote}` };
+  if (instrument.provider !== "longbridge") return { name: instrument.base, detail: `/${instrument.quote}` };
   const name = instrument.name ?? "";
   // US tickers read better than their names; other codes are just numbers.
-  if (instrument.symbol.endsWith(".US") || !name) return { name: instrument.base, detail: name };
-  return { name, detail: instrument.base };
+  if (instrument.symbol.endsWith(".US") || !name) return { name: instrument.base, detail: name && ` ${name}` };
+  return { name, detail: ` ${instrument.base}` };
 }
 
 const MARKETS: Record<string, string> = { US: "美股", HK: "港股", SH: "A 股", SZ: "A 股" };
@@ -46,6 +56,8 @@ export function marketLabel(instrument: Instrument): string {
 }
 
 export interface Settings {
+  /** Where every pair comes from; picking another exchange takes the pairs off the watchlist. */
+  exchange: Exchange;
   watchlist: Instrument[];
   showSymbol: boolean;
   showChange: boolean;

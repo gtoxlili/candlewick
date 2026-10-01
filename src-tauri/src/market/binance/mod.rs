@@ -1,246 +1,128 @@
 //! Binance spot: public market data, no account or key.
 
 mod depth;
-mod stream;
-mod ticker;
+mod live;
 
-use std::{
-    fmt,
-    sync::{
-        Arc, LazyLock, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{Duration, Instant},
-};
+use std::{borrow::Cow, fmt};
 
 use serde::{
     Deserialize, Deserializer,
-    de::{self, DeserializeOwned, IgnoredAny, SeqAccess, Visitor},
+    de::{self, IgnoredAny, SeqAccess, Visitor},
 };
-use tauri::{AppHandle, ipc::Channel};
-use tokio::sync::{oneshot, watch};
 
 use super::{
-    BoxFuture, Candidate, Candle, ChartMode, ChartSpec, Error, IntervalSpec, Link, LiveEvent,
-    Provider, ProviderId, Search, Stats, Trade,
+    Candle, Error, Link, ProviderId, Stats, Trade,
+    crypto::{self, Exchange, Interval, Pair, Tick},
 };
-use crate::{
-    http,
-    model::{FeedControl, Instrument},
-    net,
-};
-
-/// The second host of each pair serves the same public market data and is
-/// reachable from some networks where the first is not.
-const REST_HOSTS: [&str; 2] = ["api.binance.com", "data-api.binance.vision"];
-const WS_HOSTS: [&str; 2] = ["stream.binance.com", "data-stream.binance.vision"];
-
-/// Seconds, label, Binance's name, and how the chart first shows it: one-second
-/// candles are mostly noise, a line reads better.
-const INTERVALS: [(u32, &str, &str, ChartMode); 7] = [
-    (1, "1秒", "1s", ChartMode::Line),
-    (60, "1分", "1m", ChartMode::Candle),
-    (300, "5分", "5m", ChartMode::Candle),
-    (900, "15分", "15m", ChartMode::Candle),
-    (3600, "1小时", "1h", ChartMode::Candle),
-    (14_400, "4小时", "4h", ChartMode::Candle),
-    (86_400, "1日", "1d", ChartMode::Candle),
-];
+use crate::{model::Instrument, net};
 
 /// Binance's most klines or trades per request.
 const MAX_PAGE: usize = 1000;
 
 pub struct Binance;
 
-impl Provider for Binance {
-    fn validate(&self, instrument: &mut Instrument) -> Result<(), String> {
-        instrument.symbol = instrument.symbol.trim().to_uppercase();
-        instrument.base = instrument.base.trim().to_uppercase();
-        instrument.quote = instrument.quote.trim().to_uppercase();
-        let valid = |s: &str, max: usize| {
-            !s.is_empty() && s.chars().count() <= max && s.chars().all(char::is_alphanumeric)
-        };
-        if !valid(&instrument.symbol, 24)
-            || !valid(&instrument.base, 16)
-            || !valid(&instrument.quote, 12)
-        {
-            return Err(format!("无效的交易对：{}", instrument.symbol));
-        }
-        if instrument.symbol != format!("{}{}", instrument.base, instrument.quote) {
-            return Err(format!("交易对与币种不匹配：{}", instrument.symbol));
-        }
-        Ok(())
+impl Exchange for Binance {
+    const ID: ProviderId = ProviderId::Binance;
+    const REST_HOSTS: &'static [&'static str] = &["api.binance.com", "data-api.binance.vision"];
+    const SOCKETS: &'static [(&'static str, u16)] =
+        &[("stream.binance.com", 443), ("data-stream.binance.vision", 443)];
+    // Binance pings every 20 seconds itself.
+    const PING: Option<&'static str> = None;
+    const INTERVALS: &'static [Interval] = &[
+        Interval::new(1, "1秒", "1s"),
+        Interval::new(60, "1分", "1m"),
+        Interval::new(300, "5分", "5m"),
+        Interval::new(900, "15分", "15m"),
+        Interval::new(3600, "1小时", "1h"),
+        Interval::new(14_400, "4小时", "4h"),
+        Interval::new(86_400, "1日", "1d"),
+    ];
+
+    type Live = live::Live;
+
+    fn symbol(base: &str, quote: &str) -> String {
+        format!("{base}{quote}")
     }
 
-    fn search<'a>(&'a self, query: &'a str) -> BoxFuture<'a, Search> {
-        Box::pin(search(query))
-    }
-
-    fn drop_search_cache(&self) {
-        GENERATION.fetch_add(1, Ordering::AcqRel);
-        *PAIRS.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    }
-
-    fn watch(
-        &self,
-        app: AppHandle,
-        control: watch::Receiver<FeedControl>,
-    ) -> BoxFuture<'static, ()> {
-        Box::pin(ticker::run(app, control))
-    }
-
-    fn chart_spec(&self, instrument: &Instrument) -> ChartSpec {
-        ChartSpec {
-            source: ProviderId::Binance.name(),
-            intervals: INTERVALS
-                .iter()
-                .map(|&(secs, label, _, mode)| IntervalSpec {
-                    secs,
-                    label,
-                    mode,
-                    aligned: true,
-                    regular_only: false,
-                })
-                .collect(),
-            stats_span: "24h",
-            volume_unit: instrument.base.clone(),
-            turnover_unit: instrument.quote.clone(),
-            // Daily candles open at 00:00 UTC.
-            day_offset: 0,
-            book_steps: depth::steps(instrument.decimals).into_iter().map(depth::price).collect(),
-            link: Some(Link {
-                label: "在币安打开",
-                url: format!(
-                    "https://www.binance.com/zh-CN/trade/{}_{}?type=spot",
-                    net::percent_encode(&instrument.base),
-                    net::percent_encode(&instrument.quote)
-                ),
-            }),
+    fn link(instrument: &Instrument) -> Link {
+        Link {
+            label: "在币安打开",
+            url: format!(
+                "https://www.binance.com/zh-CN/trade/{}_{}?type=spot",
+                net::percent_encode(&instrument.base),
+                net::percent_encode(&instrument.quote)
+            ),
         }
     }
 
-    fn history<'a>(
-        &'a self,
-        instrument: &'a Instrument,
-        interval: u32,
+    async fn pairs() -> Result<Vec<Pair>, Error> {
+        let info: ExchangeInfo = get(EXCHANGE_INFO).await?;
+        Ok(info.symbols.into_iter().map(RawSymbol::pair).collect())
+    }
+
+    async fn history(
+        instrument: &Instrument,
+        interval: &Interval,
         end: Option<f64>,
         limit: usize,
-    ) -> BoxFuture<'a, Result<Vec<Candle>, Error>> {
-        Box::pin(async move {
-            let name = INTERVALS
-                .iter()
-                .find(|(secs, ..)| *secs == interval)
-                .map(|(_, _, name, _)| *name)
-                .ok_or_else(|| Error::Message(format!("不支持的周期：{interval} 秒")))?;
-            let mut path = format!(
-                "/api/v3/klines?symbol={}&interval={name}&limit={}",
-                net::percent_encode(&instrument.symbol),
-                limit.clamp(1, MAX_PAGE)
-            );
-            if let Some(end) = end {
-                path.push_str(&format!("&endTime={}", (end * 1000.0) as i64 - 1));
-            }
-            let klines: Vec<Kline> = get(&path).await?;
-            Ok(klines.into_iter().map(|k| k.0).collect())
+    ) -> Result<Vec<Candle>, Error> {
+        let mut path = format!(
+            "/api/v3/klines?symbol={}&interval={}&limit={}",
+            net::percent_encode(&instrument.symbol),
+            interval.name,
+            limit.clamp(1, MAX_PAGE)
+        );
+        if let Some(end) = end {
+            path.push_str(&format!("&endTime={}", (end * 1000.0) as i64 - 1));
+        }
+        let klines: Vec<Kline> = get(&path).await?;
+        Ok(klines.into_iter().map(|k| k.0).collect())
+    }
+
+    async fn recent_trades(instrument: &Instrument, limit: usize) -> Result<Vec<Trade>, Error> {
+        let path = format!(
+            "/api/v3/aggTrades?symbol={}&limit={}",
+            net::percent_encode(&instrument.symbol),
+            limit.clamp(1, MAX_PAGE)
+        );
+        let trades: Vec<RawTrade> = get(&path).await?;
+        Ok(trades.iter().map(RawTrade::trade).collect())
+    }
+
+    /// `/stream?streams=btcusdt@miniTicker/ethusdt@miniTicker`
+    fn quotes_path(symbols: &[String]) -> String {
+        let streams: Vec<String> = symbols
+            .iter()
+            // Symbols can be non-ASCII (e.g. 币安人生USDT).
+            .map(|symbol| format!("{}@miniTicker", net::percent_encode(&symbol.to_lowercase())))
+            .collect();
+        format!("/stream?streams={}", streams.join("/"))
+    }
+
+    fn quotes_subscribe(_: &[String]) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn quote(text: &str) -> Option<Tick<'_>> {
+        let Envelope { data } = serde_json::from_str::<Envelope<MiniTicker>>(text).ok()?;
+        Some(Tick {
+            symbol: data.symbol,
+            last: crypto::num(&data.last),
+            open: crypto::num(&data.open),
         })
     }
 
-    fn recent_trades<'a>(
-        &'a self,
-        instrument: &'a Instrument,
-        limit: usize,
-    ) -> BoxFuture<'a, Result<Vec<Trade>, Error>> {
-        Box::pin(async move {
-            let path = format!(
-                "/api/v3/aggTrades?symbol={}&limit={}",
-                net::percent_encode(&instrument.symbol),
-                limit.clamp(1, MAX_PAGE)
-            );
-            let trades: Vec<RawTrade> = get(&path).await?;
-            Ok(trades.iter().map(RawTrade::trade).collect())
-        })
-    }
-
-    fn stream(
-        &self,
-        instrument: Instrument,
-        stop: oneshot::Receiver<()>,
-        events: Channel<LiveEvent>,
-    ) -> BoxFuture<'static, ()> {
-        Box::pin(stream::run(instrument, stop, events))
+    fn live(instrument: &Instrument) -> live::Live {
+        live::Live::new(instrument)
     }
 }
 
-/// GETs a public endpoint, trying each host in turn.
-async fn get<T: DeserializeOwned>(path: &str) -> Result<T, Error> {
-    let mut failure = None;
-    for host in REST_HOSTS {
-        match http::get_json(&format!("https://{host}{path}")).await {
-            Ok(value) => return Ok(value),
-            Err(e) => failure = Some(e),
-        }
-    }
-    Err(failure.expect("at least one host").into())
-}
-
-// Search: a ranked match over the list of pairs, loaded on first use.
-
-/// A tradable spot pair.
-struct Pair {
-    symbol: String,
-    base: String,
-    quote: String,
-    /// Decimals of the tick size.
-    decimals: u8,
-}
-
-impl Pair {
-    fn instrument(&self) -> Instrument {
-        Instrument {
-            provider: ProviderId::Binance,
-            symbol: self.symbol.clone(),
-            base: self.base.clone(),
-            quote: self.quote.clone(),
-            name: None,
-            decimals: Some(self.decimals),
-            pinned: false,
-        }
-    }
+async fn get<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, Error> {
+    crypto::get::<Binance, T>(path).await
 }
 
 const EXCHANGE_INFO: &str =
     "/api/v3/exchangeInfo?permissions=SPOT&symbolStatus=TRADING&showPermissionSets=false";
-/// Listings change rarely; one download serves searches for this long.
-const PAIRS_TTL: Duration = Duration::from_secs(30 * 60);
-
-static PAIRS: Mutex<Option<(Instant, Arc<Vec<Pair>>)>> = Mutex::new(None);
-/// Moves on when the cache is dropped, so a download still running then
-/// doesn't fill it again for nobody.
-static GENERATION: AtomicU64 = AtomicU64::new(0);
-/// One download at a time: searches typed meanwhile wait for it.
-static DOWNLOAD: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(Default::default);
-
-async fn pairs() -> Result<Arc<Vec<Pair>>, Error> {
-    let cached = || {
-        let pairs = PAIRS.lock().unwrap_or_else(|e| e.into_inner());
-        pairs.as_ref().filter(|(at, _)| at.elapsed() < PAIRS_TTL).map(|(_, list)| list.clone())
-    };
-    if let Some(list) = cached() {
-        return Ok(list);
-    }
-    let _download = DOWNLOAD.lock().await;
-    if let Some(list) = cached() {
-        return Ok(list);
-    }
-    let generation = GENERATION.load(Ordering::Acquire);
-    let info: ExchangeInfo = get(EXCHANGE_INFO).await?;
-    let list: Arc<Vec<Pair>> = Arc::new(info.symbols.into_iter().map(RawSymbol::pair).collect());
-    let mut cached = PAIRS.lock().unwrap_or_else(|e| e.into_inner());
-    if GENERATION.load(Ordering::Acquire) == generation {
-        *cached = Some((Instant::now(), list.clone()));
-    }
-    Ok(list)
-}
 
 #[derive(Deserialize)]
 struct ExchangeInfo {
@@ -269,112 +151,31 @@ impl RawSymbol {
             .filters
             .iter()
             .find(|f| f.filter_type == "PRICE_FILTER")
-            .and_then(|f| f.tick_size.as_deref());
-        Pair {
-            symbol: self.symbol,
-            base: self.base_asset,
-            quote: self.quote_asset,
-            decimals: tick_decimals(tick),
-        }
+            .and_then(|f| f.tick_size.as_deref())
+            .unwrap_or_default()
+            .to_owned();
+        Pair::new(self.symbol, self.base_asset, self.quote_asset, &tick)
     }
-}
-
-/// `"0.01000000"` → 2, `"1.00000000"` → 0
-fn tick_decimals(tick_size: Option<&str>) -> u8 {
-    let fraction = tick_size.and_then(|t| t.split_once('.')).map_or("", |(_, f)| f);
-    fraction.trim_end_matches('0').len() as u8
-}
-
-const SEARCH_LIMIT: usize = 8;
-const QUOTE_RANK: [&str; 6] = ["USDT", "USDC", "FDUSD", "BTC", "ETH", "BNB"];
-
-async fn search(query: &str) -> Search {
-    match pairs().await {
-        Ok(list) => Search {
-            candidates: rank(&list, &normalize(query))
-                .into_iter()
-                .map(|pair| Candidate { instrument: pair.instrument(), manual: false })
-                .collect(),
-            notes: Vec::new(),
-        },
-        Err(e) => {
-            log::warn!("cannot load Binance pairs: {e}");
-            Search {
-                candidates: parse_pair(query)
-                    .map(|instrument| Candidate { instrument, manual: true })
-                    .into_iter()
-                    .collect(),
-                notes: vec!["无法获取币安交易对列表，请输入完整交易对，如 SOLUSDT".to_owned()],
-            }
-        }
-    }
-}
-
-/// Exact base or symbol first, then prefixes; within each, the common quotes.
-fn rank<'a>(pairs: &'a [Pair], query: &str) -> Vec<&'a Pair> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-    let mut ranked: Vec<(usize, &Pair)> = pairs
-        .iter()
-        .filter_map(|pair| {
-            let matched = if pair.base == query || pair.symbol == query {
-                0
-            } else if pair.base.starts_with(query) {
-                1
-            } else if pair.symbol.starts_with(query) {
-                2
-            } else {
-                return None;
-            };
-            let quote =
-                QUOTE_RANK.iter().position(|q| *q == pair.quote).unwrap_or(QUOTE_RANK.len());
-            Some((matched * 100 + quote, pair))
-        })
-        .collect();
-    ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.symbol.cmp(&b.1.symbol)));
-    ranked.into_iter().take(SEARCH_LIMIT).map(|(_, pair)| pair).collect()
-}
-
-const MANUAL_QUOTES: [&str; 10] =
-    ["FDUSD", "USDT", "USDC", "USD1", "TUSD", "BTC", "ETH", "BNB", "EUR", "TRY"];
-
-/// Without the pair list: `SOL/USDT`, or `SOLUSDT` split at a known quote
-/// asset. Decimals stay unknown, so the app picks them by magnitude.
-fn parse_pair(input: &str) -> Option<Instrument> {
-    let raw = input.trim().to_uppercase();
-    let (base, quote) = match raw.split_once('/') {
-        Some((base, quote)) => (normalize(base), normalize(quote)),
-        None => {
-            let symbol = normalize(&raw);
-            let quote =
-                MANUAL_QUOTES.iter().find(|q| symbol.ends_with(*q) && symbol.len() > q.len())?;
-            (symbol[..symbol.len() - quote.len()].to_owned(), (*quote).to_owned())
-        }
-    };
-    // The rule `validate` enforces: letters and digits only (any script).
-    let valid = |s: &str| !s.is_empty() && s.chars().all(char::is_alphanumeric);
-    (valid(&base) && valid(&quote)).then(|| Instrument {
-        provider: ProviderId::Binance,
-        symbol: format!("{base}{quote}"),
-        base,
-        quote,
-        name: None,
-        decimals: None,
-        pinned: false,
-    })
-}
-
-/// Upper case without spaces or the separators people type in pair names.
-fn normalize(s: &str) -> String {
-    s.trim()
-        .to_uppercase()
-        .chars()
-        .filter(|c| !c.is_whitespace() && !matches!(c, '/' | '_' | '-'))
-        .collect()
 }
 
 // Wire formats shared by REST and the websocket.
+
+/// A combined stream's frame.
+#[derive(Deserialize)]
+struct Envelope<T> {
+    data: T,
+}
+
+/// The `<symbol>@miniTicker` stream.
+#[derive(Deserialize)]
+struct MiniTicker<'a> {
+    #[serde(rename = "s", borrow)]
+    symbol: Cow<'a, str>,
+    #[serde(rename = "c", borrow)]
+    last: Cow<'a, str>,
+    #[serde(rename = "o", borrow)]
+    open: Cow<'a, str>,
+}
 
 /// `[openTime, "open", "high", "low", "close", …]`
 struct Kline(Candle);
@@ -427,8 +228,8 @@ impl RawTrade {
     fn trade(&self) -> Trade {
         Trade {
             id: self.id,
-            price: self.price.parse().unwrap_or(f64::NAN),
-            qty: self.qty.parse().unwrap_or(f64::NAN),
+            price: crypto::num(&self.price),
+            qty: crypto::num(&self.qty),
             time: self.time as f64,
             sell: self.buyer_maker,
             extended: false,
@@ -441,25 +242,23 @@ impl RawTrade {
 #[serde(rename_all = "camelCase")]
 struct RestTicker {
     last_price: String,
+    open_price: String,
     high_price: String,
     low_price: String,
     volume: String,
     quote_volume: String,
-    price_change: String,
-    price_change_percent: String,
 }
 
 impl RestTicker {
     fn stats(&self) -> Stats {
-        stats([
-            &self.last_price,
-            &self.high_price,
-            &self.low_price,
-            &self.volume,
-            &self.quote_volume,
-            &self.price_change,
-            &self.price_change_percent,
-        ])
+        crypto::stats(
+            crypto::num(&self.last_price),
+            crypto::num(&self.open_price),
+            crypto::num(&self.high_price),
+            crypto::num(&self.low_price),
+            crypto::num(&self.volume),
+            crypto::num(&self.quote_volume),
+        )
     }
 }
 
@@ -467,61 +266,24 @@ impl RestTicker {
 #[derive(Deserialize)]
 struct WsTicker {
     c: String,
+    o: String,
     h: String,
     l: String,
     v: String,
     q: String,
-    p: String,
-    #[serde(rename = "P")]
-    pct: String,
 }
 
 impl WsTicker {
     fn stats(&self) -> Stats {
-        stats([&self.c, &self.h, &self.l, &self.v, &self.q, &self.p, &self.pct])
+        let [last, open, high, low, volume, turnover] =
+            [&self.c, &self.o, &self.h, &self.l, &self.v, &self.q].map(|s| crypto::num(s));
+        crypto::stats(last, open, high, low, volume, turnover)
     }
-}
-
-/// Last, high, low, volume, turnover, change, change %.
-fn stats(fields: [&String; 7]) -> Stats {
-    let [last, high, low, volume, turnover, change, change_pct] =
-        fields.map(|s| s.parse().unwrap_or(f64::NAN));
-    Stats { last, high, low, volume, turnover, change, change_pct }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn pair(symbol: &str, base: &str, quote: &str) -> Pair {
-        Pair { symbol: symbol.into(), base: base.into(), quote: quote.into(), decimals: 2 }
-    }
-
-    #[test]
-    fn ranks_exact_then_prefix_then_quote() {
-        let pairs = [
-            pair("SOLBTC", "SOL", "BTC"),
-            pair("SOLVUSDT", "SOLV", "USDT"),
-            pair("SOLUSDT", "SOL", "USDT"),
-            pair("SOLUSDC", "SOL", "USDC"),
-        ];
-        let symbols: Vec<&str> = rank(&pairs, "SOL").iter().map(|p| p.symbol.as_str()).collect();
-        assert_eq!(symbols, ["SOLUSDT", "SOLUSDC", "SOLBTC", "SOLVUSDT"]);
-    }
-
-    #[test]
-    fn manual_pairs_split_at_a_known_quote() {
-        let sol = parse_pair(" solusdt").unwrap();
-        assert_eq!(
-            (sol.base.as_str(), sol.quote.as_str(), sol.symbol.as_str()),
-            ("SOL", "USDT", "SOLUSDT")
-        );
-        let aeur = parse_pair("sol/aeur").unwrap();
-        assert_eq!((aeur.base.as_str(), aeur.quote.as_str()), ("SOL", "AEUR"));
-        assert!(parse_pair("USDT").is_none());
-        assert_eq!(tick_decimals(Some("0.01000000")), 2);
-        assert_eq!(tick_decimals(Some("1.00000000")), 0);
-    }
 
     #[test]
     fn klines_keep_the_first_five_fields() {
@@ -533,5 +295,16 @@ mod tests {
             (c.time, c.open, c.high, c.low, c.close),
             (1_700_000_000.0, 1.5, 2.0, 1.0, 1.75)
         );
+    }
+
+    #[test]
+    fn quotes_come_from_mini_tickers() {
+        assert_eq!(
+            Binance::quotes_path(&["BTCUSDT".into(), "币安人生USDT".into()]),
+            "/stream?streams=btcusdt@miniTicker/%E5%B8%81%E5%AE%89%E4%BA%BA%E7%94%9Fusdt@miniTicker"
+        );
+        let frame = r#"{"stream":"btcusdt@miniTicker","data":{"e":"24hrMiniTicker","s":"BTCUSDT","c":"84000.5","o":"83000"}}"#;
+        let tick = Binance::quote(frame).unwrap();
+        assert_eq!((&*tick.symbol, tick.last, tick.open), ("BTCUSDT", 84_000.5, 83_000.0));
     }
 }

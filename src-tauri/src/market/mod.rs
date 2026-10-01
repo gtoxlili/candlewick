@@ -5,10 +5,14 @@
 //! recent trades and a live stream of trades, order book and day statistics.
 //! The webviews never reach a service themselves; they call the commands in
 //! `commands.rs`, which route by instrument id (`binance:BTCUSDT`). Supporting
-//! another service means adding a provider here, nothing else.
+//! another service means adding a provider here, nothing else; a crypto
+//! exchange only needs what sets it apart from the others (`crypto::Exchange`).
 
-pub mod binance;
+mod binance;
+mod bybit;
+mod crypto;
 pub mod longbridge;
+mod okx;
 
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
@@ -28,16 +32,28 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 #[serde(rename_all = "camelCase")]
 pub enum ProviderId {
     Binance,
+    Bybit,
+    Okx,
     Longbridge,
 }
 
 impl ProviderId {
-    pub const ALL: [Self; 2] = [Self::Binance, Self::Longbridge];
+    pub const ALL: [Self; 4] = [Self::Binance, Self::Bybit, Self::Okx, Self::Longbridge];
+
+    /// The crypto exchanges, one of which the settings pick for every pair
+    /// (`Settings::exchange`).
+    pub const EXCHANGES: [Self; 3] = [Self::Binance, Self::Bybit, Self::Okx];
+
+    pub fn is_exchange(self) -> bool {
+        Self::EXCHANGES.contains(&self)
+    }
 
     /// The prefix of instrument ids.
     pub fn key(self) -> &'static str {
         match self {
             Self::Binance => "binance",
+            Self::Bybit => "bybit",
+            Self::Okx => "okx",
             Self::Longbridge => "longbridge",
         }
     }
@@ -46,6 +62,8 @@ impl ProviderId {
     pub fn name(self) -> &'static str {
         match self {
             Self::Binance => "币安",
+            Self::Bybit => "Bybit",
+            Self::Okx => "OKX",
             Self::Longbridge => "长桥",
         }
     }
@@ -53,6 +71,8 @@ impl ProviderId {
     pub fn provider(self) -> &'static dyn Provider {
         match self {
             Self::Binance => &binance::Binance,
+            Self::Bybit => &bybit::Bybit,
+            Self::Okx => &okx::Okx,
             Self::Longbridge => &longbridge::Longbridge,
         }
     }
@@ -89,6 +109,7 @@ pub trait Provider: Send + Sync {
 
     /// Up to `limit` candles of `interval` seconds, oldest first: the latest
     /// ones, whose last is still forming, or those that opened before `end`.
+    /// A service that pages smaller returns fewer; none means nothing older.
     fn history<'a>(
         &'a self,
         instrument: &'a Instrument,
@@ -223,7 +244,8 @@ pub struct Book {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Trade {
-    /// Increases with every trade of the instrument.
+    /// Increases with every trade of the instrument. Below 2^53, so the
+    /// webview reads it exactly.
     pub id: u64,
     pub price: f64,
     pub qty: f64,

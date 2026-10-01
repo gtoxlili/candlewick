@@ -1,38 +1,38 @@
-//! Menu bar quotes: Binance's miniTicker stream → quotes in the shared model.
-//!
-//! One websocket carries every watched pair. It is dropped whenever the pair
-//! set changes or nobody can see the menu bar (sleep, display off), and
-//! re-established with exponential backoff after failures.
+//! Menu bar quotes: one websocket carries every watched pair of the exchange
+//! into the shared model. It is dropped whenever the pair set changes or
+//! nobody can see the menu bar (sleep, display off), and re-established with
+//! exponential backoff after failures.
 
-use std::{borrow::Cow, time::Duration};
+use std::time::Duration;
 
-use futures_util::StreamExt;
-use serde::Deserialize;
+use futures_util::{SinkExt, StreamExt};
 use tauri::{AppHandle, Manager};
 use tokio::{
     sync::watch,
-    time::{Instant, sleep, timeout},
+    time::{Instant, MissedTickBehavior, interval_at, sleep, timeout},
 };
 use tokio_tungstenite::tungstenite::Message;
 
-use super::WS_HOSTS;
+use super::{Exchange, KEEPALIVE};
 use crate::{
-    bar,
-    market::{self, ProviderId},
+    bar, market,
     model::{FeedControl, Quote, Shared, Status},
     net,
 };
 
-const PROVIDER: ProviderId = ProviderId::Binance;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-/// The server pings every 20 s, so this much silence means a dead link
-/// (typically a network change the socket never noticed).
+/// Every exchange pings or answers ours within 20 seconds, so this much
+/// silence means a dead link (typically a network change the socket never
+/// noticed).
 const SILENCE_LIMIT: Duration = Duration::from_secs(45);
-/// Binance pushes each symbol as its own frame within the same second;
-/// waiting this long turns them into a single redraw.
+/// Exchanges push each pair as its own frame: Binance all of them within
+/// moments once a second, which waiting this long turns into a single redraw.
 const COALESCE: Duration = Duration::from_millis(120);
+/// OKX pushes a pair up to ten times a second; the bar redraws no more often
+/// than this, whichever exchange it is.
+const REDRAW_INTERVAL: Duration = Duration::from_secs(1);
 /// A session that lasted this long was healthy, so reconnect immediately
-/// (Binance closes every connection after 24 h).
+/// (exchanges close connections after a day or so).
 const HEALTHY_SESSION: Duration = Duration::from_secs(60);
 const MAX_BACKOFF_SECS: u64 = 60;
 
@@ -42,39 +42,39 @@ enum End {
     Lost(String),
 }
 
-pub(super) async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
-    // Start from the endpoint that last worked; failures walk to the next.
+pub async fn run<E: Exchange>(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
+    // Start from the server that last worked; failures walk to the next.
     let mut preferred = 0;
     let mut failures: u32 = 0;
     loop {
-        let wanted = market::wanted(&control.borrow_and_update(), PROVIDER);
+        let wanted = market::wanted(&control.borrow_and_update(), E::ID);
         let (symbols, paused) = &wanted;
         if symbols.is_empty() || *paused != 0 {
             let status = if symbols.is_empty() { Status::Idle } else { Status::Paused };
-            market::set_status(&app, PROVIDER, status);
-            if market::changed(&mut control, PROVIDER, &wanted).await.is_err() {
+            market::set_status(&app, E::ID, status);
+            if market::changed(&mut control, E::ID, &wanted).await.is_err() {
                 return;
             }
             continue;
         }
 
-        market::set_status(&app, PROVIDER, Status::Connecting);
-        let host_index = (preferred + failures as usize) % WS_HOSTS.len();
-        let host = WS_HOSTS[host_index];
+        market::set_status(&app, E::ID, Status::Connecting);
+        let server = (preferred + failures as usize) % E::SOCKETS.len();
+        let (host, port) = E::SOCKETS[server];
         let started = Instant::now();
-        let path = stream_path(symbols);
-        let connecting = net::connect(host, &path);
+        let path = E::quotes_path(symbols);
+        let connecting = net::connect(host, port, &path);
         let end = tokio::select! {
             result = timeout(CONNECT_TIMEOUT, connecting) => match result {
                 Err(_) => End::Lost("连接超时".to_owned()),
                 Ok(Err(e)) => End::Lost(e.to_string()),
                 Ok(Ok((socket, route))) => {
-                    log::info!("streaming from {host} ({route})");
-                    preferred = host_index;
-                    pump(&app, &mut control, &wanted, socket, route).await
+                    log::info!("streaming {} quotes from {host} ({route})", E::ID.key());
+                    preferred = server;
+                    pump::<E>(&app, &mut control, &wanted, socket, route).await
                 }
             },
-            changed = market::changed(&mut control, PROVIDER, &wanted) => match changed {
+            changed = market::changed(&mut control, E::ID, &wanted) => match changed {
                 Ok(()) => End::Reconfigure,
                 Err(_) => End::Shutdown,
             },
@@ -88,7 +88,7 @@ pub(super) async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl
             }
             End::Lost(reason) => reason,
         };
-        log::warn!("stream from {host} ended: {reason}");
+        log::warn!("{} quotes from {host} ended: {reason}", E::ID.key());
         if started.elapsed() >= HEALTHY_SESSION {
             failures = 0;
             continue;
@@ -97,41 +97,53 @@ pub(super) async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl
         let delay = Duration::from_secs((1u64 << (failures - 1).min(6)).min(MAX_BACKOFF_SECS));
         market::set_status(
             &app,
-            PROVIDER,
+            E::ID,
             Status::Retrying { reason, retry_in_secs: delay.as_secs() },
         );
         tokio::select! {
             () = sleep(delay) => {}
-            changed = market::changed(&mut control, PROVIDER, &wanted) => if changed.is_err() { return },
+            changed = market::changed(&mut control, E::ID, &wanted) => if changed.is_err() { return },
         }
     }
 }
 
-async fn pump(
+async fn pump<E: Exchange>(
     app: &AppHandle,
     control: &mut watch::Receiver<FeedControl>,
     wanted: &(Vec<String>, u8),
     mut socket: net::Socket,
     route: net::Route,
 ) -> End {
-    market::set_status(app, PROVIDER, Status::Live(route));
+    for frame in E::quotes_subscribe(&wanted.0) {
+        if let Err(e) = socket.send(Message::text(frame)).await {
+            return End::Lost(e.to_string());
+        }
+    }
+    market::set_status(app, E::ID, Status::Live(route));
+    let mut keepalive = interval_at(Instant::now() + KEEPALIVE, KEEPALIVE);
+    keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let silence = sleep(SILENCE_LIMIT);
     let flush = sleep(Duration::ZERO);
     tokio::pin!(silence, flush);
     let mut dirty = false;
+    let mut redrawn: Option<Instant> = None;
 
     loop {
         tokio::select! {
-            changed = market::changed(control, PROVIDER, wanted) => {
+            changed = market::changed(control, E::ID, wanted) => {
                 return if changed.is_ok() { End::Reconfigure } else { End::Shutdown };
             }
             message = socket.next() => {
                 silence.as_mut().reset(Instant::now() + SILENCE_LIMIT);
                 match message {
                     Some(Ok(Message::Text(text))) => {
-                        if apply(app, &text) && !dirty {
+                        if apply::<E>(app, &text) && !dirty {
                             dirty = true;
-                            flush.as_mut().reset(Instant::now() + COALESCE);
+                            let mut at = Instant::now() + COALESCE;
+                            if let Some(redrawn) = redrawn {
+                                at = at.max(redrawn + REDRAW_INTERVAL);
+                            }
+                            flush.as_mut().reset(at);
                         }
                     }
                     // Pings are answered by tungstenite on the next read.
@@ -144,8 +156,16 @@ async fn pump(
                     None => return End::Lost("连接已断开".to_owned()),
                 }
             }
+            _ = keepalive.tick(), if E::PING.is_some() => {
+                if let Some(ping) = E::PING
+                    && let Err(e) = socket.send(Message::text(ping)).await
+                {
+                    return End::Lost(e.to_string());
+                }
+            }
             () = &mut flush, if dirty => {
                 dirty = false;
+                redrawn = Some(Instant::now());
                 bar::request_render(app);
             }
             () = &mut silence => return End::Lost("长时间没有收到行情".to_owned()),
@@ -153,57 +173,27 @@ async fn pump(
     }
 }
 
-#[derive(Deserialize)]
-struct Envelope<'a> {
-    #[serde(borrow)]
-    data: MiniTicker<'a>,
-}
-
-#[derive(Deserialize)]
-struct MiniTicker<'a> {
-    #[serde(rename = "s", borrow)]
-    symbol: Cow<'a, str>,
-    #[serde(rename = "c", borrow)]
-    last: Cow<'a, str>,
-    #[serde(rename = "o", borrow)]
-    open: Cow<'a, str>,
-}
-
-/// Stores one miniTicker update. Returns whether anything visible changed.
-fn apply(app: &AppHandle, text: &str) -> bool {
-    let Ok(Envelope { data }) = serde_json::from_str::<Envelope>(text) else {
+/// Stores one frame's quote. Returns whether anything visible changed.
+fn apply<E: Exchange>(app: &AppHandle, text: &str) -> bool {
+    let Some(tick) = E::quote(text) else {
         return false;
     };
-    let (Ok(last), Ok(open)) = (data.last.parse::<f64>(), data.open.parse::<f64>()) else {
+    if !tick.last.is_finite() {
         return false;
-    };
-    let quote = Quote { last, open, session: None };
-    let id = market::instrument_id(PROVIDER, &data.symbol);
+    }
+    let quote = Quote { last: tick.last, open: tick.open, session: None };
+    let id = market::instrument_id(E::ID, &tick.symbol);
     let shared = app.state::<Shared>();
     let mut model = shared.model();
     if let Some(existing) = model.quotes.get_mut(&id) {
-        let changed = existing.last != last || existing.open != open;
+        let changed = existing.last != quote.last || existing.open != quote.open;
         *existing = quote;
         return changed;
     }
     // Ignore frames for pairs removed while this connection was still open.
-    if !model.settings.watchlist.iter().any(|i| i.provider == PROVIDER && i.symbol == data.symbol) {
+    if !model.settings.watchlist.iter().any(|i| i.provider == E::ID && i.symbol == tick.symbol) {
         return false;
     }
     model.quotes.insert(id, quote);
     true
-}
-
-/// `/stream?streams=btcusdt@miniTicker/ethusdt@miniTicker`
-fn stream_path(symbols: &[String]) -> String {
-    let mut path = String::from("/stream?streams=");
-    for (i, symbol) in symbols.iter().enumerate() {
-        if i > 0 {
-            path.push('/');
-        }
-        // Symbols can be non-ASCII (e.g. 币安人生USDT).
-        path.push_str(&net::percent_encode(&symbol.to_lowercase()));
-        path.push_str("@miniTicker");
-    }
-    path
 }

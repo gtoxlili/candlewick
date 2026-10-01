@@ -454,11 +454,7 @@ function InstrumentPicker(props: {
   const name = (
     <span className="text-sm">
       <span className="font-semibold">{label?.name}</span>
-      {label?.detail && (
-        <span className="text-muted-foreground">
-          {props.instrument?.provider === "binance" ? label.detail : ` ${label.detail}`}
-        </span>
-      )}
+      {label?.detail && <span className="text-muted-foreground">{label.detail}</span>}
     </span>
   );
   const look = "-ml-1.5 flex h-6 items-center gap-1 rounded-full px-2 hover:bg-accent";
@@ -467,10 +463,7 @@ function InstrumentPicker(props: {
   }
   const options = props.watchlist.map((i) => {
     const { name, detail } = instrumentLabel(i);
-    return {
-      value: instrumentId(i),
-      label: i.provider === "binance" ? `${name}${detail}` : `${name} ${detail}`.trim(),
-    };
+    return { value: instrumentId(i), label: `${name}${detail}` };
   });
   return (
     <Picker label="切换" value={props.id} options={options} onChange={props.onPick} className={look}>

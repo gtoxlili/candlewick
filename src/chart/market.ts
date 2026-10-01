@@ -34,7 +34,7 @@ export interface MarketEvents {
   state(state: FeedState): void;
 }
 
-/** Candles per history request. */
+/** Candles asked for per history request; a provider that pages smaller returns fewer. */
 const PAGE = 1000;
 /** Bounds memory and per-frame work however far back someone scrolls. */
 const MAX_CANDLES = 6000;
@@ -240,7 +240,7 @@ export class Market {
         if (s.older !== older || this.disposed) return;
         s.prepend(page);
         s.olderBackoff = 0;
-        if (page.length < limit) s.exhausted = true;
+        if (page.length === 0) s.exhausted = true;
         if (s === this.current) this.publish();
       })
       // Asked again on the next update near the edge, once the backoff has passed.
@@ -434,7 +434,7 @@ export class Market {
       .chartHistory(this.id, s.interval.secs, null, PAGE)
       .then((candles) => {
         if (s.load !== load || this.disposed) return;
-        if (!s.replaceRecent(candles)) s.exhausted = candles.length < PAGE;
+        if (!s.replaceRecent(candles)) s.exhausted = candles.length === 0;
         // Trades seen while loading; those already counted change nothing.
         const behind = s.pending.map((t) => s.add(t.price, t.time)).includes(true);
         s.pending = [];

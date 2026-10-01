@@ -12,6 +12,8 @@
     "bitcoin",
     "stocks",
     "binance",
+    "bybit",
+    "okx",
     "longbridge",
     "price-ticker",
     "tauri"
