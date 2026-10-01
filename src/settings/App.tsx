@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, ChevronUp, LoaderCircle, Search, X } from "lucide-react";
+import { ChevronDown, ChevronUp, LoaderCircle, Search, X } from "lucide-react";
 import { cn } from "cn";
 
 import { Picker } from "@/components/Picker";
@@ -244,6 +244,12 @@ function WatchlistSection(props: {
   );
 }
 
+/** The exchange picker as each system draws a choice in a settings row: a
+ * borderless pop-up button on macOS, a combo box on Windows. */
+const EXCHANGE_PICKER = __WINDOWS__
+  ? "flex h-7 min-w-24 items-center justify-between gap-2 rounded-md border border-input bg-transparent pr-2 pl-2.5 hover:bg-muted dark:bg-input/30"
+  : "-mr-1.5 flex h-7 items-center gap-1 rounded-md px-2 hover:bg-accent";
+
 /** Which exchange the pairs come from. */
 function ExchangeSection(props: { exchange: Exchange; onChange: (exchange: Exchange) => void }) {
   const current = EXCHANGES.find((e) => e.value === props.exchange);
@@ -260,7 +266,7 @@ function ExchangeSection(props: { exchange: Exchange; onChange: (exchange: Excha
               const picked = EXCHANGES.find((e) => e.value === value);
               if (picked) props.onChange(picked.value);
             }}
-            className="-mr-1.5 flex h-7 items-center gap-1 rounded-md px-2 hover:bg-accent"
+            className={EXCHANGE_PICKER}
           >
             <span>{current?.label}</span>
           </Picker>
@@ -326,7 +332,7 @@ function ApiKeysSection() {
   return (
     <Section
       title="持仓"
-      footnote="填写只读 API Key 后，菜单里会显示总资产，持仓窗口列出现货、资金、理财和合约。创建时只勾选读取权限，能交易或提币的 Key 不会被接受。Key 只保存在这台电脑上。"
+      footnote="填写 API Key 后，菜单里会显示总资产，持仓窗口列出现货、资金、理财和合约。Candlewick 只用它读取，不会下单或提币，创建时勾选读取权限就够了。Key 只保存在这台电脑上。"
     >
       <Group>
         {keys.map(({ exchange, key }) => {
@@ -381,7 +387,7 @@ function ApiKeysSection() {
                       rel="noreferrer"
                       className="mr-auto text-xs text-muted-foreground underline"
                     >
-                      在{name}创建只读 API Key
+                      在{name}创建 API Key
                     </a>
                     <Button variant="ghost" size="sm" disabled={saving} onClick={() => edit(null)}>
                       取消
@@ -402,14 +408,12 @@ function ApiKeysSection() {
           );
         })}
         {configured && (
-          <button
-            type="button"
-            className="flex h-10 w-full items-center justify-between px-3.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50"
-            onClick={() => void api.openHoldings()}
-          >
-            查看持仓
-            <ChevronRight className="size-4 text-muted-foreground" />
-          </button>
+          <div className="flex min-h-10 items-center justify-between gap-2 px-3.5 py-2">
+            <span>持仓窗口</span>
+            <Button variant="ghost" size="sm" onClick={() => void api.openHoldings()}>
+              打开
+            </Button>
+          </div>
         )}
       </Group>
     </Section>

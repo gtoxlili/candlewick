@@ -2,15 +2,22 @@
 //! and access-token refresh. Every request is signed with the app secret.
 
 use std::{
-    fmt::Write as _,
     sync::LazyLock,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ring::{digest, hmac};
+use base64::Engine as _;
+use ring::digest;
 use serde::{Deserialize, de::DeserializeOwned};
 
-use crate::{calendar, credentials::LongbridgeKeys, http, market::Error, net};
+use crate::{
+    calendar,
+    credentials::LongbridgeKeys,
+    http,
+    market::Error,
+    net,
+    sign::{hex, hmac_sha256},
+};
 
 pub struct Hosts {
     pub http: &'static str,
@@ -76,7 +83,10 @@ pub fn token_expiry(token: &str) -> Option<i64> {
     }
     let jwt = &token[token.find("eyJ")?..];
     let payload = jwt.split('.').nth(1)?;
-    serde_json::from_slice::<Claims>(&base64url(payload)?).ok().map(|claims| claims.exp)
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.trim_end_matches('='))
+        .ok()?;
+    serde_json::from_slice::<Claims>(&payload).ok().map(|claims| claims.exp)
 }
 
 pub fn now() -> i64 {
@@ -146,41 +156,8 @@ fn sign(method: &str, path: &str, query: &str, keys: &LongbridgeKeys, timestamp:
     let canonical = format!("{method}|{path}|{query}|{values}|{SIGNED_HEADERS}|");
     let digest = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, canonical.as_bytes());
     let to_sign = format!("HMAC-SHA256|{}", hex(digest.as_ref()));
-    let key = hmac::Key::new(hmac::HMAC_SHA256, keys.app_secret.as_bytes());
-    let signature = hmac::sign(&key, to_sign.as_bytes());
+    let signature = hmac_sha256(&keys.app_secret, &to_sign);
     format!("HMAC-SHA256 SignedHeaders={SIGNED_HEADERS}, Signature={}", hex(signature.as_ref()))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
-}
-
-/// Unpadded base64url, as in JWTs.
-fn base64url(text: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(text.len() * 3 / 4);
-    let mut buffer = 0u32;
-    let mut bits = 0;
-    for byte in text.bytes().filter(|&b| b != b'=') {
-        let value = match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'-' | b'+' => 62,
-            b'_' | b'/' => 63,
-            _ => return None,
-        };
-        buffer = buffer << 6 | u32::from(value);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buffer >> bits) as u8);
-        }
-    }
-    Some(out)
 }
 
 #[cfg(test)]

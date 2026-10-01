@@ -1,4 +1,4 @@
-//! A Binance account through a read-only API key: the spot, funding and
+//! A Binance account through the user's API key: the spot, funding and
 //! Simple Earn wallets, and the USDⓈ-M and COIN-M futures accounts.
 
 use futures_util::future::join_all;
@@ -18,6 +18,7 @@ use crate::{
     },
     net,
     portfolio::{Balance, Position, Price, Wallet},
+    sign,
 };
 
 /// Spot and wallet endpoints; `data-api.binance.vision` serves no private ones.
@@ -35,23 +36,11 @@ impl Account for Binance {
         #[serde(rename_all = "camelCase")]
         struct Restrictions {
             enable_reading: bool,
-            #[serde(flatten)]
-            others: std::collections::HashMap<String, serde_json::Value>,
         }
         let restrictions: Restrictions =
             get(key, Method::GET, SPOT, "/sapi/v1/account/apiRestrictions", "").await?;
-        // Every other `enable…` or `permits…` flag lets the key trade or
-        // move funds; `enableFixReadOnly` only reads.
-        let allows_more = restrictions.others.iter().any(|(name, value)| {
-            (name.starts_with("enable") || name.starts_with("permits"))
-                && name != "enableFixReadOnly"
-                && value.as_bool() == Some(true)
-        });
         if !restrictions.enable_reading {
             return Err(Error::Message("这个 API Key 没有读取权限".to_owned()));
-        }
-        if allows_more {
-            return Err(Error::Message("这个 API Key 可以交易或提币，请换成只读 Key".to_owned()));
         }
         Ok(())
     }
@@ -363,7 +352,7 @@ async fn get<T: DeserializeOwned>(
             signed.push('&');
         }
         signed.push_str(&format!("recvWindow={RECV_WINDOW}&timestamp={}", CLOCK.now_ms()));
-        let signature = account::hex(account::hmac_sha256(&key.secret, &signed).as_ref());
+        let signature = sign::hex(sign::hmac_sha256(&key.secret, &signed).as_ref());
         let (status, body) = account::send(hosts, |client, host| {
             client
                 .request(
@@ -422,7 +411,7 @@ mod tests {
         let secret = "NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j";
         let payload = "symbol=LTCBTC&side=BUY&type=LIMIT&timeInForce=GTC&quantity=1&price=0.1&recvWindow=5000&timestamp=1499827319559";
         assert_eq!(
-            account::hex(account::hmac_sha256(secret, payload).as_ref()),
+            sign::hex(sign::hmac_sha256(secret, payload).as_ref()),
             "c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71"
         );
     }

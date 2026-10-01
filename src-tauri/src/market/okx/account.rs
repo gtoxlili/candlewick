@@ -1,4 +1,4 @@
-//! An OKX account through a read-only API key (key, secret and passphrase).
+//! An OKX account through the user's API key (key, secret and passphrase).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -20,6 +20,7 @@ use crate::{
     },
     net,
     portfolio::{Balance, Position, Price, Wallet},
+    sign,
 };
 
 /// Accounts registered in the US or Australia answer only on `us.okx.com`,
@@ -33,16 +34,8 @@ static CLOCK: Clock = Clock::new();
 
 impl Account for Okx {
     async fn check(key: &ApiKey) -> Result<(), Error> {
-        #[derive(Deserialize)]
-        struct Config {
-            /// `read_only`, plus `trade` and `withdraw` when allowed.
-            perm: String,
-        }
-        let config: Vec<Config> = get(key, "/api/v5/account/config").await?;
-        let perm = config.first().map(|c| c.perm.as_str()).unwrap_or_default();
-        if perm.split(',').any(|p| p.trim() != "read_only") {
-            return Err(Error::Message("这个 API Key 可以交易或提币，请换成只读 Key".to_owned()));
-        }
+        // Answers any working key, whatever it may do.
+        get::<serde::de::IgnoredAny>(key, "/api/v5/account/config").await?;
         Ok(())
     }
 
@@ -254,7 +247,7 @@ async fn get<T: DeserializeOwned>(key: &ApiKey, path: &str) -> Result<Vec<T>, Er
         let region = (first + tried) % REGIONS.len();
         let timestamp = calendar::iso8601_ms(CLOCK.now_ms());
         let prehash = format!("{timestamp}GET{path}");
-        let signature = account::base64(account::hmac_sha256(&key.secret, &prehash).as_ref());
+        let signature = sign::base64(sign::hmac_sha256(&key.secret, &prehash).as_ref());
         let (status, body) = account::send(REGIONS[region], |client, host| {
             client
                 .get(format!("https://{host}{path}"))
@@ -321,9 +314,7 @@ mod tests {
     #[test]
     fn signs_like_the_docs_describe() {
         let sign = |prehash: &str| {
-            account::base64(
-                account::hmac_sha256("22582BD0CFF14C41EDBF1AB98506286D", prehash).as_ref(),
-            )
+            sign::base64(sign::hmac_sha256("22582BD0CFF14C41EDBF1AB98506286D", prehash).as_ref())
         };
         assert_eq!(
             sign("2020-12-08T09:08:57.715ZGET/api/v5/account/balance?ccy=BTC"),

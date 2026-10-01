@@ -3,6 +3,7 @@ import { ChartCandlestick, ChartLine, ExternalLink } from "lucide-react";
 import { setFrameRate, setTrendColors } from "liveline";
 import { cn } from "cn";
 
+import { ChangeBadge } from "@/components/ChangeBadge";
 import { Picker } from "@/components/Picker";
 import { PillTabs } from "@/components/PillTabs";
 import { TITLE_INSET, TitleBar } from "@/components/TitleBar";
@@ -371,18 +372,11 @@ function Hero(props: {
           <span className="h-8.5 w-48 animate-pulse rounded-lg bg-black/5 dark:bg-white/8" />
         )}
         {stats && (
-          <span
-            className={cn(
-              "rounded-full px-2 py-0.5 text-xs font-medium tabular",
-              change > 0 && "bg-up/12 text-up",
-              change < 0 && "bg-down/12 text-down",
-              change === 0 && "bg-black/5 text-muted-foreground dark:bg-white/8",
-            )}
-          >
-            {fmtPct(stats.changePct)} · {change > 0 ? "+" : change < 0 ? "−" : ""}
-            {fmtPrice(Math.abs(stats.change), decimals)}
-            <span className="ml-1 opacity-70">{props.span}</span>
-          </span>
+          <ChangeBadge
+            pct={stats.changePct}
+            amount={`${change > 0 ? "+" : change < 0 ? "−" : ""}${fmtPrice(Math.abs(stats.change), decimals)}`}
+            span={props.span}
+          />
         )}
       </div>
       <p className="mt-2 h-4 text-xs text-muted-foreground">{props.insight}</p>

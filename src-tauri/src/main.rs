@@ -20,6 +20,7 @@ mod model;
 mod net;
 mod platform;
 mod portfolio;
+mod sign;
 mod update;
 mod window;
 

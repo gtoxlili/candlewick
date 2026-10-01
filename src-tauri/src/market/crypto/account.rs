@@ -1,4 +1,4 @@
-//! An exchange account through the user's read-only API key: what the
+//! An exchange account through the user's API key, only ever read: what the
 //! exchanges share in reading it (signing, the server's clock) and the task
 //! that keeps its holdings current.
 //!
@@ -15,9 +15,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use base64::Engine as _;
 use reqwest::{Client, RequestBuilder, StatusCode};
-use ring::hmac;
 use tauri::{AppHandle, Manager};
 use tokio::{
     sync::watch,
@@ -37,7 +35,7 @@ use crate::{
 
 /// What an exchange needs to read an account.
 pub trait Account: Exchange {
-    /// Checks that `key` works and can neither trade nor withdraw.
+    /// Checks that `key` works.
     fn check(key: &ApiKey) -> impl Future<Output = Result<(), Error>> + Send;
 
     /// The balances trading moves (spot, trading and futures wallets) and the
@@ -270,18 +268,6 @@ impl Clock {
 
 fn local_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
-}
-
-pub fn hmac_sha256(secret: &str, message: &str) -> hmac::Tag {
-    hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes()), message.as_bytes())
-}
-
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-pub fn base64(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 /// Sends a signed request to the first of `hosts` that can be reached.

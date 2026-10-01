@@ -1,6 +1,6 @@
 //! Account credentials, in `credentials.json` next to the settings, readable
-//! by the user only: Longbridge's for stock quotes, and read-only exchange API
-//! keys for holdings.
+//! by the user only: Longbridge's for stock quotes, and exchange API keys for
+//! holdings, which the app only ever reads with.
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -25,7 +25,7 @@ pub struct Credentials {
     pub exchanges: BTreeMap<ProviderId, ApiKey>,
 }
 
-/// A read-only API key from an exchange's API management page.
+/// An API key from an exchange's API management page.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiKey {

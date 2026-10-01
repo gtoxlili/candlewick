@@ -209,7 +209,7 @@ pub fn get_exchange_keys(shared: State<'_, Shared>) -> Vec<ExchangeKey> {
 }
 
 /// Saves (or with `None`, removes) an exchange's API key, once the exchange
-/// confirms it works and can neither trade nor withdraw.
+/// confirms it works.
 #[tauri::command]
 pub async fn set_exchange_key(
     app: AppHandle,

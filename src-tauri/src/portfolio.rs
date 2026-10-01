@@ -1,4 +1,4 @@
-//! Holdings on the crypto exchanges the user gave a read-only API key: what
+//! Holdings on the crypto exchanges the user gave an API key: what
 //! each wallet holds and the open derivatives positions, valued in USDT at
 //! the exchange's own prices. `market::crypto::account` fetches them; this is
 //! what they are worth, as the menu bar's total and the holdings window show it.

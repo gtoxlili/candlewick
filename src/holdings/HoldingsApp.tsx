@@ -1,10 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { cn } from "cn";
 
+import { ChangeBadge } from "@/components/ChangeBadge";
 import { TitleBar } from "@/components/TitleBar";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   api,
   subscribe,
@@ -13,7 +16,7 @@ import {
   type HeldPosition,
   type Portfolio,
 } from "@/lib/api";
-import { direction, fmtAmount, fmtClock, fmtPct, fmtPrice, fmtSigned, priceDecimals } from "@/lib/format";
+import { fmtAmount, fmtClock, fmtPct, fmtPrice, fmtSigned, priceDecimals } from "@/lib/format";
 import { load, store } from "@/lib/prefs";
 
 /** Assets worth less than this (USDT) hide unless asked for. */
@@ -66,8 +69,8 @@ export default function HoldingsApp() {
         </div>
       ) : portfolio.accounts.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground">
-          <p>在设置的「持仓」里填写交易所的只读 API Key 后，这里会显示持仓。</p>
-          <Button size="sm" variant="outline" onClick={() => void api.openSettings()}>
+          <p>在设置的「持仓」里填写交易所的 API Key 后，这里会显示持仓。</p>
+          <Button size="sm" onClick={() => void api.openSettings()}>
             打开设置
           </Button>
         </div>
@@ -91,41 +94,27 @@ function Summary(props: { portfolio: Portfolio; hideSmall: boolean; onHideSmall:
   return (
     <div className="flex items-end justify-between gap-4">
       <div>
-        <p className="text-xs text-muted-foreground">总资产</p>
-        <p className="mt-1 flex items-baseline gap-2">
-          <span className="text-[30px] leading-none font-semibold tracking-tight tabular">
+        <p className="text-xs text-muted-foreground">总资产(USDT)</p>
+        <p className="mt-1 flex items-baseline gap-3">
+          <span className="text-[34px] leading-none font-semibold tracking-tight tabular">
             {total === null ? "—" : fmtPrice(total, 2)}
           </span>
-          <span className="text-xs text-muted-foreground">USDT</span>
+          {total !== null && change !== null && <Change value={change} total={total} />}
         </p>
-        {total !== null && change !== null && <Change value={change} base={total - change} className="mt-2" />}
       </div>
-      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+      <Label className="gap-2 text-xs font-normal text-muted-foreground">
         隐藏小额资产
         <Switch size="sm" checked={props.hideSmall} onCheckedChange={props.onHideSmall} />
-      </label>
+      </Label>
     </div>
   );
 }
 
-/** "+123.45 · +1.01% 24h", colored by direction. */
-function Change(props: { value: number; base: number; className?: string }) {
-  const pct = props.base > 0 ? (props.value / props.base) * 100 : 0;
-  const sign = direction(props.value);
-  return (
-    <span
-      className={cn(
-        "inline-flex rounded-full px-2 py-0.5 text-xs font-medium tabular",
-        sign > 0 && "bg-up/12 text-up",
-        sign < 0 && "bg-down/12 text-down",
-        sign === 0 && "bg-black/5 text-muted-foreground dark:bg-white/8",
-        props.className,
-      )}
-    >
-      {fmtSigned(props.value, 2)} · {fmtPct(pct)}
-      <span className="ml-1 opacity-70">24h</span>
-    </span>
-  );
+/** The 24h change of holdings now worth `total`, as the chart shows a price's. */
+function Change(props: { value: number; total: number }) {
+  const before = props.total - props.value;
+  const pct = before > 0 ? (props.value / before) * 100 : 0;
+  return <ChangeBadge pct={pct} amount={fmtSigned(props.value, 2)} span="24h" />;
 }
 
 function AccountCard(props: { account: ExchangeAccount; hideSmall: boolean }) {
@@ -134,7 +123,7 @@ function AccountCard(props: { account: ExchangeAccount; hideSmall: boolean }) {
   const shown = holdings?.assets.filter((a) => !hideSmall || (a.value ?? 0) >= SMALL) ?? [];
   const hidden = (holdings?.assets.length ?? 0) - shown.length;
   return (
-    <section className="rounded-2xl border bg-card">
+    <section className="rounded-xl border bg-card">
       <header className="flex items-center gap-3 px-4 pt-3">
         <h2 className="font-semibold">{account.name}</h2>
         {holdings && (
@@ -142,7 +131,7 @@ function AccountCard(props: { account: ExchangeAccount; hideSmall: boolean }) {
             {fmtPrice(holdings.total, 2)} <span className="text-xs text-muted-foreground">USDT</span>
           </span>
         )}
-        {holdings && <Change value={holdings.change} base={holdings.total - holdings.change} />}
+        {holdings && <Change value={holdings.change} total={holdings.total} />}
         <span className="flex-1" />
         {account.updated !== null && (
           <span className="text-2xs text-muted-foreground tabular">更新于 {fmtClock(account.updated)}</span>
@@ -154,8 +143,7 @@ function AccountCard(props: { account: ExchangeAccount; hideSmall: boolean }) {
         </p>
       )}
       {account.error && (
-        <p className="mx-4 mt-2 flex items-start gap-1.5 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          <TriangleAlert className="mt-px size-3.5 shrink-0" />
+        <p className="mx-4 mt-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {holdings ? `刷新失败，显示的是上次的数据：${account.error}` : account.error}
         </p>
       )}
@@ -165,7 +153,7 @@ function AccountCard(props: { account: ExchangeAccount; hideSmall: boolean }) {
         </p>
       )}
       {holdings && (
-        <div className="space-y-3 px-2 pt-2 pb-3">
+        <div className="space-y-3 px-2 pt-1 pb-2">
           {shown.length > 0 ? (
             <AssetTable assets={shown} />
           ) : (
@@ -179,99 +167,113 @@ function AccountCard(props: { account: ExchangeAccount; hideSmall: boolean }) {
   );
 }
 
-function Table(props: { head: ReactNode[]; children: ReactNode }) {
+/** Columns of numbers, compact and aligned right like the chart's lists; the first holds names. */
+function Columns(props: { head: string[]; children: ReactNode }) {
   return (
-    <table className="w-full table-fixed border-separate border-spacing-x-2 text-right tabular">
-      <thead className="text-2xs text-muted-foreground">
-        <tr>
+    <Table className="text-xs tabular">
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
           {props.head.map((cell, index) => (
-            <th key={index} className={cn("pb-1 font-normal", index === 0 && "text-left")}>
+            <TableHead
+              key={cell}
+              className={cn("h-7 px-2 text-2xs font-normal text-muted-foreground", index > 0 && "text-right")}
+            >
               {cell}
-            </th>
+            </TableHead>
           ))}
-        </tr>
-      </thead>
-      <tbody>{props.children}</tbody>
-    </table>
+        </TableRow>
+      </TableHeader>
+      <TableBody>{props.children}</TableBody>
+    </Table>
   );
 }
+
+/** A row's cells: the name left, numbers right. */
+const NAME = "px-2 py-1.5 align-top";
+const NUMBER = "px-2 py-1.5 text-right align-top";
 
 function AssetTable(props: { assets: HeldAsset[] }) {
   const costs = props.assets.some((a) => a.cost !== null || a.pnl !== null);
   return (
-    <Table head={["资产", "数量", "价格", "价值 USDT", "24h", ...(costs ? ["成本 / 浮动盈亏"] : [])]}>
+    <Columns head={["资产", "数量", "价格", "价值 USDT", "24h", ...(costs ? ["成本 / 浮动盈亏"] : [])]}>
       {props.assets.map((asset) => (
-        <tr key={asset.asset} className="align-top">
-          <td className="py-1 text-left">
+        <TableRow key={asset.asset}>
+          <TableCell className={NAME}>
             <span className="font-medium">{asset.asset}</span>
-            {asset.wallets.length > 1 && (
-              <span className="block truncate text-2xs text-muted-foreground">
-                {asset.wallets.map((w) => `${w.label} ${fmtAmount(w.amount)}`).join(" · ")}
-              </span>
-            )}
-            {asset.wallets.length === 1 && (
-              <span className="block text-2xs text-muted-foreground">{asset.wallets[0].label}</span>
-            )}
-          </td>
-          <td className="py-1">{fmtAmount(asset.amount)}</td>
-          <td className="py-1">{asset.price === null ? "—" : fmtPrice(asset.price, priceDecimals(asset.price, null))}</td>
-          <td className="py-1 font-medium">{asset.value === null ? "—" : fmtPrice(asset.value, 2)}</td>
-          <td className={cn("py-1", trend(asset.changePct))}>{asset.changePct === null ? "—" : fmtPct(asset.changePct)}</td>
+            <span className="block max-w-56 truncate text-2xs text-muted-foreground">
+              {asset.wallets.length === 1
+                ? asset.wallets[0].label
+                : asset.wallets.map((w) => `${w.label} ${fmtAmount(w.amount)}`).join(" · ")}
+            </span>
+          </TableCell>
+          <TableCell className={NUMBER}>{fmtAmount(asset.amount)}</TableCell>
+          <TableCell className={NUMBER}>
+            {asset.price === null ? "—" : fmtPrice(asset.price, priceDecimals(asset.price, null))}
+          </TableCell>
+          <TableCell className={cn(NUMBER, "font-medium")}>
+            {asset.value === null ? "—" : fmtPrice(asset.value, 2)}
+          </TableCell>
+          <TableCell className={cn(NUMBER, trend(asset.changePct))}>
+            {asset.changePct === null ? "—" : fmtPct(asset.changePct)}
+          </TableCell>
           {costs && (
-            <td className="py-1">
+            <TableCell className={NUMBER}>
               {asset.cost === null ? "—" : fmtPrice(asset.cost, priceDecimals(asset.cost, null))}
               {asset.pnl !== null && (
                 <span className={cn("block text-2xs", trend(asset.pnl))}>{fmtSigned(asset.pnl, 2)}</span>
               )}
-            </td>
+            </TableCell>
           )}
-        </tr>
+        </TableRow>
       ))}
-    </Table>
+    </Columns>
   );
 }
 
 function PositionTable(props: { positions: HeldPosition[] }) {
   return (
-    <Table head={["合约", "方向", "数量", "开仓价", "标记价", "强平价", "未实现盈亏"]}>
+    <Columns head={["合约", "方向", "数量", "开仓价", "标记价", "强平价", "未实现盈亏"]}>
       {props.positions.map((p) => {
         const decimals = priceDecimals(p.mark, null);
+        const settled = p.pnlAsset === "USDT" || p.pnlAsset === "USDC";
         return (
-          <tr key={`${p.symbol}:${p.long}`} className="align-top">
-            <td className="py-1 text-left">
-              <span className="block truncate font-medium">{p.symbol}</span>
+          <TableRow key={`${p.symbol}:${p.long}`}>
+            <TableCell className={NAME}>
+              <span className="font-medium">{p.symbol}</span>
               <span className="block text-2xs text-muted-foreground">
                 {p.kind}
                 {p.isolated && " · 逐仓"}
               </span>
-            </td>
-            <td className={cn("py-1", p.long ? "text-up" : "text-down")}>
+            </TableCell>
+            <TableCell className={cn(NUMBER, p.long ? "text-up" : "text-down")}>
               {p.long ? "多" : "空"}
               {p.leverage !== null && <span className="ml-1 text-2xs opacity-80">{p.leverage}x</span>}
-            </td>
-            <td className="py-1">
+            </TableCell>
+            <TableCell className={NUMBER}>
               {fmtAmount(p.size)} <span className="text-2xs text-muted-foreground">{p.sizeUnit}</span>
-            </td>
-            <td className="py-1">{fmtPrice(p.entry, decimals)}</td>
-            <td className="py-1">{fmtPrice(p.mark, decimals)}</td>
-            <td className="py-1">{p.liquidation === null ? "—" : fmtPrice(p.liquidation, decimals)}</td>
-            <td className={cn("py-1 font-medium", trend(p.pnl))}>
-              {fmtSigned(p.pnl, p.pnlAsset === "USDT" || p.pnlAsset === "USDC" ? 2 : 6)}
+            </TableCell>
+            <TableCell className={NUMBER}>{fmtPrice(p.entry, decimals)}</TableCell>
+            <TableCell className={NUMBER}>{fmtPrice(p.mark, decimals)}</TableCell>
+            <TableCell className={NUMBER}>
+              {p.liquidation === null ? "—" : fmtPrice(p.liquidation, decimals)}
+            </TableCell>
+            <TableCell className={cn(NUMBER, "font-medium", trend(p.pnl, settled ? 2 : 6))}>
+              {fmtSigned(p.pnl, settled ? 2 : 6)}
               <span className="block text-2xs font-normal opacity-80">
                 {p.pnlAsset}
-                {p.pnlUsd !== null && p.pnlAsset !== "USDT" && ` ≈ ${fmtSigned(p.pnlUsd, 2)} USDT`}
+                {p.pnlUsd !== null && !settled && ` ≈ ${fmtSigned(p.pnlUsd, 2)} USDT`}
               </span>
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
         );
       })}
-    </Table>
+    </Columns>
   );
 }
 
-/** The up or down color for a signed number, none when flat or unknown. */
-function trend(value: number | null): string | undefined {
+/** The up or down color for a number shown with `decimals`, none when it shows as flat or is unknown. */
+function trend(value: number | null, decimals = 2): string | undefined {
   if (value === null) return undefined;
-  const sign = direction(value);
+  const sign = Math.sign(Number(value.toFixed(decimals)));
   return sign > 0 ? "text-up" : sign < 0 ? "text-down" : undefined;
 }

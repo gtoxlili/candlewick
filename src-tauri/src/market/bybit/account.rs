@@ -1,6 +1,4 @@
-//! A Bybit unified trading account through a read-only V5 API key.
-
-use std::collections::HashMap;
+//! A Bybit unified trading account through the user's V5 API key.
 
 use futures_util::future::join_all;
 use reqwest::StatusCode;
@@ -18,6 +16,7 @@ use crate::{
         },
     },
     portfolio::{Balance, Position, Price, Wallet},
+    sign,
 };
 
 /// How far a request's time may trail Bybit's clock.
@@ -27,19 +26,8 @@ static CLOCK: Clock = Clock::new();
 
 impl Account for Bybit {
     async fn check(key: &ApiKey) -> Result<(), Error> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct KeyInfo {
-            read_only: i64,
-            #[serde(default)]
-            permissions: HashMap<String, Vec<String>>,
-        }
-        let info: KeyInfo = get(key, "/v5/user/query-api", "").await?;
-        let withdraws =
-            info.permissions.get("Wallet").is_some_and(|p| p.iter().any(|p| p == "Withdraw"));
-        if info.read_only != 1 || withdraws {
-            return Err(Error::Message("这个 API Key 可以交易或提币，请换成只读 Key".to_owned()));
-        }
+        // Answers any working key, whatever it may do.
+        get::<serde::de::IgnoredAny>(key, "/v5/user/query-api", "").await?;
         Ok(())
     }
 
@@ -288,7 +276,7 @@ async fn get<T: DeserializeOwned>(key: &ApiKey, path: &str, query: &str) -> Resu
     loop {
         let timestamp = CLOCK.now_ms().to_string();
         let payload = format!("{timestamp}{}{RECV_WINDOW}{query}", key.key);
-        let signature = account::hex(account::hmac_sha256(&key.secret, &payload).as_ref());
+        let signature = sign::hex(sign::hmac_sha256(&key.secret, &payload).as_ref());
         let (status, body) = account::send(Bybit::REST_HOSTS, |client, host| {
             client
                 .get(format!("https://{host}{path}?{query}"))
@@ -357,9 +345,7 @@ mod tests {
     #[test]
     fn signs_like_the_docs_describe() {
         let sign = |payload: &str| {
-            account::hex(
-                account::hmac_sha256("testsecret0123456789abcdefABCDEF0123", payload).as_ref(),
-            )
+            sign::hex(sign::hmac_sha256("testsecret0123456789abcdefABCDEF0123", payload).as_ref())
         };
         assert_eq!(
             sign("1658384314791XXXXXXXXXX5000category=option&symbol=BTC-29JUL22-25000-C"),

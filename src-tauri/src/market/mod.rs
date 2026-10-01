@@ -93,7 +93,7 @@ pub fn watch_accounts(app: &AppHandle, control: &watch::Receiver<FeedControl>) {
     tauri::async_runtime::spawn(crypto::account::run::<okx::Okx>(app, control));
 }
 
-/// Asks `exchange` whether `key` works and can neither trade nor withdraw.
+/// Asks `exchange` whether `key` works.
 pub async fn check_key(exchange: ProviderId, key: &ApiKey) -> Result<(), Error> {
     match exchange {
         ProviderId::Binance => binance::Binance::check(key).await,

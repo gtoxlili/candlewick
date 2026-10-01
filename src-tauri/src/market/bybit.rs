@@ -1,5 +1,5 @@
 //! Bybit spot over the V5 API: public market data, no account or key. With
-//! the user's read-only key, also their account (`account.rs`).
+//! the user's API key, also their account (`account.rs`).
 
 mod account;
 

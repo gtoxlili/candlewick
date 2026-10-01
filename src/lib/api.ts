@@ -203,7 +203,7 @@ export interface LongbridgeKeys {
   accessToken: string;
 }
 
-/** A read-only API key, as the user enters it. */
+/** An exchange API key, as the user enters it; the app only ever reads with it. */
 export interface ApiKey {
   key: string;
   secret: string;
@@ -326,7 +326,7 @@ export const api = {
   /** Logs in with the saved credentials and reports what the account may see. */
   checkLongbridge: () => invoke<LongbridgeAccount>("check_longbridge"),
   getExchangeKeys: () => invoke<ExchangeKey[]>("get_exchange_keys"),
-  /** Checks the key with its exchange (it must be read-only) and saves it; null removes it. */
+  /** Checks with its exchange that the key works and saves it; null removes it. */
   setExchangeKey: (exchange: Exchange, key: ApiKey | null) =>
     invoke<ExchangeKey[]>("set_exchange_key", { exchange, key }),
   getPortfolio: () => invoke<Portfolio>("get_portfolio"),

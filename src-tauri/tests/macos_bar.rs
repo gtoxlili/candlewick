@@ -32,6 +32,9 @@ mod platform;
 #[path = "../src/portfolio.rs"]
 mod portfolio;
 #[cfg(target_os = "macos")]
+#[path = "../src/sign.rs"]
+mod sign;
+#[cfg(target_os = "macos")]
 #[path = "../src/update.rs"]
 mod update;
 #[cfg(target_os = "macos")]

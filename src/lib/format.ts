@@ -51,10 +51,10 @@ export function fmtAmount(value: number): string {
   return format.format(value);
 }
 
-/** "+12.34", "−0.41", "0.00": a signed amount with fixed decimals. */
+/** "+12.34", "−0.41", "0.00": a signed amount with fixed decimals, signed as it rounds. */
 export function fmtSigned(value: number, decimals: number): string {
   const text = fmtPrice(Math.abs(value), decimals);
-  const sign = direction(value);
+  const sign = Math.sign(Number(value.toFixed(decimals)));
   return sign > 0 ? `+${text}` : sign < 0 ? `−${text}` : text;
 }
 

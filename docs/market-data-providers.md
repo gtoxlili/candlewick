@@ -119,13 +119,13 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 - 实测一个大陆账户的权限：美股 LV1（纳斯达克实时成交和最优一档，含夜盘，仅限 OpenAPI）、港股 LV2（十档，限大陆）、A 股 LV1（五档，限大陆）。默认的港股基础行情（BMP）延迟 15 分钟、没有推送。
 - 条款：行情仅限个人非商业用途、不得转发。应用只作为用户自带凭证的客户端。
 
-## 持仓（只读 API Key）
+## 持仓（交易所 API Key）
 
 调研于 2026-10-01，手上没有真实的 Key：签名按文档的示例或公式验证，错误路径用格式正确的假 Key 实测过，读到真实余额的那一步没有实测。
 
 ### 结构
 
-- 凭证：`credentials.json` 的 `exchanges`，每家一组 `ApiKey`（OKX 多一个 passphrase）。设置页保存前先调 `Account::check`，**只接受只读 Key**，能交易、提币或划转的一律拒绝，所以文件泄露也动不了资金。
+- 凭证：`credentials.json` 的 `exchanges`，每家一组 `ApiKey`（OKX 多一个 passphrase）。设置页保存前先调 `Account::check`，只确认 Key 能用，不限制它的权限：应用只读取，从不下单或提币，用不着让用户为此另建 Key。
 - 读取：每家实现 `crypto::account::Account` 的三个方法：`check`；`trading`，即交易会改变的余额（现货、交易账户、合约账户）和合约仓位；`savings`，即资金账户和理财。`account::run` 是每家一个的常驻任务：平时两分钟刷新一次，持仓窗口打开时十秒一次，打开下拉菜单时刷新超过 15 秒的数据；`savings` 最多五分钟一次（币安理财接口权重 150）；屏幕关闭时暂停。某一部分读不到（理财权限、合约账户），其余照常显示。
 - 估值：`portfolio.rs`。价格用 `quotes::snapshot` 取：开一条短连接 WS，订阅持仓币种的 `{币}/USDT` ticker，每个币对拿到第一帧就够，3 秒内没回应的币对视为未上架，6 小时内不再问。拉全表 REST ticker 太大（币安约 1 MB，OKX 约 360 KB），不适合常驻轮询。没有 USDT 交易对的币用交易所自己给的 USD 估值（Bybit `usdValue`、OKX `eqUsd`），再没有就不计价。
 - 口径：合约账户按含未实现盈亏的保证金余额（权益）计入总资产，仓位不再重复计入。24 小时涨跌是「持仓不变的前提下过去 24 小时价格变动带来的盈亏」：币按 `数量 × (现价 − 24h 前价格)`，仓位按 `带符号的美元敞口 × 合约自身的 24h 涨跌比例`，合约行情逐个查询（乘数合约如 `1000PEPEUSDT` 在现货里没有对应币对）。期权不计 24h 涨跌。
@@ -135,7 +135,7 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 ### 币安
 
 - 签名：查询串（含 `recvWindow`、`timestamp`）做 HMAC-SHA256，十六进制，作为最后一个参数 `signature`；Key 放 `X-MBX-APIKEY`。2026-01-15 起要求对编码后的字节签名。POST 的 sapi 接口把参数全放查询串、body 留空即可。私有接口只在 `api.binance.com`（及 `api-gcp`、`api1-4`），`data-api.binance.vision` 没有。
-- 只读检查：`GET /sapi/v1/account/apiRestrictions`，要求 `enableReading`，其余 `enable…`、`permits…` 全为 false（`enableFixReadOnly` 例外）。没限制 IP 的 HMAC Key 本来就只能读。
+- 验证 Key：`GET /sapi/v1/account/apiRestrictions`，要求 `enableReading`（各项权限也在这里，没限制 IP 的 HMAC Key 只能读）。
 - 现货 `GET /api/v3/account?omitZeroBalances=true`（权重 20）。其中 `LDBTC` 这类余额是活期理财的凭证，和理财持仓重复，跳过；`LDO` 是真币，2026-10 时币安只有它以 LD 开头。
 - 资金 `POST /sapi/v1/asset/get-funding-asset`；理财 `GET /sapi/v1/simple-earn/{flexible,locked}/position`（权重各 150，分页 100 条）。
 - U 本位 `fapi.binance.com`：`/fapi/v3/account` 的 `assets[].marginBalance`，仓位 `/fapi/v3/positionRisk`（没有杠杆和全逐仓，另查 `/fapi/v1/symbolConfig`）。币本位 `dapi.binance.com`：`/dapi/v1/account`、`/dapi/v1/positionRisk`；一张 BTC 合约 100 美元，其他 10 美元。
@@ -145,7 +145,7 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 ### Bybit
 
 - 签名：`timestamp + apiKey + recvWindow + 查询串` 做 HMAC-SHA256，十六进制；头 `X-BAPI-API-KEY`、`X-BAPI-TIMESTAMP`、`X-BAPI-RECV-WINDOW`、`X-BAPI-SIGN`、`X-BAPI-SIGN-TYPE: 2`。文档的示例没给 secret，单测用的是按公式自算的向量。`api.bytick.com` 在部分地区返回 403。
-- 只读检查：`GET /v5/user/query-api` 的 `readOnly == 1`，并且 `permissions.Wallet` 里没有 `Withdraw`。
+- 验证 Key：`GET /v5/user/query-api`，任何权限的 Key 都能调（`readOnly`、`permissions` 说明它能做什么）。
 - 统一交易账户 `GET /v5/account/wallet-balance?accountType=UNIFIED`，每个币的 `equity` 已含合约未实现盈亏；资金 `GET /v5/asset/transfer/query-account-coins-balance?accountType=FUND`；理财 `GET /v5/earn/position?category=FlexibleSaving|OnChain`，需要单独的 Earn 读取权限。
 - 仓位 `GET /v5/position/list`：线性合约必须按 `settleCoin=USDT`、`USDC` 分别查，反向和期权不带参数即可；`limit=200`，按 `nextPageCursor` 翻页。`tradeMode` 已废弃，统一账户的全逐仓是整个账户的设置。
 - 错误：`wallet-balance` 和 `position/list` 认证失败时只回 HTTP 401、body 为空，没法知道原因；其他端点是 HTTP 200 加 `retCode`（10002 时间、10003 Key 无效、10004 签名、10005 无权限、10010 IP 不符）。
@@ -154,7 +154,7 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 
 - 签名：`timestamp + "GET" + 路径（含查询串）+ body` 做 HMAC-SHA256，base64；`timestamp` 必须是带毫秒、以 `Z` 结尾的 ISO 8601（`2020-12-08T09:08:57.715Z`），前后 30 秒内有效；头 `OK-ACCESS-KEY`、`OK-ACCESS-SIGN`、`OK-ACCESS-TIMESTAMP`、`OK-ACCESS-PASSPHRASE`。Key 是小写 UUID，不能改大小写。
 - **地区**：美国、澳洲用户的 Key 只在 `us.okx.com` 有效，欧洲用户的只在 `eea.okx.com`；在别的域名上返回 `50119`（Key 不存在），和填错 Key 一样。所以遇到 50119 依次换地区，并记住认得 Key 的那个。
-- 只读检查：`GET /api/v5/account/config` 的 `perm` 只能是 `read_only`。
+- 验证 Key：`GET /api/v5/account/config`（`perm` 说明它能做什么：`read_only`、`trade`、`withdraw`）。
 - 交易账户 `GET /api/v5/account/balance` 的 `details[].eq`；`openAvgPx`、`spotUpl` 是现货成本价和浮动盈亏（美元，稳定币和法币为空）。资金 `GET /api/v5/asset/balances`；理财 `GET /api/v5/finance/savings/balance` 和 `/finance/staking-defi/orders-active` 的 `investData`。ETH、SOL 质押（BETH、OKSOL）的余额已经在交易和资金账户里，不能再加。
 - 仓位 `GET /api/v5/account/positions`：`pos` 的单位是张（杠杆是币）；`posSide` 为 `net` 时正负号表示方向；`notionalUsd` 是美元名义价值；`upl` 以 `ccy` 计。
 - 错误多数是 HTTP 401 加 `{code, msg}`，`code` 是字符串，但路径不存在时是数字，解析要两者都接受：`50102` 时间、`50105` passphrase、`50110` IP、`50111`/`50119` Key、`50113` 签名、`50120`/`50030` 无权限、`50101` 模拟盘 Key。
