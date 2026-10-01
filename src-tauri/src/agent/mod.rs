@@ -1,13 +1,15 @@
 //! AI agents' access to Candlewick (settings → 通用 → AI 助手接入): while on,
 //! a read-only HTTP API on this machine (`api.rs`) and a skill that tells
-//! Claude Code, Codex and OpenCode how to call it (`skill.rs`). Turning it on
-//! starts both; turning it off stops the API and takes the skill away.
+//! Claude Code, Codex and OpenCode how to call it (`skill.rs`). The skill
+//! exists exactly while the API runs: both start when access is turned on or
+//! the app launches with it on, and both go when it is turned off or the app
+//! quits.
 
 mod api;
 mod skill;
 
 use std::{
-    fs, io,
+    io,
     net::{Ipv4Addr, SocketAddr},
     path::Path,
     sync::Mutex,
@@ -79,31 +81,41 @@ async fn start(app: &AppHandle, agent: &Agent) -> AgentStatus {
         return failed("找不到配置目录".to_owned());
     };
     let token_path = config.join("agent-token");
-    let token = match token(&token_path) {
-        Ok(token) => token,
-        Err(e) => return failed(format!("无法保存访问令牌：{e}")),
-    };
-    let running = {
-        let mut server = agent.server.lock().unwrap_or_else(|e| e.into_inner());
-        // A token made anew since (its file was removed) needs a new server.
-        if server.as_ref().is_some_and(|s| s.token != token) {
-            server.take();
+    let running = agent
+        .server
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|s| (s.port, s.token.clone()));
+    let started = match running {
+        Some((port, token)) => {
+            credentials::write_private(&token_path, token.as_bytes()).map(|()| port)
         }
-        server.as_ref().map(|s| s.port)
+        None => start_server(app, agent, &token_path).await,
     };
-    let port = match running {
-        Some(port) => port,
-        None => match listen().await {
-            Ok(listener) => serve(app, agent, listener, &token),
-            Err(e) => return failed(format!("无法启动本机接口：{e}")),
-        },
+    let port = match started {
+        Ok(port) => port,
+        Err(e) => {
+            // A skill from before would point agents at nothing, or at someone else.
+            skill::uninstall(&home);
+            return failed(format!("无法启动本机接口：{e}"));
+        }
     };
-    // Rewritten on each start: the port may differ, and the skill's text with
-    // the app's version.
     match skill::install(&home, &format!("http://127.0.0.1:{port}"), &token_path) {
         Ok(agents) => AgentStatus { on: true, agents, error: None },
         Err(e) => failed(format!("无法写入 skill：{e}")),
     }
+}
+
+/// A server with a token of its own (one taken from an earlier run is
+/// worthless), on the usual port or any free one. Returns its port.
+async fn start_server(app: &AppHandle, agent: &Agent, token_path: &Path) -> io::Result<u16> {
+    let mut bytes = [0u8; 32];
+    SystemRandom::new().fill(&mut bytes).map_err(|_| io::Error::other("no randomness"))?;
+    let token = sign::hex(&bytes);
+    credentials::write_private(token_path, token.as_bytes())?;
+    let listener = listen().await?;
+    Ok(serve(app, agent, listener, token))
 }
 
 fn stop(app: &AppHandle, agent: &Agent) -> AgentStatus {
@@ -113,6 +125,17 @@ fn stop(app: &AppHandle, agent: &Agent) -> AgentStatus {
         skill::uninstall(&home);
     }
     AgentStatus::default()
+}
+
+/// The app is quitting: the skill goes with the API, so agents only ever
+/// see it while it can be called. The next launch puts it back.
+pub fn shutdown(app: &AppHandle) {
+    let running = app.state::<Agent>().server.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if running.is_some()
+        && let Ok(home) = app.path().home_dir()
+    {
+        skill::uninstall(&home);
+    }
 }
 
 /// The usual port, or any free one if that is taken.
@@ -128,9 +151,9 @@ async fn listen() -> io::Result<TcpListener> {
 }
 
 /// Serves the API on `listener` until stopped; returns its port.
-fn serve(app: &AppHandle, agent: &Agent, listener: TcpListener, token: &str) -> u16 {
+fn serve(app: &AppHandle, agent: &Agent, listener: TcpListener, token: String) -> u16 {
     let port = listener.local_addr().map_or(PORT, |a| a.port());
-    let router = api::router(app.clone(), port, token);
+    let router = api::router(app.clone(), port, &token);
     let (stop, stopped) = oneshot::channel::<()>();
     tauri::async_runtime::spawn(async move {
         let serving = axum::serve(listener, router).with_graceful_shutdown(async {
@@ -142,22 +165,6 @@ fn serve(app: &AppHandle, agent: &Agent, listener: TcpListener, token: &str) -> 
     });
     log::info!("agent API on 127.0.0.1:{port}");
     *agent.server.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(Server { port, token: token.to_owned(), _stop: stop });
+        Some(Server { port, token, _stop: stop });
     port
-}
-
-/// The token requests must carry: kept in a file only the user can read,
-/// made once.
-fn token(path: &Path) -> io::Result<String> {
-    if let Ok(saved) = fs::read_to_string(path)
-        && saved.len() == 64
-        && saved.bytes().all(|b| b.is_ascii_hexdigit())
-    {
-        return Ok(saved);
-    }
-    let mut bytes = [0u8; 32];
-    SystemRandom::new().fill(&mut bytes).map_err(|_| io::Error::other("no randomness"))?;
-    let token = sign::hex(&bytes);
-    credentials::write_private(path, token.as_bytes())?;
-    Ok(token)
 }

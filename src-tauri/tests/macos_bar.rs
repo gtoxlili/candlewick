@@ -2,6 +2,9 @@
 #![allow(dead_code, unused_imports)]
 
 #[cfg(target_os = "macos")]
+#[path = "../src/agent/mod.rs"]
+mod agent;
+#[cfg(target_os = "macos")]
 #[path = "../src/bar.rs"]
 mod bar;
 #[cfg(target_os = "macos")]

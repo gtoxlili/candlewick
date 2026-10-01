@@ -11,7 +11,7 @@ While it runs, Candlewick answers read-only HTTP requests at `{{url}}`. Each req
 {{example}}
 ```
 
-Responses are JSON. Failures are `{"error": "…"}` with a 4xx or 5xx status. A refused connection means Candlewick isn't running, or its AI access is off (设置 → 通用 → AI 助手接入).
+Responses are JSON. Failures are `{"error": "…"}` with a 4xx or 5xx status.
 
 The API only reads: it places no orders, moves no funds and changes no settings. Trades happen in the exchanges' own apps.
 

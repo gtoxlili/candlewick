@@ -150,14 +150,16 @@ fn main() {
         .run(on_event);
 }
 
-// Only macOS reports reopening through the event loop.
-#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn on_event(app: &AppHandle, event: RunEvent) {
     match event {
         // Closing the last window must not quit the bar app. Explicit quits
         // (the dropdown, Cmd-Q) carry an exit code or bypass this.
         RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
-        RunEvent::Exit => platform::bar::shutdown(),
+        RunEvent::Exit => {
+            agent::shutdown(app);
+            platform::bar::shutdown();
+        }
+        // Only macOS reports reopening through the event loop.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
             if let Err(e) = window::reopen(app) {

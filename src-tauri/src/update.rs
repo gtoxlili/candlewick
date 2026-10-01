@@ -23,7 +23,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::{
-    bar, http,
+    agent, bar, http,
     model::Shared,
     net,
     platform::{self, Pause},
@@ -329,9 +329,15 @@ fn client(app: &AppHandle) -> tauri_plugin_updater::Result<tauri_plugin_updater:
         .configure_client(|client| {
             client.use_preconfigured_tls(net::tls_client_config()).proxy(http::system_proxy())
         })
-        // Windows: the installer is about to replace the app; the tray icon
-        // and the taskbar ticker go first, as at quit.
-        .on_before_exit(platform::bar::shutdown)
+        // Windows: the installer is about to replace the app; the tray icon,
+        // the taskbar ticker and the agents' skill go first, as at quit.
+        .on_before_exit({
+            let app = app.clone();
+            move || {
+                agent::shutdown(&app);
+                platform::bar::shutdown();
+            }
+        })
         .build()
 }
 
