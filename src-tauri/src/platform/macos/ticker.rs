@@ -3,13 +3,18 @@
 //! width. A status item title is a single line, so that layout is drawn into
 //! an image.
 
+use std::ptr::NonNull;
+
 use block2::RcBlock;
 use objc2::{AnyThread, rc::Retained, runtime::Bool};
 use objc2_app_kit::{
+    NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
     NSAttributedStringNSStringDrawing, NSColor, NSFont, NSFontAttributeName, NSFontWeightMedium,
     NSForegroundColorAttributeName, NSImage, NSImageCacheMode, NSStatusBar,
 };
-use objc2_foundation::{NSMutableAttributedString, NSPoint, NSRange, NSRect, NSSize, NSString};
+use objc2_foundation::{
+    NSArray, NSMutableAttributedString, NSPoint, NSRange, NSRect, NSSize, NSString,
+};
 
 use crate::{
     bar::{self, Hue, Ticker},
@@ -29,11 +34,43 @@ const MARKER_GAP: f64 = 3.0;
 /// or down at a glance.
 const TREND_TINT: f64 = 0.45;
 
+/// The app's trend colors (src/index.css `--up`/`--down`), as sRGB bytes
+/// for the light and the dark appearance.
+const GREEN: ((u8, u8, u8), (u8, u8, u8)) = ((0x00, 0x80, 0x47), (0x30, 0xd7, 0x92));
+const RED: ((u8, u8, u8), (u8, u8, u8)) = ((0xd4, 0x2e, 0x3d), (0xff, 0x6e, 0x74));
+
+/// A color that resolves to its light or dark value for whatever appearance
+/// it is drawn in, as the system's own semantic colors do.
+fn dynamic(name: &str, (light, dark): ((u8, u8, u8), (u8, u8, u8))) -> Retained<NSColor> {
+    let srgb = |(r, g, b): (u8, u8, u8)| {
+        NSColor::colorWithSRGBRed_green_blue_alpha(
+            f64::from(r) / 255.0,
+            f64::from(g) / 255.0,
+            f64::from(b) / 255.0,
+            1.0,
+        )
+    };
+    let provider = RcBlock::new(move |appearance: NonNull<NSAppearance>| -> NonNull<NSColor> {
+        // SAFETY: AppKit hands a live appearance to the provider.
+        let appearance = unsafe { appearance.as_ref() };
+        // SAFETY: reading immutable AppKit constants.
+        let (aqua, dark_aqua) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
+        let is_dark = appearance
+            .bestMatchFromAppearancesWithNames(&NSArray::from_slice(&[aqua, dark_aqua]))
+            .is_some_and(|best| &*best == dark_aqua);
+        // The provider returns an autoreleased object, as a method would.
+        let color = Retained::autorelease_return(srgb(if is_dark { dark } else { light }));
+        NonNull::new(color).expect("a color")
+    });
+    // SAFETY: the block takes and returns the documented types.
+    unsafe { NSColor::colorWithName_dynamicProvider(Some(&NSString::from_str(name)), &provider) }
+}
+
 /// The color of a rising or falling number under the user's convention.
 pub fn trend_color(direction: Direction, scheme: ColorScheme) -> Option<Retained<NSColor>> {
     bar::hue(direction, scheme).map(|hue| match hue {
-        Hue::Green => NSColor::systemGreenColor(),
-        Hue::Red => NSColor::systemRedColor(),
+        Hue::Green => dynamic("candlewick.green", GREEN),
+        Hue::Red => dynamic("candlewick.red", RED),
     })
 }
 

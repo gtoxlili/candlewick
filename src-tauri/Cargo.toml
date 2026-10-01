@@ -58,7 +58,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSObject", "NSOperation", "NSRange", "NSString", "NSURL",
 ] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
-    "std", "block2", "objc2-core-foundation", "NSApplication", "NSAttributedString", "NSButton",
+    "std", "block2", "objc2-core-foundation", "NSAppearance", "NSApplication", "NSColorList", "NSAttributedString", "NSButton",
     "NSColor", "NSControl", "NSFont", "NSFontDescriptor", "NSImage", "NSMenu", "NSMenuItem",
     "NSParagraphStyle", "NSResponder", "NSStatusBar", "NSStatusBarButton", "NSStatusItem",
     "NSStringDrawing", "NSText", "NSView", "NSWindow", "NSWorkspace",
@@ -78,7 +78,6 @@ objc2-system-configuration = { version = "0.3", default-features = false, featur
 # and Direct2D's vectors are the same types.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
-    "UI_ViewManagement",
     "Win32_Foundation",
     "Win32_Graphics_Direct2D", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_DirectWrite",
     "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi",

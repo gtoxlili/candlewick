@@ -1,36 +1,36 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
+import { KeyRound } from "lucide-react";
 import { cn } from "cn";
 
 import { ChangeBadge } from "@/components/ChangeBadge";
-import { TitleBar } from "@/components/TitleBar";
-import { Alert } from "@/components/ui/alert";
+import { PillTabs } from "@/components/PillTabs";
+import { TITLE_INSET, TitleBar } from "@/components/TitleBar";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import {
-  api,
-  subscribe,
-  type ExchangeAccount,
-  type HeldAsset,
-  type HeldPosition,
-  type Portfolio,
-} from "@/lib/api";
-import { fmtAmount, fmtClock, fmtPct, fmtPrice, fmtSigned, priceDecimals } from "@/lib/format";
+import { api, subscribe, type Portfolio } from "@/lib/api";
+import { fmtClock, fmtPrice, fmtSigned } from "@/lib/format";
 import { load, store } from "@/lib/prefs";
+import { Allocation } from "./Allocation";
+import { Accounts, Positions } from "./Aside";
+import { AssetList, trend } from "./AssetList";
+import { allocation, figures, insight, listed, type Sort } from "./summary";
 
-/** Assets worth less than this (USDT) hide unless asked for. */
-const SMALL = 1;
+type Tab = "accounts" | "positions";
+
+const SORTS = [
+  { value: "value", label: "按价值" },
+  { value: "change", label: "按 24h 盈亏" },
+] as const satisfies readonly { value: Sort; label: string }[];
+
+/** Numbers this recent are live: the lit dot in the title bar and on the bar. */
+const LIVE_MS = 20_000;
 
 export default function HoldingsApp() {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  const [hideSmall, setHideSmall] = useState(() =>
-    load("holdings.hideSmall", (raw) => (raw === "true" ? true : raw === "false" ? false : undefined), true),
-  );
-  const [scrolled, setScrolled] = useState(false);
+  const [sort, setSort] = useState<Sort>(() => load("holdings.sort", (raw) => SORTS.find((s) => s.value === raw)?.value, "value"));
+  const [showSmall, setShowSmall] = useState(() => load("holdings.showSmall", (raw) => raw === "true", false));
+  const [tab, setTab] = useState<Tab>(() => load("holdings.tab", (raw) => (raw === "positions" ? raw : undefined), "accounts"));
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     // An event is always newer than the initial fetch below.
@@ -53,219 +53,227 @@ export default function HoldingsApp() {
       .then((found) => {
         if (!gotEvent) setPortfolio(found);
       })
-      .catch(() => setPortfolio({ accounts: [], total: null, change: null }))
+      .catch(() => setPortfolio({ accounts: [], total: null, change: null, assets: [], positions: [] }))
       .finally(() => void api.ready());
     return () => stops.forEach((stop) => stop());
   }, []);
 
-  const toggleSmall = (hide: boolean) => {
-    setHideSmall(hide);
-    store("holdings.hideSmall", String(hide));
+  // Freshness is a matter of time, not only of data.
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const pickSort = (next: Sort) => {
+    setSort(next);
+    store("holdings.sort", next);
   };
+  const pickTab = (next: Tab) => {
+    setTab(next);
+    store("holdings.tab", next);
+  };
+  const toggleSmall = () => {
+    setShowSmall(!showSmall);
+    store("holdings.showSmall", String(!showSmall));
+  };
+
+  const latest = portfolio ? Math.max(0, ...portfolio.accounts.map((a) => a.updated ?? 0)) : 0;
+  const live = latest > 0 && now - latest < LIVE_MS;
+  const total = portfolio?.total ?? null;
+  const several = (portfolio?.accounts.length ?? 0) > 1;
 
   return (
     <main className="flex h-screen flex-col select-none">
-      <TitleBar title="持仓" divider={scrolled} maximizable />
+      <TitleBar className={cn(TITLE_INSET, "gap-2", !__WINDOWS__ && "pr-2")} maximizable>
+        <span className="text-sm font-semibold">持仓</span>
+        <span className="flex-1" />
+        {portfolio && portfolio.accounts.length > 0 && <Freshness portfolio={portfolio} live={live} />}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          title="管理 API Key"
+          aria-label="管理 API Key"
+          className="text-muted-foreground"
+          onClick={() => void api.openSettings()}
+        >
+          <KeyRound />
+        </Button>
+      </TitleBar>
+
       {!portfolio ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
           <Spinner className="size-5" aria-label="加载中" />
         </div>
       ) : portfolio.accounts.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>还没有填写 API Key</EmptyTitle>
-          </EmptyHeader>
-          <EmptyContent>
-            <Button size="sm" onClick={() => void api.openSettings()}>
-              去设置
-            </Button>
-          </EmptyContent>
-        </Empty>
+        <NoKeys />
       ) : (
-        <div
-          className="flex-1 space-y-4 overflow-y-auto px-5 pt-2 pb-6"
-          onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
-        >
-          <Summary portfolio={portfolio} hideSmall={hideSmall} onHideSmall={toggleSmall} />
-          {portfolio.accounts.map((account) => (
-            <AccountCard key={account.exchange} account={account} hideSmall={hideSmall} />
-          ))}
+        <div className="flex min-h-0 flex-1">
+          <section className="flex min-w-0 flex-1 flex-col gap-3 pb-4">
+            <Hero portfolio={portfolio} />
+            <Allocation shares={allocation(portfolio.assets, total ?? 0)} live={live} />
+
+            <div className="flex h-7 items-center gap-2 px-4">
+              <PillTabs label="排序" value={sort} options={SORTS} onChange={pickSort} />
+            </div>
+
+            <Assets portfolio={portfolio} sort={sort} showSmall={showSmall} onToggleSmall={toggleSmall} several={several} />
+
+            <Tiles portfolio={portfolio} />
+          </section>
+
+          <aside className="flex w-70 shrink-0 flex-col border-l pt-2">
+            <div className="px-3 pb-2.5">
+              <PillTabs
+                label="账户与仓位"
+                value={tab}
+                options={[
+                  { value: "accounts", label: "账户" },
+                  { value: "positions", label: portfolio.positions.length ? `合约 ${portfolio.positions.length}` : "合约" },
+                ]}
+                onChange={pickTab}
+                className="w-full"
+              />
+            </div>
+            {tab === "accounts" ? (
+              <Accounts accounts={portfolio.accounts} />
+            ) : (
+              <Positions positions={portfolio.positions} severalExchanges={several} />
+            )}
+          </aside>
         </div>
       )}
     </main>
   );
 }
 
-function Summary(props: { portfolio: Portfolio; hideSmall: boolean; onHideSmall: (hide: boolean) => void }) {
+/** The total, its day, and one line on what did it; the number flashes as it moves. */
+function Hero(props: { portfolio: Portfolio }) {
   const { total, change } = props.portfolio;
+  const before = total !== null && change !== null ? total - change : null;
+  const pct = before !== null && before > 0 && change !== null ? (change / before) * 100 : null;
+  const line = insight(props.portfolio);
   return (
-    <div className="flex items-end justify-between gap-4">
-      <div>
-        <p className="text-xs text-muted-foreground">总资产(USDT)</p>
-        <p className="mt-1 flex items-baseline gap-3">
-          <span className="text-[34px] leading-none font-semibold tracking-tight tabular">
-            {total === null ? "—" : fmtPrice(total, 2)}
+    <div className="px-5 pt-2">
+      <div className="flex items-baseline gap-3">
+        {total === null ? (
+          <span className="h-8.5 w-56 animate-pulse rounded-lg bg-fill-strong" />
+        ) : (
+          <span
+            // Remounted on every new total so the flash replays.
+            key={total}
+            className="text-[34px] leading-none font-semibold tracking-tight tabular animate-[price-flash_1s_ease-out]"
+            style={{ "--flash": (change ?? 0) < 0 ? "var(--down)" : "var(--up)" } as CSSProperties}
+          >
+            {fmtPrice(total, 2)}
+            <span className="ml-1.5 text-sm font-medium tracking-normal text-muted-foreground">USDT</span>
           </span>
-          {total !== null && change !== null && <Change value={change} total={total} />}
-        </p>
+        )}
+        {total !== null && change !== null && pct !== null && (
+          <ChangeBadge pct={pct} amount={fmtSigned(change, 2)} span="24h" />
+        )}
       </div>
-      <Label className="gap-2 text-xs font-normal text-muted-foreground">
-        隐藏小额资产
-        <Switch size="sm" checked={props.hideSmall} onCheckedChange={props.onHideSmall} />
-      </Label>
+      <p className="mt-2 h-4 text-xs text-muted-foreground tabular">{line ?? (total === null ? "正在读取各账户…" : "")}</p>
     </div>
   );
 }
 
-/** The 24h change of holdings now worth `total`, as the chart shows a price's. */
-function Change(props: { value: number; total: number }) {
-  const before = props.total - props.value;
-  const pct = before > 0 ? (props.value / before) * 100 : 0;
-  return <ChangeBadge pct={pct} amount={fmtSigned(props.value, 2)} span="24h" />;
-}
-
-function AccountCard(props: { account: ExchangeAccount; hideSmall: boolean }) {
-  const { account, hideSmall } = props;
-  const holdings = account.holdings;
-  const shown = holdings?.assets.filter((a) => !hideSmall || (a.value ?? 0) >= SMALL) ?? [];
-  const hidden = (holdings?.assets.length ?? 0) - shown.length;
+function Assets(props: {
+  portfolio: Portfolio;
+  sort: Sort;
+  showSmall: boolean;
+  onToggleSmall: () => void;
+  several: boolean;
+}) {
+  const { assets, total } = props.portfolio;
+  const { shown, small } = listed(assets, props.sort, props.showSmall);
+  if (total === null) {
+    return <div className="panel mx-4 min-h-0 flex-1" />;
+  }
   return (
-    // The border, not the card's ring: it follows the platform's divider color.
-    <Card size="sm" className="border ring-0">
-      <CardHeader className="flex items-center gap-3">
-        <CardTitle className="font-semibold">{account.name}</CardTitle>
-        {holdings && <span className="tabular">{fmtPrice(holdings.total, 2)}</span>}
-        {holdings && <Change value={holdings.change} total={holdings.total} />}
-        <CardAction className="ml-auto self-center text-2xs text-muted-foreground tabular">
-          {account.updated === null ? <Spinner className="size-3.5" aria-label="加载中" /> : fmtClock(account.updated)}
-        </CardAction>
-      </CardHeader>
-      <CardContent className="space-y-3 px-2">
-        {holdings && holdings.wallets.length > 1 && (
-          <p className="px-2 text-xs text-muted-foreground tabular">
-            {holdings.wallets.map((w) => `${w.label} ${fmtPrice(w.value, 2)}`).join(" · ")}
-          </p>
-        )}
-        {account.error && (
-          <Alert variant="destructive" className="mx-2 w-auto border-transparent bg-destructive/10 text-xs">
-            {holdings ? `刷新失败：${account.error}` : account.error}
-          </Alert>
-        )}
-        {shown.length > 0 && <AssetTable assets={shown} />}
-        {hidden > 0 && <p className="px-2 text-xs text-muted-foreground">已隐藏 {hidden} 个小额资产</p>}
-        {holdings && holdings.positions.length > 0 && <PositionTable positions={holdings.positions} />}
-      </CardContent>
-    </Card>
+    <AssetList
+      assets={shown}
+      all={assets}
+      total={total}
+      sort={props.sort}
+      severalExchanges={props.several}
+      small={{
+        count: small.length,
+        value: small.reduce((sum, a) => sum + (a.value ?? 0), 0),
+        shown: props.showSmall,
+        onToggle: props.onToggleSmall,
+      }}
+    />
   );
 }
 
-/** Columns of numbers, compact and aligned right like the chart's lists; the first holds names. */
-function Columns(props: { head: string[]; children: ReactNode }) {
+/** The four figures that say how the money is placed, as the chart's day statistics. */
+function Tiles(props: { portfolio: Portfolio }) {
+  const { total, change } = props.portfolio;
+  const f = figures(props.portfolio);
+  const share = (value: number) => (total && total > 0 ? ` · ${Math.round((value / total) * 100)}%` : "");
+  const items: { label: string; value: string | null; tone?: string }[] = [
+    { label: "24h 盈亏", value: change === null ? null : fmtSigned(change, 2), tone: trend(change) },
+    { label: "加密资产", value: total === null ? null : `${fmtPrice(f.risk, 2)}${share(f.risk)}` },
+    { label: "稳定币", value: total === null ? null : `${fmtPrice(f.cash, 2)}${share(f.cash)}` },
+    {
+      label: "合约浮动盈亏",
+      value: total === null ? null : f.positionsPnl === null ? "无仓位" : fmtSigned(f.positionsPnl, 2),
+      tone: trend(f.positionsPnl),
+    },
+  ];
   return (
-    <Table className="text-xs tabular">
-      <TableHeader>
-        <TableRow className="hover:bg-transparent">
-          {props.head.map((cell, index) => (
-            <TableHead
-              key={cell}
-              className={cn("h-7 px-2 text-2xs font-normal text-muted-foreground", index > 0 && "text-right")}
-            >
-              {cell}
-            </TableHead>
-          ))}
-        </TableRow>
-      </TableHeader>
-      <TableBody>{props.children}</TableBody>
-    </Table>
-  );
-}
-
-/** A row's cells: the name left, numbers right. */
-const NAME = "px-2 py-1.5 align-top";
-const NUMBER = "px-2 py-1.5 text-right align-top";
-
-function AssetTable(props: { assets: HeldAsset[] }) {
-  const costs = props.assets.some((a) => a.cost !== null || a.pnl !== null);
-  return (
-    <Columns head={["资产", "数量", "价格", "价值", "24h", ...(costs ? ["成本 / 盈亏"] : [])]}>
-      {props.assets.map((asset) => (
-        <TableRow key={asset.asset}>
-          <TableCell className={NAME}>
-            <span className="font-medium">{asset.asset}</span>
-            <span className="block max-w-56 truncate text-2xs text-muted-foreground">
-              {asset.wallets.length === 1
-                ? asset.wallets[0].label
-                : asset.wallets.map((w) => `${w.label} ${fmtAmount(w.amount)}`).join(" · ")}
-            </span>
-          </TableCell>
-          <TableCell className={NUMBER}>{fmtAmount(asset.amount)}</TableCell>
-          <TableCell className={NUMBER}>
-            {asset.price === null ? "—" : fmtPrice(asset.price, priceDecimals(asset.price, null))}
-          </TableCell>
-          <TableCell className={cn(NUMBER, "font-medium")}>
-            {asset.value === null ? "—" : fmtPrice(asset.value, 2)}
-          </TableCell>
-          <TableCell className={cn(NUMBER, trend(asset.changePct))}>
-            {asset.changePct === null ? "—" : fmtPct(asset.changePct)}
-          </TableCell>
-          {costs && (
-            <TableCell className={NUMBER}>
-              {asset.cost === null ? "—" : fmtPrice(asset.cost, priceDecimals(asset.cost, null))}
-              {asset.pnl !== null && (
-                <span className={cn("block text-2xs", trend(asset.pnl))}>{fmtSigned(asset.pnl, 2)}</span>
-              )}
-            </TableCell>
-          )}
-        </TableRow>
+    <dl className="grid grid-cols-4 gap-2 px-4">
+      {items.map((item) => (
+        <div key={item.label} className="min-w-0 rounded-xl bg-fill px-3 py-2">
+          <dt className="text-2xs text-muted-foreground">{item.label}</dt>
+          <dd className={cn("mt-0.5 truncate font-medium tabular", item.tone)}>{item.value ?? "—"}</dd>
+        </div>
       ))}
-    </Columns>
+    </dl>
   );
 }
 
-function PositionTable(props: { positions: HeldPosition[] }) {
+/** When the numbers are from, and whether they still move: like the chart's 实时. */
+function Freshness(props: { portfolio: Portfolio; live: boolean }) {
+  const { accounts } = props.portfolio;
+  const failed = accounts.find((a) => a.error !== null);
+  const loading = accounts.some((a) => a.updated === null && a.error === null);
+  const latest = Math.max(0, ...accounts.map((a) => a.updated ?? 0));
+  const text = failed
+    ? `${failed.name}读取失败`
+    : loading
+      ? "正在读取"
+      : latest > 0
+        ? `更新于 ${fmtClock(latest)}`
+        : "";
   return (
-    <Columns head={["合约", "方向", "数量", "开仓价", "标记价", "强平价", "未实现盈亏"]}>
-      {props.positions.map((p) => {
-        const decimals = priceDecimals(p.mark, null);
-        const settled = p.pnlAsset === "USDT" || p.pnlAsset === "USDC";
-        return (
-          <TableRow key={`${p.symbol}:${p.long}`}>
-            <TableCell className={NAME}>
-              <span className="font-medium">{p.symbol}</span>
-              <span className="block text-2xs text-muted-foreground">
-                {p.kind}
-                {p.isolated && " · 逐仓"}
-              </span>
-            </TableCell>
-            <TableCell className={cn(NUMBER, p.long ? "text-up" : "text-down")}>
-              {p.long ? "多" : "空"}
-              {p.leverage !== null && <span className="ml-1 text-2xs opacity-80">{p.leverage}x</span>}
-            </TableCell>
-            <TableCell className={NUMBER}>
-              {fmtAmount(p.size)} <span className="text-2xs text-muted-foreground">{p.sizeUnit}</span>
-            </TableCell>
-            <TableCell className={NUMBER}>{fmtPrice(p.entry, decimals)}</TableCell>
-            <TableCell className={NUMBER}>{fmtPrice(p.mark, decimals)}</TableCell>
-            <TableCell className={NUMBER}>
-              {p.liquidation === null ? "—" : fmtPrice(p.liquidation, decimals)}
-            </TableCell>
-            <TableCell className={cn(NUMBER, "font-medium", trend(p.pnl, settled ? 2 : 6))}>
-              {fmtSigned(p.pnl, settled ? 2 : 6)}
-              <span className="block text-2xs font-normal opacity-80">
-                {p.pnlAsset}
-                {p.pnlUsd !== null && !settled && ` ≈ ${fmtSigned(p.pnlUsd, 2)} USDT`}
-              </span>
-            </TableCell>
-          </TableRow>
-        );
-      })}
-    </Columns>
+    <span className="flex items-center gap-1.5 rounded-full px-2 text-xs text-muted-foreground tabular" title={failed?.error ?? undefined}>
+      <span className="relative flex size-2">
+        {props.live && !failed && <span className="absolute inset-0 animate-ping rounded-full bg-live opacity-60" />}
+        <span
+          className={cn(
+            "relative size-2 rounded-full",
+            failed ? "bg-destructive" : loading ? "bg-busy" : props.live ? "bg-live" : "bg-faint",
+          )}
+        />
+      </span>
+      {text}
+    </span>
   );
 }
 
-/** The up or down color for a number shown with `decimals`, none when it shows as flat or is unknown. */
-function trend(value: number | null, decimals = 2): string | undefined {
-  if (value === null) return undefined;
-  const sign = Math.sign(Number(value.toFixed(decimals)));
-  return sign > 0 ? "text-up" : sign < 0 ? "text-down" : undefined;
+function NoKeys() {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8 pb-8 text-center">
+      <div className="space-y-1.5">
+        <p className="text-base font-semibold">还没有交易所的 API Key</p>
+        <p className="max-w-xs text-xs text-balance text-muted-foreground">
+          填上币安、Bybit 或 OKX 的只读 Key，这里就能看到总资产、各账户的分布和合约仓位。
+        </p>
+      </div>
+      <Button size="sm" onClick={() => void api.openSettings()}>
+        去设置
+      </Button>
+    </div>
+  );
 }

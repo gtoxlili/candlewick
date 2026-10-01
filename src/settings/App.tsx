@@ -99,7 +99,14 @@ export default function App() {
           <WatchlistSection
             exchange={settings.exchange}
             watchlist={settings.watchlist}
-            onChange={(watchlist) => void update({ ...settings, watchlist })}
+            onChange={(watchlist) =>
+              // Pinning an entry takes the bar back from the total holdings.
+              void update({
+                ...settings,
+                watchlist,
+                holdingsInBar: settings.holdingsInBar && !watchlist.some((i) => i.pinned),
+              })
+            }
           />
 
           <ExchangeSection
@@ -107,7 +114,10 @@ export default function App() {
             onChange={(exchange) => void update({ ...settings, exchange })}
           />
 
-          <ApiKeysSection />
+          <ApiKeysSection
+            holdingsInBar={settings.holdingsInBar}
+            onHoldingsInBar={(holdingsInBar) => void update({ ...settings, holdingsInBar })}
+          />
 
           <LongbridgeSection />
 
@@ -300,7 +310,7 @@ function keyFields(exchange: Exchange): { field: keyof ApiKey; label: string; se
 }
 
 /** Read-only API keys, for holdings: one per exchange, checked when saved. */
-function ApiKeysSection() {
+function ApiKeysSection(props: { holdingsInBar: boolean; onHoldingsInBar: (on: boolean) => void }) {
   const [keys, setKeys] = useState<ExchangeKey[] | null>(null);
   const [editing, setEditing] = useState<Exchange | null>(null);
   const [form, setForm] = useState<ApiKey>(EMPTY_KEY);
@@ -408,12 +418,20 @@ function ApiKeysSection() {
           );
         })}
         {configured && (
-          <div className="flex min-h-10 items-center justify-between gap-2 px-3.5 py-2">
-            <span>持仓窗口</span>
-            <Button variant="ghost" size="sm" onClick={() => void api.openHoldings()}>
-              打开
-            </Button>
-          </div>
+          <>
+            <SwitchRow
+              label={`${BAR}显示总资产`}
+              detail={<p className="text-xs text-muted-foreground">代替自选的价格；也可在自选里重新置顶一个。</p>}
+              checked={props.holdingsInBar}
+              onChange={props.onHoldingsInBar}
+            />
+            <div className="flex min-h-10 items-center justify-between gap-2 px-3.5 py-2">
+              <span>持仓窗口</span>
+              <Button variant="ghost" size="sm" onClick={() => void api.openHoldings()}>
+                打开
+              </Button>
+            </div>
+          </>
         )}
       </Group>
     </Section>

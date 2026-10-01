@@ -24,7 +24,6 @@ import {
   type Trade,
 } from "@/lib/api";
 import { direction, fmtCompact, fmtPct, fmtPrice, priceDecimals } from "@/lib/format";
-import { SYSTEM_COLORS_EVENT } from "@/lib/platform";
 import { Market } from "./market";
 import { bidShare, OrderBook } from "./OrderBook";
 import { readChartColors, sameColors, type ChartColors } from "./palette";
@@ -126,15 +125,10 @@ export default function ChartApp() {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => setAppearance((n) => n + 1);
     media.addEventListener("change", onChange);
-    // Windows reports accent changes through the app.
-    window.addEventListener(SYSTEM_COLORS_EVENT, onChange);
-    return () => {
-      media.removeEventListener("change", onChange);
-      window.removeEventListener(SYSTEM_COLORS_EVENT, onChange);
-    };
+    return () => media.removeEventListener("change", onChange);
   }, []);
 
-  // Accent, appearance or the red/green convention changed: recolor the chart
+  // Appearance or the red/green convention changed: recolor the chart
   // (remounted so Liveline re-resolves its palette with the new colors).
   useEffect(() => {
     document.documentElement.dataset.scheme = scheme;
@@ -304,7 +298,7 @@ export default function ChartApp() {
               onStats={setVisible}
             />
           ) : (
-            <div className="mx-4 min-h-0 flex-1 rounded-2xl border bg-white/45 dark:bg-white/3" />
+            <div className="panel mx-4 min-h-0 flex-1" />
           )}
 
           <StatsGrid stats={stats} span={chartSpec?.statsSpan ?? ""} decimals={decimals} spec={chartSpec} />
@@ -369,7 +363,7 @@ function Hero(props: {
             {fmtPrice(stats.last, decimals)}
           </span>
         ) : (
-          <span className="h-8.5 w-48 animate-pulse rounded-lg bg-black/5 dark:bg-white/8" />
+          <span className="h-8.5 w-48 animate-pulse rounded-lg bg-fill-strong" />
         )}
         {stats && (
           <ChangeBadge
@@ -390,7 +384,7 @@ function ModeToggle(props: { mode: ChartMode; onChange: (mode: ChartMode) => voi
     { value: "candle", label: "K 线", Icon: ChartCandlestick },
   ] as const;
   return (
-    <div role="tablist" aria-label="图表类型" className="flex rounded-full bg-black/5 p-0.5 dark:bg-white/8">
+    <div role="tablist" aria-label="图表类型" className="pill flex p-0.5">
       {options.map(({ value, label, Icon }) => {
         const selected = props.mode === value;
         return (
@@ -422,13 +416,13 @@ function LiveBadge(props: { state: FeedState }) {
   return (
     <span className="flex items-center gap-1.5 rounded-full px-2 text-xs text-muted-foreground">
       <span className="relative flex size-2">
-        {live && <span className="absolute inset-0 animate-ping rounded-full bg-(--green) opacity-60" />}
+        {live && <span className="absolute inset-0 animate-ping rounded-full bg-live opacity-60" />}
         <span
           className={cn(
             "relative size-2 rounded-full",
-            live && "bg-(--green)",
-            props.state === "connecting" && "bg-amber-400",
-            props.state === "offline" && "bg-(--red)",
+            live && "bg-live",
+            props.state === "connecting" && "bg-busy",
+            props.state === "offline" && "bg-destructive",
           )}
         />
       </span>
@@ -477,7 +471,7 @@ function StatsGrid(props: { stats: Stats | null; span: string; decimals: number;
   return (
     <dl className="grid grid-cols-4 gap-2 px-4">
       {items.map((item) => (
-        <div key={item.label} className="min-w-0 rounded-xl bg-black/[0.035] px-3 py-2 dark:bg-white/5">
+        <div key={item.label} className="min-w-0 rounded-xl bg-fill px-3 py-2">
           <dt className="text-2xs text-muted-foreground">{item.label}</dt>
           <dd className="mt-0.5 truncate font-medium tabular">{item.value ?? "—"}</dd>
         </div>

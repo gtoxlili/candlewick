@@ -24,6 +24,16 @@
         "Microsoft YaHei UI", system-ui, sans-serif;
     --color-up: var(--up);
     --color-down: var(--down);
+    --color-glow: var(--glow);
+    --color-mint: var(--mint);
+    --color-violet: var(--violet);
+    --color-amber: var(--amber);
+    --color-live: var(--mint);
+    --color-busy: var(--amber);
+    --color-faint: var(--faint-foreground);
+    --color-fill: var(--fill);
+    --color-fill-strong: var(--fill-strong);
+    --color-panel: var(--panel);
     --color-ring: var(--ring);
     --color-input: var(--input);
     --color-border: var(--border);
@@ -50,79 +60,108 @@
 }
 
 /*
- * The windows sit on macOS vibrancy (Windows: Mica), so surfaces are
- * translucent fills over it rather than opaque paint. On macOS text,
- * separators, accent and red/green come from the system (WebKit's
- * -apple-system-* colors, below) so they match native controls in both
- * appearances; Windows sets its own below; the values here are fallbacks for
- * previewing the pages in other browsers.
+ * Candlewick's palette (docs/design.md). The app icon sets it: a price line
+ * that runs violet → cyan → mint and ends in a lit dot, over deep navy.
+ *
+ * - Ink: text and lines are a cool, navy-tinted gray rather than black or
+ *   white, as alpha over the window's material (vibrancy, Mica), so the
+ *   same values work on every desktop behind it.
+ * - Glow: the cyan at the line's end is the one accent, for controls, the
+ *   chart line and whatever is current.
+ * - Mint and violet are the line's other two colors, used sparingly: mint
+ *   means live, violet is the second series color.
+ * - Up and down are a mint-leaning green and a coral red, tuned to read on
+ *   both appearances; they swap under 红涨绿跌 (below). The same values are
+ *   drawn natively: platform/macos/ticker.rs, platform/windows/portable/color.rs.
+ *
+ * Each value has a light and a dark setting; the pages follow the system.
  */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0 0 0 / 0.85);
+    --ink: oklch(0.24 0.03 270);
+    --background: oklch(0.985 0.004 260);
+    --foreground: oklch(0.24 0.03 270 / 0.92);
+    --muted-foreground: oklch(0.24 0.03 270 / 0.56);
+    --faint-foreground: oklch(0.24 0.03 270 / 0.36);
+    --border: oklch(0.24 0.05 270 / 0.1);
+    --input: oklch(0.24 0.05 270 / 0.12);
+    /* Surfaces: a lifted panel (the chart, lists), tiles, and the fill of
+       pills and hovered rows; all translucent. */
+    --panel: oklch(1 0 0 / 0.5);
+    --fill: oklch(0.24 0.05 270 / 0.045);
+    --fill-strong: oklch(0.24 0.05 270 / 0.075);
     --card: oklch(1 0 0 / 0.55);
     --card-foreground: var(--foreground);
-    --popover: oklch(0.99 0 0 / 0.9);
+    --popover: oklch(0.99 0.004 260 / 0.92);
     --popover-foreground: var(--foreground);
-    --primary: oklch(0.6 0.2 255);
-    --primary-foreground: oklch(1 0 0);
-    --secondary: oklch(0 0 0 / 0.05);
+    --secondary: var(--fill-strong);
     --secondary-foreground: var(--foreground);
-    --muted: oklch(0 0 0 / 0.05);
-    --muted-foreground: oklch(0 0 0 / 0.5);
-    --accent: oklch(0 0 0 / 0.06);
+    --muted: var(--fill-strong);
+    --accent: var(--fill-strong);
     --accent-foreground: var(--foreground);
-    --destructive: oklch(0.63 0.24 25);
-    --border: oklch(0 0 0 / 0.1);
-    --input: oklch(0 0 0 / 0.1);
-    --ring: oklch(0.6 0.2 255 / 0.5);
+    --glow: #0076af;
+    --mint: #009365;
+    --violet: #7456e0;
+    --amber: #c5770f;
+    --green: #008047;
+    --red: #d42e3d;
+    --primary: var(--glow);
+    --primary-foreground: #fff;
+    --destructive: var(--red);
+    --ring: color-mix(in oklab, var(--glow) 50%, transparent);
     --radius: 0.625rem;
-    --green: rgb(52 199 89);
-    --red: rgb(255 56 60);
-    --orange: rgb(255 141 40);
-    --purple: rgb(203 48 224);
+    /* Categorical series, in the order the allocation bar hands them out;
+       cash (stablecoins) is the quiet one. */
+    --series-1: var(--glow);
+    --series-2: var(--violet);
+    --series-3: var(--mint);
+    --series-4: var(--amber);
+    --series-5: oklch(0.55 0.1 300);
+    --series-rest: oklch(0.24 0.03 270 / 0.3);
+    --series-cash: oklch(0.24 0.03 270 / 0.18);
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --background: oklch(0.2 0 0);
-        --foreground: oklch(1 0 0 / 0.85);
-        --card: oklch(1 0 0 / 0.06);
-        --popover: oklch(0.26 0 0 / 0.92);
-        --secondary: oklch(1 0 0 / 0.08);
-        --muted: oklch(1 0 0 / 0.08);
-        --muted-foreground: oklch(1 0 0 / 0.55);
-        --accent: oklch(1 0 0 / 0.1);
-        --destructive: oklch(0.7 0.19 22);
+        --ink: oklch(0.96 0.01 260);
+        --background: oklch(0.21 0.015 270);
+        --foreground: oklch(0.96 0.01 260 / 0.92);
+        --muted-foreground: oklch(0.96 0.01 260 / 0.56);
+        --faint-foreground: oklch(0.96 0.01 260 / 0.36);
         --border: oklch(1 0 0 / 0.1);
-        --input: oklch(1 0 0 / 0.12);
-        --green: rgb(48 209 88);
-        --red: rgb(255 66 69);
-        --orange: rgb(255 146 48);
-        --purple: rgb(219 52 242);
+        --input: oklch(1 0 0 / 0.13);
+        --panel: oklch(1 0 0 / 0.035);
+        --fill: oklch(1 0 0 / 0.055);
+        --fill-strong: oklch(1 0 0 / 0.09);
+        --card: oklch(1 0 0 / 0.06);
+        --popover: oklch(0.27 0.015 270 / 0.94);
+        --glow: #49c8f3;
+        --mint: #56ecb5;
+        --violet: #aaa0fb;
+        --amber: #f7b83d;
+        --green: #30d792;
+        --red: #ff6e74;
+        --primary-foreground: oklch(0.18 0.03 250);
+        --series-5: oklch(0.78 0.1 300);
+        --series-rest: oklch(1 0 0 / 0.3);
+        --series-cash: oklch(1 0 0 / 0.16);
     }
 }
 
-@supports (color: -apple-system-label) {
-    :root {
-        --foreground: -apple-system-label;
-        --muted-foreground: -apple-system-secondary-label;
-        --border: -apple-system-separator;
-        --input: -apple-system-separator;
-        --primary: AccentColor;
-        --ring: color-mix(in oklab, AccentColor 50%, transparent);
-        --green: -apple-system-green;
-        --red: -apple-system-red;
-        --orange: -apple-system-orange;
-        --purple: -apple-system-purple;
-    }
+/* Price colors follow the user's convention (settings → 红涨绿跌). */
+:root {
+    --up: var(--green);
+    --down: var(--red);
+}
+:root[data-scheme="redUp"] {
+    --up: var(--red);
+    --down: var(--green);
 }
 
 /*
  * Windows: the pages sit on Mica (Windows 11) or Fluent's solid background
- * (Windows 10). Colors are Windows 11's text, fill and stroke tokens; the
- * accent comes from the app (platform.ts), since WebView2 doesn't expose it
- * to CSS. Text follows Windows' type ramp: 14 px body, 12 px caption.
+ * (Windows 10) and follow Windows' type ramp: 14 px body, 12 px caption.
+ * The caption buttons and the combo box flyout keep Fluent's own fills and
+ * strokes, so they match the system's; everything else is the palette above.
  */
 :root[data-platform="windows"] {
     --text-2xs: 0.75rem;
@@ -132,14 +171,6 @@
     --text-sm--line-height: 1.43;
     --text-base: 0.875rem;
     --text-base--line-height: 1.43;
-    --foreground: rgb(0 0 0 / 0.894);
-    --muted-foreground: rgb(0 0 0 / 0.62);
-    --card: rgb(255 255 255 / 0.7);
-    --popover: rgb(249 249 249 / 0.96);
-    --border: rgb(0 0 0 / 0.0578);
-    --primary: var(--accent-on-light, #005fb8);
-    --primary-foreground: #fff;
-    --ring: color-mix(in oklab, var(--primary) 50%, transparent);
     --window: #f3f3f3;
     --subtle-fill-secondary: rgb(0 0 0 / 0.0373);
     --subtle-fill-tertiary: rgb(0 0 0 / 0.0241);
@@ -149,13 +180,6 @@
 
 @media (prefers-color-scheme: dark) {
     :root[data-platform="windows"] {
-        --foreground: #fff;
-        --muted-foreground: rgb(255 255 255 / 0.786);
-        --card: rgb(255 255 255 / 0.0512);
-        --popover: rgb(44 44 44 / 0.96);
-        --border: rgb(255 255 255 / 0.0837);
-        --primary: var(--accent-on-dark, #60cdff);
-        --primary-foreground: #000;
         --window: #202020;
         --subtle-fill-secondary: rgb(255 255 255 / 0.0605);
         --subtle-fill-tertiary: rgb(255 255 255 / 0.0419);
@@ -251,16 +275,6 @@
     opacity: 0.45;
 }
 
-/* Price colors follow the user's convention (settings → 红涨绿跌). */
-:root {
-    --up: var(--green);
-    --down: var(--red);
-}
-:root[data-scheme="redUp"] {
-    --up: var(--red);
-    --down: var(--green);
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -285,9 +299,31 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* The pill that holds the chart's and the lists' segmented controls, and
+   the lifted panel the chart and the holdings lists sit on. */
+@utility pill {
+    border-radius: calc(infinity * 1px);
+    background: var(--fill-strong);
+}
+@utility panel {
+    border-radius: var(--radius-2xl);
+    border: 1px solid var(--border);
+    background: var(--panel);
+}
+
 /* A new price briefly takes the color of its move, then settles. */
 @keyframes price-flash {
     from {
         color: var(--flash);
+    }
+}
+
+/* The lit end of a bar: the icon's dot, pulsing while the data is live. */
+@keyframes wick-pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 color-mix(in oklab, var(--mint) 45%, transparent);
+    }
+    60% {
+        box-shadow: 0 0 0 5px transparent;
     }
 }

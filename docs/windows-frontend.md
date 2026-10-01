@@ -1,6 +1,6 @@
 # Windows 版的页面
 
-设置、行情和持仓窗口的页面在两个平台上是同一份代码。平台差异集中在几处：`src/lib/platform.ts`、`src/index.css` 里的 Windows 段、`TitleBar` 与 `CaptionButtons`、`Switch`，以及 `Picker`。Rust 侧的实现见 [windows.md](windows.md)。
+设置、行情和持仓窗口的页面在两个平台上是同一份代码。平台差异集中在几处：`src/lib/platform.ts`、`src/index.css` 里的 Windows 段、`TitleBar` 与 `CaptionButtons`、`Switch`，以及 `Picker`。Rust 侧的实现见 [windows.md](windows.md)。不开应用、直接在浏览器里改页面的方法见 [holdings.md](holdings.md) 的「在 Chrome 里迭代」。
 
 ## 平台常量
 
@@ -12,18 +12,18 @@
 
 ## 运行时信息
 
-窗口背后的材质和系统强调色，要到运行时才知道。Rust 在页面加载前注入 `window.__CANDLEWICK__`：
+窗口背后的材质要到运行时才知道。Rust 在页面加载前注入 `window.__CANDLEWICK__`：
 
 ```ts
-{ backdrop: "mica" | "solid", accent: { onLight: "#005fb8", onDark: "#60cdff" } }
+{ backdrop: "mica" | "solid" }
 ```
 
-`backdrop` 表示窗口背后有没有 Mica，只有 Windows 11 有。`accent` 是系统强调色在浅色和深色表面上的取值。WebView2 里的 CSS `AccentColor` 拿不到系统强调色，所以由 Rust 读取。用户改了强调色，应用会发出 `system-colors` 事件，载荷结构和 `accent` 相同。
+`backdrop` 表示窗口背后有没有 Mica，只有 Windows 11 有。
 
 两个入口都在 `createRoot` 之前调用 `setupPlatform()`，它负责：
 
 - 给根元素加 `data-platform`
-- Windows 上加 `data-backdrop`，写入 `--accent-on-light` 与 `--accent-on-dark`；强调色变化时在 `window` 上派发 `candlewick:system-colors`（常量 `SYSTEM_COLORS_EVENT`），行情窗口据此重新取色
+- Windows 上加 `data-backdrop`
 - Windows 上维护 `data-active`，窗口失焦时为 `false`
 - Windows 上屏蔽输入框以外的右键菜单，WebView2 自带的「返回、刷新、打印、检查」不该出现在应用窗口里
 
@@ -37,27 +37,23 @@
 
 ## 设计变量
 
+配色两个平台共用一套，是 Candlewick 自己的，不跟随系统强调色，见 [design.md](design.md)。
+
 字体栈两个平台共用：`-apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", …`。macOS 上命中系统字体，中文回退到苹方。Windows 上命中 Segoe UI Variable（Windows 10 上是 Segoe UI），中文回退到微软雅黑。
 
 小号文字用 `text-2xs`，macOS 上是 11px，Windows 上是 12px，后者是 Windows 字号阶梯里最小的一级。Windows 上 `text-xs`、`text-sm`、`text-base` 分别是 12、14、14px，对应 Fluent 的 Caption 与 Body。
 
-Windows 的颜色取自 Windows 11 的设计 token，写在 `:root[data-platform="windows"]` 里：
+Windows 独有的几个变量只用于模仿系统自身的控件，写在 `:root[data-platform="windows"]` 里：
 
 | 变量 | 浅色 | 深色 | 对应 token |
 |---|---|---|---|
-| `--foreground` | `rgb(0 0 0 / .894)` | `#fff` | TextFillColorPrimary |
-| `--muted-foreground` | `rgb(0 0 0 / .62)` | `rgb(255 255 255 / .786)` | TextFillColorSecondary |
-| `--card` | `rgb(255 255 255 / .7)` | `rgb(255 255 255 / .0512)` | CardBackgroundFillColorDefault |
-| `--border` | `rgb(0 0 0 / .0578)` | `rgb(255 255 255 / .0837)` | DividerStrokeColorDefault |
-| `--primary` | `--accent-on-light` | `--accent-on-dark` | AccentFillColorDefault |
-| `--primary-foreground` | `#fff` | `#000` | TextOnAccentFillColorPrimary |
-| `--window` | `#f3f3f3` | `#202020` | SolidBackgroundFillColorBase |
-| `--subtle-fill-secondary` | `rgb(0 0 0 / .0373)` | `rgb(255 255 255 / .0605)` | SubtleFillColorSecondary |
+| `--window` | `#f3f3f3` | `#202020` | SolidBackgroundFillColorBase（Windows 10 的纯色底） |
+| `--subtle-fill-secondary` | `rgb(0 0 0 / .0373)` | `rgb(255 255 255 / .0605)` | SubtleFillColorSecondary（标题栏按钮、下拉项） |
 | `--subtle-fill-tertiary` | `rgb(0 0 0 / .0241)` | `rgb(255 255 255 / .0419)` | SubtleFillColorTertiary |
 | `--flyout-stroke` | `rgb(0 0 0 / .0578)` | `rgb(0 0 0 / .2)` | SurfaceStrokeColorFlyout |
 | `--flyout-shadow` | 2px 与 16px 两层 | 同左，更深 | Flyout 的阴影 |
 
-需要强调色时用 `var(--primary)`，不要直接写 `AccentColor`，它只在 WebKit 里代表系统强调色。涨跌色 `--up`、`--down` 两个平台通用，和 Windows 任务栏上的价格用的是同一组颜色。
+需要强调色时用 `var(--primary)`（即 `--glow`）。涨跌色 `--up`、`--down` 和 Windows 任务栏、菜单标记上的颜色是同一组值。
 
 ## 组件
 

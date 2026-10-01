@@ -124,6 +124,9 @@ pub struct Settings {
     pub watchlist: Vec<Instrument>,
     pub show_symbol: bool,
     pub show_change: bool,
+    /// The bar shows the total holdings instead of a pinned entry (which is
+    /// then unpinned: the bar shows one thing).
+    pub holdings_in_bar: bool,
     pub color_scheme: ColorScheme,
     /// Check for, download and apply updates on its own (`update.rs`).
     pub auto_update: bool,
@@ -142,6 +145,7 @@ impl Default for Settings {
             ],
             show_symbol: true,
             show_change: false,
+            holdings_in_bar: false,
             color_scheme: ColorScheme::GreenUp,
             auto_update: true,
             agent_access: false,
@@ -176,6 +180,11 @@ impl Settings {
         }
         if self.watchlist.iter().filter(|instrument| instrument.pinned).count() > 1 {
             return Err("菜单栏只能显示一个".to_owned());
+        }
+        if self.holdings_in_bar {
+            for instrument in &mut self.watchlist {
+                instrument.pinned = false;
+            }
         }
         Ok(self)
     }
@@ -427,6 +436,14 @@ mod tests {
         let mut stocks = settings.clone();
         stocks.exchange = ProviderId::Longbridge;
         assert!(stocks.validated().is_err());
+    }
+
+    // The bar shows one thing: the total holdings take the pinned entry's place.
+    #[test]
+    fn holdings_in_the_bar_unpin_the_entry() {
+        let settings =
+            Settings { holdings_in_bar: true, ..Default::default() }.validated().unwrap();
+        assert!(settings.pinned().is_none());
     }
 
     #[test]

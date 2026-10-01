@@ -24,7 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use windows::{
     Win32::{
         Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
@@ -68,7 +68,7 @@ use super::{
     draw::Painter,
     menu::{self, Marks},
     notify::{self, NotifyIcon},
-    theme::{Accent, Look},
+    theme::Look,
     ticker::{self, TaskbarTicker},
 };
 use crate::{
@@ -115,7 +115,6 @@ struct Shell {
     ticker: TaskbarTicker,
     painter: Option<Painter>,
     look: Look,
-    accent: Accent,
     view: Option<View>,
     marks: Marks,
     menu: Option<menu::Open>,
@@ -252,7 +251,6 @@ fn create(app: AppHandle) -> io::Result<()> {
         ticker: TaskbarTicker::new(instance),
         painter,
         look: Look::current(),
-        accent: Accent::current(),
         view: None,
         marks: Marks::default(),
         menu: None,
@@ -590,15 +588,10 @@ impl Shell {
 
     /// A setting, the display or its scale changed: read the look again and
     /// redraw (tray icons, the taskbar's alignment or its scale may have
-    /// changed too). `colors` when the light, dark or accent colors did.
+    /// changed too). `colors` when the light or dark mode did.
     fn look_changed(&mut self, colors: bool) {
         if colors {
             dark::refresh();
-            let accent = Accent::current();
-            if accent != self.accent {
-                self.accent = accent;
-                let _ = self.app.emit("system-colors", &self.accent);
-            }
         }
         self.look = Look::current();
         self.redraw();

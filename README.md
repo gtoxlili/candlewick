@@ -48,7 +48,8 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed. U
 
 1. Create an API key on the exchange; read permission is all it needs. OKX also asks for a passphrase.
 2. Paste it into Settings → 持仓 (Holdings).
-3. Click 总资产 (Total) at the top of the dropdown to see every account's holdings.
+3. The dropdown now leads with 总资产 (Total) and its 24h change. Its submenu sums things up: the day's PnL, each account, the largest holdings and open positions; any row opens the holdings window, where the total moves with the market while it is open.
+4. Settings → 持仓 → 菜单栏显示总资产 puts the total in the menu bar or taskbar instead of a price.
 
 ## FAQ
 

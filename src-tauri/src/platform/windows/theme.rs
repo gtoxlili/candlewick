@@ -1,9 +1,7 @@
 //! How Windows is set to look: light or dark for the taskbar (the Windows
-//! mode) and for apps, high contrast, and the accent color.
+//! mode) and for apps, and high contrast.
 
-use serde::Serialize;
 use windows::{
-    UI::ViewManagement::{UIColorType, UISettings},
     Win32::{
         Graphics::Gdi::{COLOR_HIGHLIGHT, COLOR_WINDOWTEXT, GetSysColor},
         System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW},
@@ -113,40 +111,4 @@ fn high_contrast() -> Option<(Rgba, Rgba)> {
     let (text, highlight) =
         unsafe { (GetSysColor(COLOR_WINDOWTEXT), GetSysColor(COLOR_HIGHLIGHT)) };
     Some((Rgba::from_colorref(text), Rgba::from_colorref(highlight)))
-}
-
-/// The accent color the pages use for controls: Windows 11's
-/// AccentFillColorDefault is the accent's first darker shade on light
-/// surfaces and its second lighter shade on dark ones.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Accent {
-    pub on_light: String,
-    pub on_dark: String,
-}
-
-impl Default for Accent {
-    /// Windows' default blue.
-    fn default() -> Self {
-        Self { on_light: "#005fb8".to_owned(), on_dark: "#60cdff".to_owned() }
-    }
-}
-
-impl Accent {
-    pub fn current() -> Self {
-        let read = || -> windows::core::Result<Self> {
-            let settings = UISettings::new()?;
-            let hex = |kind: UIColorType| {
-                settings.GetColorValue(kind).map(|c| format!("#{:02x}{:02x}{:02x}", c.R, c.G, c.B))
-            };
-            Ok(Self {
-                on_light: hex(UIColorType::AccentDark1)?,
-                on_dark: hex(UIColorType::AccentLight2)?,
-            })
-        };
-        read().unwrap_or_else(|e| {
-            log::debug!("no accent color: {e}");
-            Self::default()
-        })
-    }
 }

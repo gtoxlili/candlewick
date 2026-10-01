@@ -1,10 +1,10 @@
-// Chart colors read from the page's CSS, so the canvas follows the system
-// accent color, light/dark appearance and the red/green convention.
+// Chart colors read from the page's CSS (index.css), so the canvas follows
+// the palette, the light/dark appearance and the red/green convention.
 
 export type Rgb = [number, number, number];
 
 export interface ChartColors {
-  /** The system accent color, as "rgb(r, g, b)" (Liveline derives its palette from it). */
+  /** The accent (`--glow`), as "rgb(r, g, b)" (Liveline derives its palette from it). */
   accent: string;
   up: Rgb;
   down: Rgb;

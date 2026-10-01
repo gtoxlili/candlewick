@@ -100,7 +100,7 @@ export function OrderBook(props: {
               <StepPicker steps={props.steps} step={props.step} onStep={props.onStep} />
             ) : (
               spread !== null && (
-                <span className="ml-auto rounded-full bg-black/5 px-2 py-0.5 text-2xs text-muted-foreground dark:bg-white/8">
+                <span className="pill ml-auto px-2 py-0.5 text-2xs text-muted-foreground">
                   价差 {fmtPrice(spread, decimals)}
                 </span>
               )
@@ -125,7 +125,7 @@ function StepPicker(props: { steps: number[]; step: number; onStep: (step: numbe
       value={String(props.step)}
       options={props.steps.map((step, i) => ({ value: String(i), label: fmtStep(step) }))}
       onChange={(value) => props.onStep(Number(value))}
-      className="ml-auto flex items-center gap-0.5 rounded-full bg-black/5 py-0.5 pr-1.5 pl-2 text-2xs text-muted-foreground hover:bg-black/8 dark:bg-white/8 dark:hover:bg-white/12"
+      className="pill ml-auto flex items-center gap-0.5 py-0.5 pr-1.5 pl-2 text-2xs text-muted-foreground hover:brightness-95 dark:hover:brightness-125"
     >
       {fmtStep(props.steps[props.step])}
     </Picker>

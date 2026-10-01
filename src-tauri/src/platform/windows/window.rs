@@ -19,10 +19,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 };
 use windows::core::{BOOL, Interface};
 
-use super::{
-    portable::color::Tone,
-    theme::{Accent, Look},
-};
+use super::{portable::color::Tone, theme::Look};
 
 pub type Builder<'a> = WebviewWindowBuilder<'a, Wry, AppHandle>;
 
@@ -42,7 +39,7 @@ pub fn build(builder: Builder<'_>) -> tauri::Result<()> {
         .shadow(true)
         .scroll_bar_style(ScrollBarStyle::FluentOverlay)
         .general_autofill_enabled(false)
-        .initialization_script(chrome_script(mica, &Accent::current()));
+        .initialization_script(chrome_script(mica));
     let builder = if mica {
         builder.transparent(true).effects(EffectsBuilder::new().effect(Effect::Mica).build())
     } else {
@@ -57,13 +54,10 @@ pub fn build(builder: Builder<'_>) -> tauri::Result<()> {
     Ok(())
 }
 
-/// What the page needs to know before it draws: whether Mica is behind it,
-/// and the accent color (CSS can't read Windows' accent from WebView2).
-/// Later accent changes arrive as `system-colors` events.
-fn chrome_script(mica: bool, accent: &Accent) -> String {
+/// What the page needs to know before it draws: whether Mica is behind it.
+fn chrome_script(mica: bool) -> String {
     let chrome = serde_json::json!({
         "backdrop": if mica { "mica" } else { "solid" },
-        "accent": accent,
     });
     format!(
         "Object.defineProperty(window, '__CANDLEWICK__', {{ value: Object.freeze({chrome}) }});"

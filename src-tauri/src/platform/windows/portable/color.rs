@@ -1,6 +1,7 @@
 //! The colors the taskbar ticker, tray icon and dropdown marks draw with:
-//! Windows 11's own text and fill tokens for each taskbar mode, and the same
-//! trend colors the macOS menu bar uses.
+//! Windows 11's own text and fill tokens for each taskbar mode, and the
+//! app's trend colors (src/index.css `--up`/`--down`), the same the macOS
+//! menu bar and the pages use.
 
 use crate::bar::Hue;
 
@@ -68,8 +69,7 @@ pub struct Palette {
 
 impl Palette {
     /// Windows 11's TextFillColorPrimary/Secondary and SubtleFillColor
-    /// Secondary/Tertiary for the mode, with the system green and red the
-    /// windows use.
+    /// Secondary/Tertiary for the mode, with the app's green and red.
     pub const fn taskbar(tone: Tone) -> Self {
         match tone {
             Tone::Dark => Self {
@@ -77,16 +77,16 @@ impl Palette {
                 secondary: Rgba::rgb(255, 255, 255).alpha(0.786),
                 hover: Rgba::rgb(255, 255, 255).alpha(0.0605),
                 pressed: Rgba::rgb(255, 255, 255).alpha(0.0419),
-                green: Rgba::rgb(48, 209, 88),
-                red: Rgba::rgb(255, 66, 69),
+                green: Rgba::rgb(0x30, 0xd7, 0x92),
+                red: Rgba::rgb(0xff, 0x6e, 0x74),
             },
             Tone::Light => Self {
                 text: Rgba::rgb(0, 0, 0).alpha(0.894),
                 secondary: Rgba::rgb(0, 0, 0).alpha(0.62),
                 hover: Rgba::rgb(0, 0, 0).alpha(0.0373),
                 pressed: Rgba::rgb(0, 0, 0).alpha(0.0241),
-                green: Rgba::rgb(52, 199, 89),
-                red: Rgba::rgb(255, 56, 60),
+                green: Rgba::rgb(0x00, 0x80, 0x47),
+                red: Rgba::rgb(0xd4, 0x2e, 0x3d),
             },
         }
     }

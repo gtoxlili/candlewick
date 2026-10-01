@@ -203,16 +203,9 @@ fn apply<E: Exchange>(app: &AppHandle, text: &str) -> bool {
 /// the exchange doesn't list never does.
 const SNAPSHOT_WAIT: Duration = Duration::from_secs(3);
 
-/// The last price and the one 24 hours before of each of `symbols` that
-/// answers within [`SNAPSHOT_WAIT`], by symbol, from a short-lived socket:
-/// each pair's first frame is all it needs.
-pub async fn snapshot<E: Exchange>(
-    symbols: &[String],
-) -> Result<HashMap<String, (f64, f64)>, String> {
-    let mut prices = HashMap::new();
-    if symbols.is_empty() {
-        return Ok(prices);
-    }
+/// A socket subscribed to the tickers of `symbols`, on the first of the
+/// exchange's servers that answers.
+pub async fn subscribe<E: Exchange>(symbols: &[String]) -> Result<net::Socket, String> {
     let path = E::quotes_path(symbols);
     let mut failure = String::new();
     let mut connected = None;
@@ -230,6 +223,20 @@ pub async fn snapshot<E: Exchange>(
     for frame in E::quotes_subscribe(symbols) {
         socket.send(Message::text(frame)).await.map_err(|e| e.to_string())?;
     }
+    Ok(socket)
+}
+
+/// The last price and the one 24 hours before of each of `symbols` that
+/// answers within [`SNAPSHOT_WAIT`], by symbol, from a short-lived socket:
+/// each pair's first frame is all it needs.
+pub async fn snapshot<E: Exchange>(
+    symbols: &[String],
+) -> Result<HashMap<String, (f64, f64)>, String> {
+    let mut prices = HashMap::new();
+    if symbols.is_empty() {
+        return Ok(prices);
+    }
+    let mut socket = subscribe::<E>(symbols).await?;
     let deadline = Instant::now() + SNAPSHOT_WAIT;
     while prices.len() < symbols.len() {
         let Ok(message) = timeout_at(deadline, socket.next()).await else { break };

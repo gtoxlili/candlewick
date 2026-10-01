@@ -9,8 +9,8 @@ use std::cell::RefCell;
 use objc2::{AnyThread, MainThreadMarker, rc::Retained};
 use objc2_app_kit::{
     NSAttributedStringNSStringDrawing, NSColor, NSFont, NSFontAttributeName, NSFontWeightRegular,
-    NSForegroundColorAttributeName, NSMenu, NSMutableParagraphStyle, NSParagraphStyleAttributeName,
-    NSStatusItem, NSTextAlignment, NSTextTab,
+    NSForegroundColorAttributeName, NSMenu, NSMenuItem, NSMutableParagraphStyle,
+    NSParagraphStyleAttributeName, NSStatusItem, NSTextAlignment, NSTextTab,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSMutableAttributedString, NSRange, NSString};
 use tauri::{
@@ -19,15 +19,17 @@ use tauri::{
     menu::MenuEvent,
     tray::{MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
 };
-use tray_icon::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{ContextMenu, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 
 use super::ticker;
 use crate::{
-    bar::{self, Action, Row, Ticker, View},
+    bar::{self, Action, Holdings, Row, Shape, Slot, Ticker, View},
     model::{ColorScheme, Instrument},
 };
 
 const ID_HOLDINGS: &str = "holdings";
+/// Any row of the holdings submenu: all of them open the window.
+const ID_HOLDINGS_ROW: &str = "holdings-row";
 const ID_SETTINGS: &str = "settings";
 const ID_UPDATE: &str = "update";
 const ID_CHECK_UPDATE: &str = "check-update";
@@ -47,18 +49,21 @@ struct Ui {
     native_tray: tray_icon::TrayIcon,
     /// The menu exists even when tray-icon detaches it from the status item.
     menu: Option<Retained<NSMenu>>,
+    /// The holdings submenu, while the layout has one.
+    submenu: Option<Retained<NSMenu>>,
     status_item: Option<Retained<NSStatusItem>>,
     fonts: Fonts,
     /// What the current menu was built for; a change rebuilds it. `None`
     /// until the first build, so even an empty list gets a menu.
     layout: Option<Layout>,
-    /// Column widths in points. They only grow while the layout stays the
-    /// same, so an open menu never shifts as prices tick.
-    columns: Columns,
-    tabs: Retained<NSMutableParagraphStyle>,
+    /// Column widths in points, for the dropdown and for the submenu. They
+    /// only grow while the layout stays the same, so an open menu never
+    /// shifts as prices tick.
+    columns: Table,
+    sub_columns: Table,
     scheme: ColorScheme,
-    /// As applied to the menu: the holdings row, then the watchlist's.
-    holdings: Option<Row>,
+    /// As applied to the menu: the holdings, then the watchlist's rows.
+    holdings: Option<Holdings>,
     rows: Vec<Row>,
     /// `None` until applied to the current menu.
     caption: Option<String>,
@@ -78,15 +83,43 @@ struct Layout {
     watchlist: Vec<Instrument>,
     /// The offered update.
     update: Option<String>,
-    /// A holdings row leads the menu, with a separator after it.
-    holdings: bool,
+    /// A holdings row with this submenu leads the menu, with a separator
+    /// after it.
+    holdings: Option<Shape>,
 }
 
 impl Layout {
     /// The menu index of watchlist row `index`; the status caption follows
     /// the last row.
     fn row(&self, index: usize) -> isize {
-        (index + if self.holdings { 2 } else { 0 }) as isize
+        (index + if self.holdings.is_some() { 2 } else { 0 }) as isize
+    }
+}
+
+/// Column widths and the tab stops that right-align them.
+struct Table {
+    columns: Columns,
+    tabs: Retained<NSMutableParagraphStyle>,
+}
+
+impl Table {
+    fn new() -> Self {
+        Self { columns: Columns::default(), tabs: NSMutableParagraphStyle::new() }
+    }
+
+    /// Widens the columns to `rows`; true if any did (the rows need
+    /// restyling with the new stops).
+    fn fit<'a>(&mut self, rows: impl Iterator<Item = &'a Row>, font: &NSFont) -> bool {
+        let mut columns = self.columns;
+        for row in rows {
+            columns = columns.fit(row, font);
+        }
+        if columns == self.columns {
+            return false;
+        }
+        self.columns = columns;
+        self.tabs = tab_stops(columns, font.pointSize());
+        true
     }
 }
 
@@ -126,14 +159,15 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             tray: handle,
             native_tray: inner.clone(),
             menu: None,
+            submenu: None,
             status_item: inner.ns_status_item().inspect(|item| use_tabular_digits(item)),
             fonts: Fonts {
                 row: NSFont::monospacedDigitSystemFontOfSize_weight(menu_font_size, regular),
                 caption: NSFont::menuFontOfSize(NSFont::smallSystemFontSize()),
             },
             layout: None,
-            columns: Columns::default(),
-            tabs: NSMutableParagraphStyle::new(),
+            columns: Table::new(),
+            sub_columns: Table::new(),
             scheme: ColorScheme::default(),
             holdings: None,
             rows: Vec::new(),
@@ -171,17 +205,29 @@ impl Ui {
         let layout = Layout {
             watchlist: view.watchlist,
             update: view.update,
-            holdings: view.holdings.is_some(),
+            holdings: view.holdings.as_ref().map(Holdings::shape),
         };
         if self.layout.as_ref() != Some(&layout) {
             log::debug!("menu rebuilt for {} instruments", layout.watchlist.len());
-            let menu = build_menu(&layout)?;
+            let menu = build_menu(&layout, view.holdings.as_ref())?;
             // SAFETY: muda returns its live NSMenu on macOS. Retain it on
             // the main thread before transferring the menu to tray-icon.
             self.menu = unsafe { Retained::retain(menu.ns_menu().cast::<NSMenu>()) };
+            self.submenu = match &view.holdings {
+                Some(holdings) => {
+                    let submenu =
+                        self.menu.as_ref().and_then(|m| m.itemAtIndex(0)).and_then(|i| i.submenu());
+                    if let Some(submenu) = &submenu {
+                        add_headers(submenu, holdings, mtm);
+                    }
+                    submenu
+                }
+                None => None,
+            };
             self.native_tray.set_menu(Some(Box::new(menu)));
             self.layout = Some(layout);
-            self.columns = Columns::default();
+            self.columns = Table::new();
+            self.sub_columns = Table::new();
             self.holdings = None;
             self.rows.clear();
             self.caption = None;
@@ -189,42 +235,92 @@ impl Ui {
         let menu = self.menu.clone().expect("the tray menu has been built");
         let layout = self.layout.clone().expect("the tray menu has been built");
 
-        let mut columns = self.columns;
-        if let Some(row) = &view.holdings
-            && self.holdings.as_ref() != Some(row)
-        {
-            columns = columns.fit(row, &self.fonts.row);
-        }
-        for (index, row) in view.rows.iter().enumerate() {
-            if self.rows.get(index) != Some(row) {
-                columns = columns.fit(row, &self.fonts.row);
-            }
-        }
         let scheme_changed = self.scheme != view.scheme;
-        let mut restyle_all = scheme_changed;
-        if columns != self.columns {
-            self.columns = columns;
-            self.tabs = tab_stops(columns, self.fonts.row.pointSize());
-            restyle_all = true;
-        }
         self.scheme = view.scheme;
-        if let Some(row) = &view.holdings
-            && (restyle_all || self.holdings.as_ref() != Some(row))
+
+        // The dropdown's rows: the total, then the watchlist's.
+        let total_changed =
+            view.holdings.as_ref().map(|h| &h.total) != self.holdings.as_ref().map(|h| &h.total);
+        let changed_rows = view
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(index, row)| self.rows.get(*index) != Some(row))
+            .map(|(_, row)| row);
+        let widened = self.columns.fit(
+            view.holdings.iter().filter(|_| total_changed).map(|h| &h.total).chain(changed_rows),
+            &self.fonts.row,
+        );
+        let restyle_all = scheme_changed || widened;
+        if let Some(holdings) = &view.holdings
+            && (restyle_all || total_changed)
             && let Some(item) = menu.itemAtIndex(0)
         {
-            item.setAttributedTitle(Some(&self.styled_row(row)));
+            item.setAttributedTitle(Some(&styled_row(
+                &holdings.total,
+                &self.fonts.row,
+                &self.columns.tabs,
+                self.scheme,
+            )));
         }
-        self.holdings = view.holdings;
         for (index, row) in view.rows.iter().enumerate() {
             if !restyle_all && self.rows.get(index) == Some(row) {
                 continue;
             }
             if let Some(item) = menu.itemAtIndex(layout.row(index)) {
                 log::trace!("row {index}: {row:?}");
-                item.setAttributedTitle(Some(&self.styled_row(row)));
+                item.setAttributedTitle(Some(&styled_row(
+                    row,
+                    &self.fonts.row,
+                    &self.columns.tabs,
+                    self.scheme,
+                )));
             }
         }
         self.rows = view.rows;
+
+        // The holdings submenu, slot by slot. The layout matched, so the
+        // applied holdings (if any) have the same slots.
+        if let (Some(holdings), Some(submenu)) = (&view.holdings, &self.submenu) {
+            let slots = holdings.slots();
+            let applied: Vec<Option<Slot>> = match &self.holdings {
+                Some(applied) => applied.slots().into_iter().map(Some).collect(),
+                None => vec![None; slots.len()],
+            };
+            let changed: Vec<bool> = slots
+                .iter()
+                .zip(&applied)
+                .map(|(slot, before)| Some(slot) != before.as_ref())
+                .collect();
+            let widened = self.sub_columns.fit(
+                slots.iter().zip(&changed).filter_map(|(slot, changed)| match slot {
+                    Slot::Row(row) if *changed => Some(*row),
+                    _ => None,
+                }),
+                &self.fonts.row,
+            );
+            let restyle_sub = scheme_changed || widened;
+            for (index, (slot, changed)) in slots.iter().zip(changed).enumerate() {
+                let index = index as isize;
+                match slot {
+                    Slot::Row(row) if restyle_sub || changed => {
+                        if let Some(item) = submenu.itemAtIndex(index) {
+                            item.setAttributedTitle(Some(&styled_row(
+                                row,
+                                &self.fonts.row,
+                                &self.sub_columns.tabs,
+                                self.scheme,
+                            )));
+                        }
+                    }
+                    Slot::Caption(text) if changed => {
+                        set_caption(submenu, index, text, &self.fonts.caption);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.holdings = view.holdings;
 
         let count = layout.watchlist.len();
         if count > 0 && self.caption.as_ref() != Some(&view.caption) {
@@ -270,58 +366,62 @@ impl Ui {
         }
         Ok(())
     }
+}
 
-    /// `BTC/USDT ⇥ 84,002.01 ⇥ −0.24%` with right-aligned tab stops.
-    fn styled_row(&self, row: &Row) -> Retained<NSMutableAttributedString> {
-        let mut text = format!("{}{}\t{}", row.name, row.detail, row.price);
-        let mut session_at = None;
-        if let Some((change, _)) = &row.change {
-            text.push('\t');
-            if let Some(session) = row.session {
-                session_at = Some(utf16_len(&text));
-                text.push_str(session);
-                text.push(' ');
-            }
-            text.push_str(change);
+/// `BTC/USDT ⇥ 84,002.01 ⇥ −0.24%` with right-aligned tab stops; a signed
+/// value and the change take their trend colors.
+fn styled_row(
+    row: &Row,
+    font: &NSFont,
+    tabs: &NSMutableParagraphStyle,
+    scheme: ColorScheme,
+) -> Retained<NSMutableAttributedString> {
+    let (value, value_direction) = &row.value;
+    let mut text = format!("{}{}\t{value}", row.name, row.detail);
+    let value_at = utf16_len(&text) - utf16_len(value);
+    let mut session_at = None;
+    if let Some((change, _)) = &row.change {
+        text.push('\t');
+        if let Some(session) = row.session {
+            session_at = Some(utf16_len(&text));
+            text.push_str(session);
+            text.push(' ');
         }
-        let string = attributed(&text, &self.fonts.row);
-        let dimmed = |at: usize, len: usize| {
-            // SAFETY: NSColor for the foreground color key.
-            unsafe {
-                string.addAttribute_value_range(
-                    NSForegroundColorAttributeName,
-                    &NSColor::secondaryLabelColor(),
-                    NSRange::new(at, len),
-                );
-            }
-        };
-        dimmed(utf16_len(&row.name), utf16_len(&row.detail));
-        if let (Some(at), Some(session)) = (session_at, row.session) {
-            dimmed(at, utf16_len(session));
-        }
-        // SAFETY: an NSParagraphStyle for the paragraph style key.
+        text.push_str(change);
+    }
+    let string = attributed(&text, font);
+    let color = |at: usize, len: usize, color: &NSColor| {
+        // SAFETY: NSColor for the foreground color key.
         unsafe {
             string.addAttribute_value_range(
-                NSParagraphStyleAttributeName,
-                &self.tabs,
-                NSRange::new(0, utf16_len(&text)),
+                NSForegroundColorAttributeName,
+                color,
+                NSRange::new(at, len),
             );
         }
-        if let Some((change, direction)) = &row.change
-            && let Some(color) = ticker::trend_color(*direction, self.scheme)
-        {
-            let len = utf16_len(change);
-            // SAFETY: NSColor for the foreground color key.
-            unsafe {
-                string.addAttribute_value_range(
-                    NSForegroundColorAttributeName,
-                    &color,
-                    NSRange::new(utf16_len(&text) - len, len),
-                );
-            }
-        }
-        string
+    };
+    color(utf16_len(&row.name), utf16_len(&row.detail), &NSColor::secondaryLabelColor());
+    if let (Some(at), Some(session)) = (session_at, row.session) {
+        color(at, utf16_len(session), &NSColor::secondaryLabelColor());
     }
+    // SAFETY: an NSParagraphStyle for the paragraph style key.
+    unsafe {
+        string.addAttribute_value_range(
+            NSParagraphStyleAttributeName,
+            tabs,
+            NSRange::new(0, utf16_len(&text)),
+        );
+    }
+    if let Some(trend) = ticker::trend_color(*value_direction, scheme) {
+        color(value_at, utf16_len(value), &trend);
+    }
+    if let Some((change, direction)) = &row.change
+        && let Some(trend) = ticker::trend_color(*direction, scheme)
+    {
+        let len = utf16_len(change);
+        color(utf16_len(&text) - len, len, &trend);
+    }
+    string
 }
 
 impl Columns {
@@ -332,7 +432,7 @@ impl Columns {
         });
         Self {
             label: self.label.max(text_width(&format!("{}{}", row.name, row.detail), font)),
-            price: self.price.max(text_width(&row.price, font)),
+            price: self.price.max(text_width(&row.value.0, font)),
             change: self.change.max(change),
         }
     }
@@ -372,8 +472,9 @@ fn tab_stops(columns: Columns, font_size: f64) -> Retained<NSMutableParagraphSty
     style
 }
 
-/// A small dimmed line under the watchlist rows, shown only when a feed is not
-/// live (connecting, retrying, paused); hidden items take no space.
+/// A small dimmed line, shown only when there is text (under the watchlist
+/// rows while a feed is not live; at the end of the holdings submenu);
+/// hidden items take no space.
 fn set_caption(menu: &NSMenu, index: isize, text: &str, font: &NSFont) {
     let Some(item) = menu.itemAtIndex(index) else {
         return;
@@ -418,12 +519,29 @@ fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-fn build_menu(layout: &Layout) -> tauri::Result<Menu> {
-    let Layout { watchlist, update, holdings } = layout;
+fn build_menu(layout: &Layout, holdings: Option<&Holdings>) -> tauri::Result<Menu> {
+    let Layout { watchlist, update, .. } = layout;
     let menu = Menu::new();
-    if *holdings {
-        // Styled by `apply`, like the rows.
-        menu.append(&MenuItem::with_id(ID_HOLDINGS, "总资产", true, None))?;
+    if let Some(holdings) = holdings {
+        // The row and its submenu's rows are styled by `apply`; the section
+        // headers are AppKit's own, added by `add_headers`.
+        let items: Vec<Box<dyn IsMenuItem>> = holdings
+            .slots()
+            .into_iter()
+            .filter_map(|slot| -> Option<Box<dyn IsMenuItem>> {
+                Some(match slot {
+                    Slot::Open => Box::new(MenuItem::with_id(ID_HOLDINGS, "查看持仓…", true, None)),
+                    Slot::Separator => Box::new(PredefinedMenuItem::separator()),
+                    Slot::Header(_) => return None,
+                    Slot::Caption(_) => {
+                        Box::new(MenuItem::with_id("holdings-caption", "", false, None))
+                    }
+                    Slot::Row(_) => Box::new(MenuItem::with_id(ID_HOLDINGS_ROW, "", true, None)),
+                })
+            })
+            .collect();
+        let refs: Vec<&dyn IsMenuItem> = items.iter().map(|item| item.as_ref()).collect();
+        menu.append(&Submenu::with_id_and_items("holdings-menu", "总资产", true, &refs)?)?;
         menu.append(&PredefinedMenuItem::separator())?;
     }
     if watchlist.is_empty() {
@@ -450,9 +568,20 @@ fn build_menu(layout: &Layout) -> tauri::Result<Menu> {
     Ok(menu)
 }
 
+/// Inserts the section headers (`账户`, `资产`, `合约`) where the slots
+/// put them, in order, so every slot ends up at its index.
+fn add_headers(submenu: &NSMenu, holdings: &Holdings, mtm: MainThreadMarker) {
+    for (index, slot) in holdings.slots().into_iter().enumerate() {
+        if let Slot::Header(title) = slot {
+            let header = NSMenuItem::sectionHeaderWithTitle(&NSString::from_str(title), mtm);
+            submenu.insertItem_atIndex(&header, index as isize);
+        }
+    }
+}
+
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     let action = match event.id().as_ref() {
-        ID_HOLDINGS => Action::Holdings,
+        ID_HOLDINGS | ID_HOLDINGS_ROW => Action::Holdings,
         ID_SETTINGS => Action::Settings,
         ID_UPDATE => Action::Update,
         ID_CHECK_UPDATE => Action::CheckUpdate,

@@ -224,7 +224,7 @@ export function PriceChart(props: {
   return (
     <div
       ref={surface}
-      className="relative mx-4 min-h-0 flex-1 touch-none overflow-hidden rounded-2xl border bg-white/45 select-none dark:bg-white/3"
+      className="panel relative mx-4 min-h-0 flex-1 touch-none overflow-hidden select-none"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerEnd}

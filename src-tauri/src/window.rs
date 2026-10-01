@@ -103,8 +103,8 @@ pub fn open_holdings(app: &AppHandle) -> tauri::Result<()> {
             label: HOLDINGS,
             url: "holdings.html".to_owned(),
             title: "Candlewick 持仓".to_owned(),
-            size: (760.0, 620.0),
-            min_size: (560.0, 420.0),
+            size: (980.0, 640.0),
+            min_size: (800.0, 500.0),
             resizable: true,
         },
     )

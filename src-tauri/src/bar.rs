@@ -1,7 +1,8 @@
 //! What the system bar shows: the macOS menu bar, the Windows taskbar. The
-//! pinned entry's ticker, the total holdings once an exchange has an API key,
-//! one dropdown row per watchlist entry and a status caption, all derived
-//! from the model here; `platform::bar` draws them the way each system does.
+//! ticker (the pinned entry, or the total holdings), one dropdown row per
+//! watchlist entry and a status caption, and once an exchange has an API key
+//! a holdings row with a submenu that sums the holdings up: all derived from
+//! the model here; `platform::bar` draws them the way each system does.
 //!
 //! Other threads call [`request_render`], which collapses any burst of updates
 //! into one pass on the thread that owns the bar.
@@ -14,7 +15,7 @@ use crate::{
     format::{self, Direction},
     model::{ColorScheme, Instrument, Model, Quote, Session, Shared},
     platform,
-    portfolio::Totals,
+    portfolio::{Portfolio, Totals},
     update, window,
 };
 
@@ -22,8 +23,9 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct View {
     pub watchlist: Vec<Instrument>,
-    /// The total holdings, above the watchlist; none without an API key.
-    pub holdings: Option<Row>,
+    /// The total holdings and what they are made of, above the watchlist;
+    /// none without an API key.
+    pub holdings: Option<Holdings>,
     pub rows: Vec<Row>,
     pub ticker: Option<Ticker>,
     /// Why a feed is not live; empty while all are.
@@ -39,24 +41,121 @@ pub struct Row {
     pub name: String,
     /// Shown dimmed after the name, e.g. `/USDT`.
     pub detail: String,
-    pub price: String,
+    /// The main number, in the trend color of its direction when it is a
+    /// move itself (a PnL); flat for a price.
+    pub value: (String, Direction),
     /// Shown dimmed before the change, e.g. `盘后`.
     pub session: Option<&'static str>,
     pub change: Option<(String, Direction)>,
 }
 
-/// The pinned entry: plain text on one line, or, with the change shown, the
-/// symbol beside a two-row block (price over change).
+impl Row {
+    fn new(name: impl Into<String>, detail: impl Into<String>, value: String) -> Self {
+        Self {
+            name: name.into(),
+            detail: detail.into(),
+            value: (value, Direction::Flat),
+            session: None,
+            change: None,
+        }
+    }
+
+    fn with_change(mut self, pct: Option<f64>) -> Self {
+        self.change = pct.map(|pct| (format::change_signed(pct), format::direction(pct)));
+        self
+    }
+}
+
+/// The holdings row and its submenu: the total, what the day did, each
+/// account when there are several, the largest assets and positions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Holdings {
+    /// `总资产 USDT  12,345.67  +1.24%`; the amount is `—` until the first
+    /// refresh.
+    pub total: Row,
+    /// `24h 盈亏  +152.30`, once there is a total.
+    pub day: Option<Row>,
+    /// One per exchange, when there is more than one.
+    pub accounts: Vec<Row>,
+    /// The most valuable, then `其他 n 项` for the rest.
+    pub assets: Vec<Row>,
+    /// The largest unrealized PnL first.
+    pub positions: Vec<Row>,
+    /// When the holdings were read, or why they could not be.
+    pub caption: String,
+}
+
+/// Rows of the submenu beyond this many assets or positions fold into one.
+const MENU_ASSETS: usize = 6;
+const MENU_POSITIONS: usize = 4;
+
+/// One item of the holdings submenu, top to bottom.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Slot<'a> {
+    /// `查看持仓…`
+    Open,
+    Separator,
+    /// A section's title: `账户`, `资产`, `合约`.
+    Header(&'static str),
+    Row(&'a Row),
+    /// The dimmed line at the end.
+    Caption(&'a str),
+}
+
+/// How many rows of each kind a submenu holds; the same shape means the
+/// same slots, which a built menu can update in place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Shape {
+    pub day: bool,
+    pub accounts: usize,
+    pub assets: usize,
+    pub positions: usize,
+}
+
+impl Holdings {
+    pub fn shape(&self) -> Shape {
+        Shape {
+            day: self.day.is_some(),
+            accounts: self.accounts.len(),
+            assets: self.assets.len(),
+            positions: self.positions.len(),
+        }
+    }
+
+    /// The submenu, item by item: the way in, what the day did, then a
+    /// section per kind of row that exists, and when it was read.
+    pub fn slots(&self) -> Vec<Slot<'_>> {
+        let mut slots = vec![Slot::Open];
+        if let Some(day) = &self.day {
+            slots.extend([Slot::Separator, Slot::Row(day)]);
+        }
+        for (title, rows) in
+            [("账户", &self.accounts), ("资产", &self.assets), ("合约", &self.positions)]
+        {
+            if !rows.is_empty() {
+                slots.extend([Slot::Separator, Slot::Header(title)]);
+                slots.extend(rows.iter().map(Slot::Row));
+            }
+        }
+        slots.extend([Slot::Separator, Slot::Caption(&self.caption)]);
+        slots
+    }
+}
+
+/// What the bar's text shows: plain text on one line, or, with the change
+/// shown, the symbol beside a two-row block (price over change).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ticker {
-    /// `BTC`, or `ETH/BTC` for a non-USD quote; `None` when symbols are hidden.
+    /// `BTC`, or `ETH/BTC` for a non-USD quote, or `总资产`; `None` when
+    /// symbols are hidden.
     pub symbol: Option<String>,
     /// `—` until the first quote arrives.
     pub price: String,
     /// The change; set once there is a quote, if the change is shown.
     pub change: Option<(String, Direction)>,
     pub two_rows: bool,
-    /// Prices may be old: the feed is reconnecting.
+    /// Prices may be old: the feed is reconnecting, or an account could
+    /// not be read.
     pub stale: bool,
 }
 
@@ -180,9 +279,26 @@ pub fn view(app: &AppHandle) -> View {
     }
 }
 
-/// The pinned entry as the bar shows it; `None` when nothing is pinned.
+/// What the bar's text shows: the total holdings when the settings ask for
+/// them and an account exists, else the pinned entry; `None` for neither.
 fn ticker(model: &Model) -> Option<Ticker> {
     let settings = &model.settings;
+    if settings.holdings_in_bar && !model.accounts.is_empty() {
+        let totals = Totals::of(&model.accounts);
+        return Some(Ticker {
+            symbol: settings.show_symbol.then(|| "总资产".to_owned()),
+            price: totals.map_or_else(
+                || "—".to_owned(),
+                |t| format::price(t.total, format::compact_decimals(t.total, Some(2))),
+            ),
+            change: totals
+                .filter(|_| settings.show_change)
+                .and_then(Totals::change_pct)
+                .map(|pct| (format::change_signed(pct), format::direction(pct))),
+            two_rows: settings.show_change,
+            stale: model.accounts.values().any(|account| account.error.is_some()),
+        });
+    }
     let pinned = settings.pinned()?;
     let quote = model.quotes.get(&pinned.id());
     Some(Ticker {
@@ -200,22 +316,99 @@ fn ticker(model: &Model) -> Option<Ticker> {
     })
 }
 
-/// `总资产 USDT  12,345.67  +1.24%`; the amount is `—` until the first
-/// refresh.
-fn holdings(model: &Model) -> Option<Row> {
+/// A signed USDT amount in the color of its sign: `+152.30`.
+fn signed(amount: f64) -> (String, Direction) {
+    let text = format::price(amount.abs(), 2);
+    match format::direction(amount) {
+        Direction::Up => (format!("+{text}"), Direction::Up),
+        Direction::Down => (format!("\u{2212}{text}"), Direction::Down),
+        Direction::Flat => (text, Direction::Flat),
+    }
+}
+
+fn holdings(model: &Model) -> Option<Holdings> {
     if model.accounts.is_empty() {
         return None;
     }
     let totals = Totals::of(&model.accounts);
-    Some(Row {
-        name: "总资产".to_owned(),
-        detail: " USDT".to_owned(),
-        price: totals.map_or_else(|| "—".to_owned(), |t| format::price(t.total, 2)),
-        session: None,
-        change: totals
-            .and_then(Totals::change_pct)
-            .map(|pct| (format::change_signed(pct), format::direction(pct))),
-    })
+    let portfolio = Portfolio::of(&model.accounts);
+    let total = Row::new(
+        "总资产",
+        " USDT",
+        totals.map_or_else(|| "—".to_owned(), |t| format::price(t.total, 2)),
+    )
+    .with_change(totals.and_then(Totals::change_pct));
+    let day = totals
+        .map(|t| Row { value: signed(t.change), ..Row::new("24h 盈亏", "", String::new()) });
+    let accounts = if portfolio.accounts.len() > 1 {
+        portfolio
+            .accounts
+            .iter()
+            .map(|account| {
+                let pct = account
+                    .total
+                    .zip(account.change)
+                    .and_then(|(total, change)| crate::portfolio::pct(total, total - change));
+                Row::new(
+                    account.name,
+                    "",
+                    account.total.map_or_else(|| "—".to_owned(), |t| format::price(t, 2)),
+                )
+                .with_change(pct)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let priced: Vec<_> = portfolio.assets.iter().filter(|a| a.value.is_some()).collect();
+    let mut assets: Vec<Row> = priced
+        .iter()
+        .take(MENU_ASSETS)
+        .map(|asset| {
+            Row::new(
+                asset.asset.clone(),
+                format!("  {}", format::amount(asset.amount)),
+                format::price(asset.value.unwrap_or(0.0), 2),
+            )
+            .with_change(asset.change_pct.filter(|_| !asset.stable))
+        })
+        .collect();
+    if priced.len() > MENU_ASSETS {
+        let rest: f64 = priced[MENU_ASSETS..].iter().filter_map(|a| a.value).sum();
+        assets.push(Row::new(
+            format!("其他 {} 项", priced.len() - MENU_ASSETS),
+            "",
+            format::price(rest, 2),
+        ));
+    }
+    let positions = portfolio
+        .positions
+        .iter()
+        .take(MENU_POSITIONS)
+        .map(|position| {
+            let p = &position.position;
+            let side = if p.long { "多" } else { "空" };
+            let leverage =
+                p.leverage.map(|l| format!(" {}x", format::amount(l))).unwrap_or_default();
+            let pnl = position.pnl_usd.unwrap_or(p.pnl);
+            Row {
+                value: signed(pnl),
+                ..Row::new(p.symbol.clone(), format!("  {side}{leverage}"), String::new())
+            }
+        })
+        .collect();
+    let caption = portfolio
+        .accounts
+        .iter()
+        .find_map(|account| {
+            account.error.as_ref().map(|error| format!("{}读取失败：{error}", account.name))
+        })
+        .or_else(|| {
+            let latest = portfolio.accounts.iter().filter_map(|a| a.updated).fold(0.0, f64::max);
+            (latest > 0.0).then(|| format!("更新于 {}", format::clock(latest)))
+        })
+        .unwrap_or_else(|| "正在读取…".to_owned());
+    Some(Holdings { total, day, accounts, assets, positions, caption })
 }
 
 /// The first feed that isn't live explains itself; empty while all are.
@@ -240,17 +433,31 @@ fn rows(watchlist: &[Instrument], quotes: &HashMap<String, Quote>) -> Vec<Row> {
             let quote = quotes.get(&instrument.id());
             let (name, detail) = instrument.row_label();
             Row {
-                name,
-                detail,
                 session: quote.and_then(|q| q.session).map(Session::label),
-                price: quote.map_or_else(
-                    || "—".to_owned(),
-                    |q| format::price(q.last, format::decimals(q.last, instrument.decimals)),
-                ),
-                change: quote
-                    .and_then(|q| format::change_pct(q.last, q.open))
-                    .map(|pct| (format::change_signed(pct), format::direction(pct))),
+                ..Row::new(
+                    name,
+                    detail,
+                    quote.map_or_else(
+                        || "—".to_owned(),
+                        |q| format::price(q.last, format::decimals(q.last, instrument.decimals)),
+                    ),
+                )
             }
+            .with_change(quote.and_then(|q| format::change_pct(q.last, q.open)))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A PnL reads with its sign and takes its direction's color; what rounds
+    // to zero is flat and unsigned.
+    #[test]
+    fn signed_amounts_carry_their_direction() {
+        assert_eq!(signed(152.3), ("+152.30".to_owned(), Direction::Up));
+        assert_eq!(signed(-0.5), ("\u{2212}0.50".to_owned(), Direction::Down));
+        assert_eq!(signed(-0.004), ("0.00".to_owned(), Direction::Flat));
+    }
 }

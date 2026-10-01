@@ -19,7 +19,7 @@ export function ChangeBadge(props: {
         "tabular",
         sign > 0 && "bg-up/12 text-up",
         sign < 0 && "bg-down/12 text-down",
-        sign === 0 && "bg-black/5 text-muted-foreground dark:bg-white/8",
+        sign === 0 && "bg-fill-strong text-muted-foreground",
         props.className,
       )}
     >

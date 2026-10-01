@@ -39,6 +39,60 @@ pub fn price(value: f64, decimals: usize) -> String {
     out
 }
 
+/// An amount held: up to eight decimals for small ones, fewer as they grow,
+/// none trailing: `1.5`, `0.00012345`, `12,345.67`.
+pub fn amount(value: f64) -> String {
+    let magnitude = value.abs();
+    let decimals = if magnitude >= 1000.0 {
+        2
+    } else if magnitude >= 1.0 {
+        4
+    } else {
+        8
+    };
+    let text = price(value, decimals);
+    match text.split_once('.') {
+        Some((int, frac)) => {
+            let frac = frac.trim_end_matches('0');
+            if frac.is_empty() { int.to_owned() } else { format!("{int}.{frac}") }
+        }
+        None => text,
+    }
+}
+
+/// Epoch milliseconds as the local wall clock, `14:03:27`.
+pub fn clock(ms: f64) -> String {
+    let secs = (ms / 1000.0).floor() as i64;
+    let (hour, minute, second) = local_time(secs);
+    format!("{hour:02}:{minute:02}:{second:02}")
+}
+
+/// The C runtime's local time: `(hour, minute, second)` of `secs` since the
+/// epoch. `struct tm` starts with seconds, minutes and hours as ints on both
+/// platforms; the buffer leaves room for the rest of it.
+fn local_time(secs: i64) -> (i32, i32, i32) {
+    let mut tm = [0i32; 16];
+    let ok = {
+        #[cfg(unix)]
+        {
+            unsafe extern "C" {
+                fn localtime_r(time: *const i64, out: *mut i32) -> *mut i32;
+            }
+            // SAFETY: `tm` is larger than `struct tm` on every supported Unix.
+            !unsafe { localtime_r(&secs, tm.as_mut_ptr()) }.is_null()
+        }
+        #[cfg(windows)]
+        {
+            unsafe extern "C" {
+                fn _localtime64_s(out: *mut i32, time: *const i64) -> i32;
+            }
+            // SAFETY: `tm` is larger than the CRT's `struct tm`.
+            unsafe { _localtime64_s(tm.as_mut_ptr(), &secs) == 0 }
+        }
+    };
+    if ok { (tm[2], tm[1], tm[0]) } else { (0, 0, 0) }
+}
+
 /// 24h change in percent, or `None` when the open price is unusable.
 pub fn change_pct(last: f64, open: f64) -> Option<f64> {
     (open > 0.0 && last.is_finite()).then(|| (last - open) / open * 100.0)
@@ -102,6 +156,27 @@ mod tests {
         assert_eq!(decimals(182.33, None), 3);
         assert_eq!(decimals(0.00001234, None), 10);
         assert_eq!(decimals(0.0, None), 2);
+    }
+
+    // Held amounts read like the holdings window shows them: no trailing
+    // zeros, more decimals the smaller they are.
+    #[test]
+    fn amounts_drop_trailing_zeros() {
+        assert_eq!(amount(1.5), "1.5");
+        assert_eq!(amount(0.00012345), "0.00012345");
+        assert_eq!(amount(12345.678), "12,345.68");
+        assert_eq!(amount(10.0), "10");
+    }
+
+    // The local clock agrees with the C runtime on the current time zone.
+    #[test]
+    fn clock_is_local_time() {
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
+                as i64;
+        let (hour, _, _) = local_time(now);
+        assert!((0..24).contains(&hour));
+        assert_eq!(clock(0.0).len(), 8);
     }
 
     // A change that rounds to zero must read as flat, not "−0.00%".

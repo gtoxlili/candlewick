@@ -15,7 +15,8 @@ pub fn escape(text: &str) -> String {
 }
 
 /// `BTC/USDT⇥84,002.01 −0.24%`, `AAPL 苹果  盘后⇥182.33 +0.12%`: the name,
-/// its detail and session left, price and change right.
+/// its detail and session left, value and change right. Rows laid out
+/// together share one change column, so their values line up.
 pub fn rows(rows: &[Row]) -> Vec<String> {
     let width = |row: &Row| row.change.as_ref().map_or(0, |(change, _)| change.chars().count());
     let change_width = rows.iter().map(width).max().unwrap_or(0);
@@ -27,7 +28,7 @@ pub fn rows(rows: &[Row]) -> Vec<String> {
                 text.push_str(session);
             }
             text.push('\t');
-            text.push_str(&row.price);
+            text.push_str(&row.value.0);
             if change_width > 0 {
                 text.push(EM_SPACE);
                 text.extend(std::iter::repeat_n(FIGURE_SPACE, change_width - width(row)));
@@ -49,7 +50,7 @@ mod tests {
         Row {
             name: name.to_owned(),
             detail: String::new(),
-            price: price.to_owned(),
+            value: (price.to_owned(), Direction::Flat),
             session: None,
             change: change.map(|c| (c.to_owned(), Direction::Up)),
         }
@@ -70,6 +71,13 @@ mod tests {
         let change_column =
             |text: &String| text.split_once(EM_SPACE).map(|(_, tail)| tail.chars().count());
         assert!(texts.iter().all(|text| change_column(text) == Some(7)));
+    }
+
+    // Rows without any change (PnL rows) keep just the value column.
+    #[test]
+    fn values_alone_take_no_change_column() {
+        let texts = rows(&[row("24h 盈亏", "+152.30", None)]);
+        assert_eq!(texts[0], "24h 盈亏\t+152.30");
     }
 
     // AppendMenu treats `&` as a mnemonic prefix (MF_STRING docs); names such

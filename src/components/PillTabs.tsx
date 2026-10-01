@@ -18,7 +18,7 @@ export function PillTabs<T extends string | number>(props: {
       role="tablist"
       aria-label={props.label}
       className={cn(
-        "relative grid shrink-0 rounded-full bg-black/5 p-0.5 dark:bg-white/8",
+        "pill relative grid shrink-0 p-0.5",
         props.className,
       )}
       style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}

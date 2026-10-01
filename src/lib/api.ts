@@ -61,6 +61,8 @@ export interface Settings {
   watchlist: Instrument[];
   showSymbol: boolean;
   showChange: boolean;
+  /** The bar shows the total holdings instead of a pinned entry (which the app unpins). */
+  holdingsInBar: boolean;
   colorScheme: ColorScheme;
   /** Check for, download and apply updates on its own. */
   autoUpdate: boolean;
@@ -229,17 +231,29 @@ export interface ExchangeKey {
 
 export type Wallet = "spot" | "trading" | "funding" | "earn" | "usdFutures" | "coinFutures";
 
-/** An asset across an exchange's wallets; amounts in USDT. */
+/** Some of an asset in one wallet of one exchange. */
+export interface Holding {
+  exchange: Exchange;
+  /** 现货, 交易账户, 资金, 理财, U 本位合约, 币本位合约. */
+  wallet: string;
+  amount: number;
+}
+
+/** An asset across every exchange's wallets; amounts in USDT. */
 export interface HeldAsset {
   asset: string;
   amount: number;
   /** null without a USDT pair or the exchange's own value. */
   price: number | null;
   value: number | null;
+  /** What the 24h price move made of this amount, in USDT. */
+  change: number | null;
   /** The 24h price change, in percent. */
   changePct: number | null;
+  /** A dollar stablecoin: cash. */
+  stable: boolean;
   /** Where it sits, largest first. */
-  wallets: { label: string; amount: number }[];
+  held: Holding[];
   /** Average cost in USD, where the exchange keeps one (OKX). */
   cost: number | null;
   pnl: number | null;
@@ -247,6 +261,7 @@ export interface HeldAsset {
 
 /** An open derivatives position. */
 export interface HeldPosition {
+  exchange: Exchange;
   symbol: string;
   /** "U 本位永续", "币本位交割", "期权"… */
   kind: string;
@@ -263,36 +278,42 @@ export interface HeldPosition {
   pnl: number;
   pnlAsset: string;
   pnlUsd: number | null;
+  /** Exposure in USD at the mark price, negative when short. */
+  exposure: number;
+  /** What the contract's 24h move made of the position, in USDT. */
+  change: number | null;
 }
 
-/** One exchange's holdings, in USDT. */
-export interface Holdings {
-  total: number;
-  /** What the 24h price moves made of today's holdings. */
-  change: number;
-  wallets: { wallet: Wallet; label: string; value: number }[];
-  /** Most valuable first. */
-  assets: HeldAsset[];
-  positions: HeldPosition[];
+export interface WalletValue {
+  wallet: Wallet;
+  label: string;
+  value: number;
 }
 
+/** One exchange's part of the portfolio. */
 export interface ExchangeAccount {
   exchange: Exchange;
   name: string;
-  /** The last good refresh; null before the first. */
-  holdings: Holdings | null;
-  /** Epoch milliseconds. */
+  /** null before the first good refresh. */
+  total: number | null;
+  change: number | null;
+  wallets: WalletValue[];
+  /** Epoch milliseconds of the last good refresh. */
   updated: number | null;
   /** Why the last refresh failed. */
   error: string | null;
 }
 
-/** Every exchange with a key. */
+/** Every exchange with a key, as one picture. */
 export interface Portfolio {
   accounts: ExchangeAccount[];
   /** USDT, over the accounts refreshed at least once. */
   total: number | null;
   change: number | null;
+  /** Merged by asset across the accounts, most valuable first. */
+  assets: HeldAsset[];
+  /** Largest unrealized PnL (either way) first. */
+  positions: HeldPosition[];
 }
 
 export const MAX_INSTRUMENTS = 30;
@@ -344,7 +365,7 @@ export const api = {
   getPortfolio: () => invoke<Portfolio>("get_portfolio"),
   openHoldings: () => invoke<void>("open_holdings"),
   openSettings: () => invoke<void>("open_settings"),
-  /** Fresh holdings, while the holdings window is open. */
+  /** Fresh holdings, while the holdings window is open: every refresh, and every price tick in between. */
   onPortfolio: (handler: (portfolio: Portfolio) => void): Promise<UnlistenFn> =>
     listen<Portfolio>("portfolio", (event) => handler(event.payload)),
   onStatus: (handler: (status: Status) => void): Promise<UnlistenFn> =>
