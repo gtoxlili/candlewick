@@ -6,7 +6,7 @@ import type { ChartMode, Interval } from "@/lib/api";
 import { fmtPrice } from "@/lib/format";
 import type { ChartData, Market } from "./market";
 import type { ChartColors } from "./palette";
-import { load, store } from "./prefs";
+import { load, store } from "@/lib/prefs";
 import { clampBars, DEFAULT_BARS, Viewport } from "./viewport";
 
 export interface VisibleStats {

@@ -3,7 +3,7 @@
   "identifier": "caption-buttons",
   "description": "Windows: the caption buttons the pages draw in their title bars (minimize, maximize or restore, close).",
   "platforms": ["windows"],
-  "windows": ["settings", "chart"],
+  "windows": ["settings", "chart", "holdings"],
   "permissions": [
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",

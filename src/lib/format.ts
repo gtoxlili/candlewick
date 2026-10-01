@@ -38,6 +38,26 @@ export function fmtQty(value: number): string {
   return fmtPrice(value, decimals);
 }
 
+const amounts = new Map<number, Intl.NumberFormat>();
+
+/** Holdings: up to eight decimals for small amounts, fewer as they grow, none trailing. */
+export function fmtAmount(value: number): string {
+  const decimals = value >= 1000 ? 2 : value >= 1 ? 4 : 8;
+  let format = amounts.get(decimals);
+  if (!format) {
+    format = new Intl.NumberFormat("en-US", { maximumFractionDigits: decimals });
+    amounts.set(decimals, format);
+  }
+  return format.format(value);
+}
+
+/** "+12.34", "−0.41", "0.00": a signed amount with fixed decimals. */
+export function fmtSigned(value: number, decimals: number): string {
+  const text = fmtPrice(Math.abs(value), decimals);
+  const sign = direction(value);
+  return sign > 0 ? `+${text}` : sign < 0 ? `−${text}` : text;
+}
+
 /** "+1.23%", "−0.41%" (U+2212, as wide as "+"), "0.00%". */
 export function fmtPct(pct: number): string {
   const hundredths = Math.round(pct * 100);

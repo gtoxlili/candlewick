@@ -4,7 +4,7 @@
 
 ## 什么算应用本身
 
-`src`、`src-tauri`、`index.html`、`chart.html`、`package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`patches`、`tsconfig.json` 和 `vite.config.ts`。只改文档不会触发构建。只改工作流会完整构建一遍，但不发布。
+`src`、`src-tauri`、`index.html`、`chart.html`、`holdings.html`、`package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`patches`、`tsconfig.json` 和 `vite.config.ts`。只改文档不会触发构建。只改工作流会完整构建一遍，但不发布。
 
 ## 版本号
 

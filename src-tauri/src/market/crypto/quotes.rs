@@ -1,15 +1,16 @@
 //! Menu bar quotes: one websocket carries every watched pair of the exchange
 //! into the shared model. It is dropped whenever the pair set changes or
 //! nobody can see the menu bar (sleep, display off), and re-established with
-//! exponential backoff after failures.
+//! exponential backoff after failures. [`snapshot`] uses the same socket for
+//! one look at a set of pairs.
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
 use tauri::{AppHandle, Manager};
 use tokio::{
     sync::watch,
-    time::{Instant, MissedTickBehavior, interval_at, sleep, timeout},
+    time::{Instant, MissedTickBehavior, interval_at, sleep, timeout, timeout_at},
 };
 use tokio_tungstenite::tungstenite::Message;
 
@@ -196,4 +197,54 @@ fn apply<E: Exchange>(app: &AppHandle, text: &str) -> bool {
     }
     model.quotes.insert(id, quote);
     true
+}
+
+/// How long [`snapshot`] waits for pairs to answer once subscribed; a pair
+/// the exchange doesn't list never does.
+const SNAPSHOT_WAIT: Duration = Duration::from_secs(3);
+
+/// The last price and the one 24 hours before of each of `symbols` that
+/// answers within [`SNAPSHOT_WAIT`], by symbol, from a short-lived socket:
+/// each pair's first frame is all it needs.
+pub async fn snapshot<E: Exchange>(
+    symbols: &[String],
+) -> Result<HashMap<String, (f64, f64)>, String> {
+    let mut prices = HashMap::new();
+    if symbols.is_empty() {
+        return Ok(prices);
+    }
+    let path = E::quotes_path(symbols);
+    let mut failure = String::new();
+    let mut connected = None;
+    for &(host, port) in E::SOCKETS {
+        match timeout(CONNECT_TIMEOUT, net::connect(host, port, &path)).await {
+            Ok(Ok((socket, _))) => {
+                connected = Some(socket);
+                break;
+            }
+            Ok(Err(e)) => failure = e.to_string(),
+            Err(_) => failure = "连接超时".to_owned(),
+        }
+    }
+    let mut socket = connected.ok_or(failure)?;
+    for frame in E::quotes_subscribe(symbols) {
+        socket.send(Message::text(frame)).await.map_err(|e| e.to_string())?;
+    }
+    let deadline = Instant::now() + SNAPSHOT_WAIT;
+    while prices.len() < symbols.len() {
+        let Ok(message) = timeout_at(deadline, socket.next()).await else { break };
+        match message {
+            Some(Ok(Message::Text(text))) => {
+                if let Some(tick) = E::quote(&text)
+                    && tick.last.is_finite()
+                {
+                    prices.insert(tick.symbol.into_owned(), (tick.last, tick.open));
+                }
+            }
+            Some(Ok(_)) => {}
+            Some(Err(_)) | None => break,
+        }
+    }
+    let _ = socket.close(None).await;
+    Ok(prices)
 }

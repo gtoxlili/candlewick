@@ -10,6 +10,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod bar;
+mod calendar;
 mod commands;
 mod credentials;
 mod format;
@@ -18,6 +19,7 @@ mod market;
 mod model;
 mod net;
 mod platform;
+mod portfolio;
 mod update;
 mod window;
 
@@ -64,6 +66,11 @@ fn main() {
             commands::get_longbridge,
             commands::set_longbridge,
             commands::check_longbridge,
+            commands::get_exchange_keys,
+            commands::set_exchange_key,
+            commands::get_portfolio,
+            commands::open_holdings,
+            commands::open_settings,
         ])
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
@@ -99,6 +106,7 @@ fn main() {
                 let quotes = provider.provider().watch(app.handle().clone(), control.clone());
                 tauri::async_runtime::spawn(quotes);
             }
+            market::watch_accounts(app.handle(), &control);
 
             update::start(app.handle());
 

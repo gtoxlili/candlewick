@@ -1,4 +1,7 @@
-//! OKX spot: public market data, no account or key.
+//! OKX spot: public market data, no account or key. With the user's
+//! read-only key, also their account (`account.rs`).
+
+mod account;
 
 use std::{borrow::Cow, convert::Infallible};
 

@@ -20,8 +20,11 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, ipc::Channel};
 use tokio::sync::{oneshot, watch};
 
+use self::crypto::account::Account;
 use crate::{
-    bar, http,
+    bar,
+    credentials::ApiKey,
+    http,
     model::{FeedControl, Instrument, Shared, Status},
     window::{self, StatusView},
 };
@@ -75,6 +78,28 @@ impl ProviderId {
             Self::Okx => &okx::Okx,
             Self::Longbridge => &longbridge::Longbridge,
         }
+    }
+}
+
+/// Keeps the holdings of each exchange with an API key current, for as
+/// long as the app runs.
+pub fn watch_accounts(app: &AppHandle, control: &watch::Receiver<FeedControl>) {
+    let (app, control) = (app.clone(), control.clone());
+    tauri::async_runtime::spawn(crypto::account::run::<binance::Binance>(
+        app.clone(),
+        control.clone(),
+    ));
+    tauri::async_runtime::spawn(crypto::account::run::<bybit::Bybit>(app.clone(), control.clone()));
+    tauri::async_runtime::spawn(crypto::account::run::<okx::Okx>(app, control));
+}
+
+/// Asks `exchange` whether `key` works and can neither trade nor withdraw.
+pub async fn check_key(exchange: ProviderId, key: &ApiKey) -> Result<(), Error> {
+    match exchange {
+        ProviderId::Binance => binance::Binance::check(key).await,
+        ProviderId::Bybit => bybit::Bybit::check(key).await,
+        ProviderId::Okx => okx::Okx::check(key).await,
+        ProviderId::Longbridge => Err(Error::Message("长桥不使用 API Key".to_owned())),
     }
 }
 

@@ -5,6 +5,9 @@
 #[path = "../src/bar.rs"]
 mod bar;
 #[cfg(target_os = "macos")]
+#[path = "../src/calendar.rs"]
+mod calendar;
+#[cfg(target_os = "macos")]
 #[path = "../src/credentials.rs"]
 mod credentials;
 #[cfg(target_os = "macos")]
@@ -25,6 +28,9 @@ mod net;
 #[cfg(target_os = "macos")]
 #[path = "../src/platform/mod.rs"]
 mod platform;
+#[cfg(target_os = "macos")]
+#[path = "../src/portfolio.rs"]
+mod portfolio;
 #[cfg(target_os = "macos")]
 #[path = "../src/update.rs"]
 mod update;

@@ -1,6 +1,6 @@
 # Windows 版的页面
 
-设置窗口和行情窗口的页面在两个平台上是同一份代码。平台差异集中在几处：`src/lib/platform.ts`、`src/index.css` 里的 Windows 段、`TitleBar` 与 `CaptionButtons`、`Switch`，以及 `Picker`。Rust 侧的实现见 [windows.md](windows.md)。
+设置、行情和持仓窗口的页面在两个平台上是同一份代码。平台差异集中在几处：`src/lib/platform.ts`、`src/index.css` 里的 Windows 段、`TitleBar` 与 `CaptionButtons`、`Switch`，以及 `Picker`。Rust 侧的实现见 [windows.md](windows.md)。
 
 ## 平台常量
 
@@ -89,7 +89,7 @@ Windows 上的标题栏靠 CSS `app-region: drag` 成为系统标题栏，拖动
 
 ## 权限
 
-`src-tauri/capabilities/caption-buttons.json` 用 `platforms: ["windows"]` 限定只在 Windows 上生效，给设置和行情窗口开放 `minimize`、`toggle-maximize`、`is-maximized`、`close`。
+`src-tauri/capabilities/caption-buttons.json` 用 `platforms: ["windows"]` 限定只在 Windows 上生效，给设置、行情和持仓窗口开放 `minimize`、`toggle-maximize`、`is-maximized`、`close`。
 
 ## 和 macOS 表现不同的地方
 

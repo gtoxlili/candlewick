@@ -1,9 +1,11 @@
-//! Account credentials for market-data providers, in `credentials.json` next
-//! to the settings, readable by the user only.
+//! Account credentials, in `credentials.json` next to the settings, readable
+//! by the user only: Longbridge's for stock quotes, and read-only exchange API
+//! keys for holdings.
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::{
+    collections::BTreeMap,
     fmt, fs,
     io::{self, Write},
     path::Path,
@@ -11,11 +13,34 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::market::ProviderId;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Credentials {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub longbridge: Option<LongbridgeKeys>,
+    /// By crypto exchange.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub exchanges: BTreeMap<ProviderId, ApiKey>,
+}
+
+/// A read-only API key from an exchange's API management page.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKey {
+    pub key: String,
+    pub secret: String,
+    /// OKX's, chosen when the key was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passphrase: Option<String>,
+}
+
+// Keeps the secrets out of logs.
+impl fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ApiKey { .. }")
+    }
 }
 
 /// From the Longbridge developer center: the app's key and secret, and an
@@ -86,6 +111,11 @@ mod tests {
                 app_secret: "secret".into(),
                 access_token: "token".into(),
             }),
+            exchanges: [(
+                ProviderId::Okx,
+                ApiKey { key: "key".into(), secret: "secret".into(), passphrase: Some("p".into()) },
+            )]
+            .into(),
         };
         save(&path, &credentials).unwrap();
         // Replacing an existing file goes through the same temp file.

@@ -1,7 +1,7 @@
 //! What the system bar shows: the macOS menu bar, the Windows taskbar. The
-//! pinned entry's ticker, one dropdown row per watchlist entry and a status
-//! caption, all derived from the model here; `platform::bar` draws them the
-//! way each system does.
+//! pinned entry's ticker, the total holdings once an exchange has an API key,
+//! one dropdown row per watchlist entry and a status caption, all derived
+//! from the model here; `platform::bar` draws them the way each system does.
 //!
 //! Other threads call [`request_render`], which collapses any burst of updates
 //! into one pass on the thread that owns the bar.
@@ -13,13 +13,17 @@ use tauri::{AppHandle, Manager};
 use crate::{
     format::{self, Direction},
     model::{ColorScheme, Instrument, Model, Quote, Session, Shared},
-    platform, update, window,
+    platform,
+    portfolio::Totals,
+    update, window,
 };
 
 /// Everything the bar shows, taken from the model in one go.
 #[derive(Debug, Clone)]
 pub struct View {
     pub watchlist: Vec<Instrument>,
+    /// The total holdings, above the watchlist; none without an API key.
+    pub holdings: Option<Row>,
     pub rows: Vec<Row>,
     pub ticker: Option<Ticker>,
     /// Why a feed is not live; empty while all are.
@@ -106,6 +110,7 @@ pub fn hue(direction: Direction, scheme: ColorScheme) -> Option<Hue> {
 pub enum Action {
     /// The chart of the instrument with this id.
     Chart(String),
+    Holdings,
     Settings,
     CheckUpdate,
     /// Restart into the downloaded update.
@@ -116,6 +121,7 @@ pub enum Action {
 pub fn perform(app: &AppHandle, action: Action) {
     let result = match action {
         Action::Chart(id) => window::open_chart(app, &id),
+        Action::Holdings => window::open_holdings(app),
         Action::Settings => window::open_settings(app),
         Action::CheckUpdate => window::open_settings(app).map(|()| update::check_now(app)),
         Action::Update => {
@@ -130,6 +136,18 @@ pub fn perform(app: &AppHandle, action: Action) {
     if let Err(e) = result {
         log::error!("menu action failed: {e}");
     }
+}
+
+/// The dropdown is opening: holdings getting old refresh, so the total in it
+/// is current a moment later.
+pub fn menu_opening(app: &AppHandle) {
+    app.state::<Shared>().control.send_if_modified(|control| {
+        let any = !control.credentials.exchanges.is_empty();
+        if any {
+            control.holdings_wanted = control.holdings_wanted.wrapping_add(1);
+        }
+        any
+    });
 }
 
 /// Schedules a redraw on the bar's thread unless one is already pending.
@@ -153,6 +171,7 @@ pub fn view(app: &AppHandle) -> View {
     let model = shared.model();
     View {
         watchlist: model.settings.watchlist.clone(),
+        holdings: holdings(&model),
         rows: rows(&model.settings.watchlist, &model.quotes),
         ticker: ticker(&model),
         caption: caption(&model),
@@ -178,6 +197,24 @@ fn ticker(model: &Model) -> Option<Ticker> {
             .map(|pct| (format::change_signed(pct), format::direction(pct))),
         two_rows: settings.show_change,
         stale: model.stale(pinned.provider),
+    })
+}
+
+/// `总资产 USDT  12,345.67  +1.24%`; the amount is `—` until the first
+/// refresh.
+fn holdings(model: &Model) -> Option<Row> {
+    if model.accounts.is_empty() {
+        return None;
+    }
+    let totals = Totals::of(&model.accounts);
+    Some(Row {
+        name: "总资产".to_owned(),
+        detail: " USDT".to_owned(),
+        price: totals.map_or_else(|| "—".to_owned(), |t| format::price(t.total, 2)),
+        session: None,
+        change: totals
+            .and_then(Totals::change_pct)
+            .map(|pct| (format::change_signed(pct), format::direction(pct))),
     })
 }
 

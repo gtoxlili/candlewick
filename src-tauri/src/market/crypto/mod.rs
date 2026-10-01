@@ -3,6 +3,7 @@
 //! ([`Exchange`]); search, the menu bar quotes, the chart's live feed and the
 //! local order book are common to them.
 
+pub mod account;
 mod book;
 mod live;
 mod pairs;

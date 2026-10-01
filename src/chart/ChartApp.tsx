@@ -27,7 +27,7 @@ import { SYSTEM_COLORS_EVENT } from "@/lib/platform";
 import { Market } from "./market";
 import { bidShare, OrderBook } from "./OrderBook";
 import { readChartColors, sameColors, type ChartColors } from "./palette";
-import { load, store } from "./prefs";
+import { load, store } from "@/lib/prefs";
 import { PriceChart, type VisibleStats } from "./PriceChart";
 import { TradeList } from "./TradeList";
 

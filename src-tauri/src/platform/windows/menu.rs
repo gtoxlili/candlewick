@@ -1,8 +1,9 @@
-//! The dropdown: a native popup menu of the watchlist, like the macOS one. A
-//! row per entry (its price and change right-aligned in a column of their
-//! own, a small colored triangle for the direction), a status line while a
-//! feed isn't live, then check for updates (or restart into one), settings and
-//! quit. It stays live while open: rows update in place as prices tick.
+//! The dropdown: a native popup menu of the watchlist, like the macOS one. The
+//! total holdings once an exchange has an API key, a row per entry (its price
+//! and change right-aligned in a column of their own, a small colored
+//! triangle for the direction), a status line while a feed isn't live, then
+//! check for updates (or restart into one), settings and quit. It stays live
+//! while open: rows update in place as prices tick.
 
 use windows::{
     Win32::{
@@ -36,16 +37,30 @@ const QUIT: u32 = 2;
 const STATUS: u32 = 3;
 const UPDATE: u32 = 4;
 const CHECK_UPDATE: u32 = 5;
+const HOLDINGS: u32 = 6;
 /// Row n has this id plus n.
 const FIRST_ROW: u32 = 100;
 
 /// An open dropdown.
 pub struct Open {
     pub menu: HMENU,
-    /// The instrument of each row.
+    /// The instrument of each watchlist row.
     ids: Vec<String>,
-    /// The text and mark each row shows.
-    shown: Vec<(String, Option<HBITMAP>)>,
+    /// The command id, text and mark of each row shown, holdings first.
+    shown: Vec<(u32, String, Option<HBITMAP>)>,
+}
+
+/// The rows with prices, holdings first, by command id, laid out together so
+/// their columns line up.
+fn priced(view: &View) -> Vec<(u32, &Row, String)> {
+    let rows: Vec<(u32, &Row)> = view
+        .holdings
+        .iter()
+        .map(|row| (HOLDINGS, row))
+        .chain(view.rows.iter().enumerate().map(|(index, row)| (FIRST_ROW + index as u32, row)))
+        .collect();
+    let texts = menu_text::rows(&rows.iter().map(|(_, row)| (*row).clone()).collect::<Vec<_>>());
+    rows.into_iter().zip(texts).map(|((id, row), text)| (id, row, text)).collect()
 }
 
 impl Open {
@@ -54,26 +69,30 @@ impl Open {
         unsafe {
             let menu = CreatePopupMenu()?;
             let mut open = Self { menu, ids: Vec::new(), shown: Vec::new() };
+            let mut position = 0;
+            for (id, row, text) in priced(view) {
+                let mark = marks.for_row(row, view);
+                let mut wide = wide(&text);
+                let item = MENUITEMINFOW {
+                    cbSize: size_of::<MENUITEMINFOW>() as u32,
+                    fMask: MIIM_ID | MIIM_FTYPE | MIIM_STRING | MIIM_BITMAP,
+                    fType: MFT_STRING,
+                    wID: id,
+                    dwTypeData: PWSTR(wide.as_mut_ptr()),
+                    hbmpItem: mark.unwrap_or_default(),
+                    ..Default::default()
+                };
+                InsertMenuItemW(menu, position, true, &item)?;
+                position += 1;
+                open.shown.push((id, text, mark));
+                if id == HOLDINGS {
+                    AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+                    position += 1;
+                }
+            }
             if view.watchlist.is_empty() {
                 AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, w!("在设置中添加自选"))?;
             } else {
-                for (index, (text, row)) in
-                    menu_text::rows(&view.rows).into_iter().zip(&view.rows).enumerate()
-                {
-                    let mark = marks.for_row(row, view);
-                    let mut wide = wide(&text);
-                    let item = MENUITEMINFOW {
-                        cbSize: size_of::<MENUITEMINFOW>() as u32,
-                        fMask: MIIM_ID | MIIM_FTYPE | MIIM_STRING | MIIM_BITMAP,
-                        fType: MFT_STRING,
-                        wID: FIRST_ROW + index as u32,
-                        dwTypeData: PWSTR(wide.as_mut_ptr()),
-                        hbmpItem: mark.unwrap_or_default(),
-                        ..Default::default()
-                    };
-                    InsertMenuItemW(menu, index as u32, true, &item)?;
-                    open.shown.push((text, mark));
-                }
                 open.ids = view.watchlist.iter().map(|instrument| instrument.id()).collect();
                 if !view.caption.is_empty() {
                     AppendMenuW(
@@ -98,18 +117,19 @@ impl Open {
     }
 
     /// Brings the open menu's rows up to date and repaints it. A changed
-    /// watchlist waits for the next time it opens.
+    /// watchlist, or holdings appearing or going, waits for the next time it
+    /// opens.
     pub fn update(&mut self, view: &View, marks: &mut Marks) {
         let ids: Vec<String> = view.watchlist.iter().map(|instrument| instrument.id()).collect();
-        if ids != self.ids {
+        let rows = priced(view);
+        let same_rows = rows.iter().map(|(id, ..)| *id).eq(self.shown.iter().map(|(id, ..)| *id));
+        if ids != self.ids || !same_rows {
             return;
         }
         let mut changed = false;
-        for (index, (text, row)) in
-            menu_text::rows(&view.rows).into_iter().zip(&view.rows).enumerate()
-        {
+        for (index, (id, row, text)) in rows.into_iter().enumerate() {
             let mark = marks.for_row(row, view);
-            if self.shown.get(index) == Some(&(text.clone(), mark)) {
+            if self.shown[index] == (id, text.clone(), mark) {
                 continue;
             }
             let mut wide = wide(&text);
@@ -121,10 +141,8 @@ impl Open {
                 ..Default::default()
             };
             // SAFETY: an item of our open menu; the string outlives the call.
-            if unsafe { SetMenuItemInfoW(self.menu, FIRST_ROW + index as u32, false, &item) }
-                .is_ok()
-            {
-                self.shown[index] = (text, mark);
+            if unsafe { SetMenuItemInfoW(self.menu, id, false, &item) }.is_ok() {
+                self.shown[index] = (id, text, mark);
                 changed = true;
             }
         }
@@ -139,6 +157,7 @@ impl Open {
     /// What the chosen item asks for; 0 is "nothing chosen".
     pub fn action(&self, command: u32) -> Option<Action> {
         match command {
+            HOLDINGS => Some(Action::Holdings),
             SETTINGS => Some(Action::Settings),
             UPDATE => Some(Action::Update),
             CHECK_UPDATE => Some(Action::CheckUpdate),

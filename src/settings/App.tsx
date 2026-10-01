@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, LoaderCircle, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, LoaderCircle, Search, X } from "lucide-react";
 import { cn } from "cn";
 
 import { Picker } from "@/components/Picker";
@@ -17,8 +17,10 @@ import {
   marketLabel,
   MAX_INSTRUMENTS,
   subscribe,
+  type ApiKey,
   type Candidate,
   type Exchange,
+  type ExchangeKey,
   type Instrument,
   type Longbridge,
   type LongbridgeKeys,
@@ -100,6 +102,8 @@ export default function App() {
             exchange={settings.exchange}
             onChange={(exchange) => void update({ ...settings, exchange })}
           />
+
+          <ApiKeysSection />
 
           <LongbridgeSection />
 
@@ -261,6 +265,152 @@ function ExchangeSection(props: { exchange: Exchange; onChange: (exchange: Excha
             <span>{current?.label}</span>
           </Picker>
         </div>
+      </Group>
+    </Section>
+  );
+}
+
+/** Where each exchange lets one create an API key. */
+const API_PAGES: Record<Exchange, string> = {
+  binance: "https://www.binance.com/zh-CN/my/settings/api-management",
+  bybit: "https://www.bybit.com/app/user/api-management",
+  okx: "https://www.okx.com/zh-hans/account/my-api",
+};
+
+const EMPTY_KEY: ApiKey = { key: "", secret: "", passphrase: "" };
+
+/** What each exchange's API page calls the parts of a key; OKX adds a passphrase. */
+function keyFields(exchange: Exchange): { field: keyof ApiKey; label: string; secret: boolean }[] {
+  const okx = exchange === "okx";
+  return [
+    { field: "key", label: "API Key", secret: false },
+    { field: "secret", label: okx ? "Secret Key" : "API Secret", secret: true },
+    ...(okx ? [{ field: "passphrase" as const, label: "Passphrase", secret: true }] : []),
+  ];
+}
+
+/** Read-only API keys, for holdings: one per exchange, checked when saved. */
+function ApiKeysSection() {
+  const [keys, setKeys] = useState<ExchangeKey[] | null>(null);
+  const [editing, setEditing] = useState<Exchange | null>(null);
+  const [form, setForm] = useState<ApiKey>(EMPTY_KEY);
+  const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useState<{ exchange: Exchange; message: string } | null>(null);
+
+  useEffect(() => {
+    api.getExchangeKeys().then(setKeys).catch(() => setKeys([]));
+  }, []);
+
+  const edit = (exchange: Exchange | null) => {
+    setEditing(exchange);
+    setForm(EMPTY_KEY);
+    setProblem(null);
+  };
+
+  const save = (exchange: Exchange, key: ApiKey | null) => {
+    setSaving(true);
+    setProblem(null);
+    api
+      .setExchangeKey(exchange, key)
+      .then((saved) => {
+        setKeys(saved);
+        edit(null);
+      })
+      .catch((e: unknown) => setProblem({ exchange, message: String(e) }))
+      .finally(() => setSaving(false));
+  };
+
+  if (!keys) return null;
+  const configured = keys.some((k) => k.key !== null);
+
+  return (
+    <Section
+      title="持仓"
+      footnote="填写只读 API Key 后，菜单里会显示总资产，持仓窗口列出现货、资金、理财和合约。创建时只勾选读取权限，能交易或提币的 Key 不会被接受。Key 只保存在这台电脑上。"
+    >
+      <Group>
+        {keys.map(({ exchange, key }) => {
+          const name = EXCHANGES.find((e) => e.value === exchange)?.label ?? exchange;
+          const open = editing === exchange;
+          const fields = keyFields(exchange);
+          const complete = fields.every(({ field }) => (form[field] ?? "").trim() !== "");
+          return (
+            <div key={exchange}>
+              <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
+                <span className="w-12 shrink-0">{name}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+                  {key ?? (open ? "" : "未填写")}
+                </span>
+                {!open && (
+                  <Button variant="ghost" size="sm" disabled={saving} onClick={() => edit(exchange)}>
+                    {key ? "更换" : "添加"}
+                  </Button>
+                )}
+                {key && !open && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="hover:text-destructive"
+                    disabled={saving}
+                    onClick={() => save(exchange, null)}
+                  >
+                    移除
+                  </Button>
+                )}
+              </div>
+              {open && (
+                <div className="space-y-2 px-3.5 pb-3">
+                  {fields.map(({ field, label, secret }) => (
+                    <label key={field} className="flex items-center gap-3">
+                      <span className="w-24 shrink-0 text-muted-foreground">{label}</span>
+                      <Input
+                        type={secret ? "password" : "text"}
+                        value={form[field] ?? ""}
+                        className="h-7 rounded-md font-mono text-xs"
+                        spellCheck={false}
+                        autoCorrect="off"
+                        disabled={saving}
+                        onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+                      />
+                    </label>
+                  ))}
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <a
+                      href={API_PAGES[exchange]}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mr-auto text-xs text-muted-foreground underline"
+                    >
+                      在{name}创建只读 API Key
+                    </a>
+                    <Button variant="ghost" size="sm" disabled={saving} onClick={() => edit(null)}>
+                      取消
+                    </Button>
+                    <Button size="sm" disabled={!complete || saving} onClick={() => save(exchange, form)}>
+                      {saving && <LoaderCircle className="animate-spin" />}
+                      {saving ? "正在验证" : "保存"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {problem?.exchange === exchange && (
+                <p className="mx-3.5 mb-3 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {problem.message}
+                </p>
+              )}
+            </div>
+          );
+        })}
+        {configured && (
+          <button
+            type="button"
+            className="flex h-10 w-full items-center justify-between px-3.5 text-left outline-none hover:bg-accent/50 focus-visible:bg-accent/50"
+            onClick={() => void api.openHoldings()}
+          >
+            查看持仓
+            <ChevronRight className="size-4 text-muted-foreground" />
+          </button>
+        )}
       </Group>
     </Section>
   );

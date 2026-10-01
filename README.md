@@ -27,6 +27,7 @@ Candlewick shows live crypto and stock prices in the macOS menu bar, or in the W
 - One pinned entry in the menu bar or taskbar, with its name and change if you like, and your whole watchlist in the dropdown
 - Up to 30 entries, crypto and stocks side by side: any spot pair on the chosen exchange, plus stocks by code (AAPL, 700, 600519)
 - Pick Binance, Bybit or OKX in the settings; switching exchanges takes the old exchange's pairs off the watchlist
+- With an exchange's read-only API key, the dropdown opens with your total holdings and their 24-hour change, and a holdings window lists spot, funding, earn and futures positions by exchange
 - A line or candlestick chart that updates with every trade, with intervals from 1 second to 1 day for crypto and 1 minute to 1 week for stocks. Drag to scroll back, pinch or scroll to zoom
 - The order book with buy and sell pressure, and a live list of recent trades
 - US pre-market, after-hours and overnight sessions
@@ -55,11 +56,21 @@ Stock prices need a Longbridge account with OpenAPI access.
 
 Candlewick keeps the keys on your computer only, and renews the access token before it expires.
 
+## Your holdings
+
+1. On the exchange's API management page, create an API key with read permission only: no trading, withdrawals or transfers. OKX also asks you to set a passphrase.
+2. Paste it into Settings → 持仓 (Holdings) and save. Candlewick first asks the exchange whether the key can only read, and won't keep one that can trade or withdraw.
+3. Your total holdings now head the dropdown. Click them for the holdings window.
+
+You can add keys for all three exchanges, whichever one the prices come from. Totals use each exchange's own USDT prices, with futures accounts at their margin balance (unrealized PnL included). The 24-hour change is what the last day's price moves made of what you hold now. OKX also shows your spot cost and unrealized PnL; Binance's and Bybit's APIs don't provide them.
+
+Holdings refresh every two minutes, every ten seconds while the holdings window is open, and when you open the dropdown.
+
 ## FAQ
 
 ### Do I need an account?
 
-Not for crypto. Stocks need your own Longbridge keys, which Candlewick only uses to read quotes. It never trades.
+Not for crypto prices. Stocks need your own Longbridge keys, and holdings an exchange's read-only API key. Candlewick only reads with them. It never trades.
 
 ### Does it work where the exchange's website is blocked?
 
@@ -67,11 +78,11 @@ It goes through your system proxy, and falls back to other hosts when the main o
 
 ### How much memory and CPU does it use?
 
-On a Mac, about 19 MB of memory and under 1% of one CPU core while prices stream. The chart and settings windows exist only while they are open.
+On a Mac, about 19 MB of memory and under 1% of one CPU core while prices stream. The chart, holdings and settings windows exist only while they are open.
 
 ### Does it collect any data?
 
-No. It talks to the exchange you picked and, once you add keys, to Longbridge. It also asks GitHub for new versions, unless you turn off automatic updates in the settings.
+No. It talks to the exchange you picked and, once you add keys, to Longbridge and the exchanges they belong to. It also asks GitHub for new versions, unless you turn off automatic updates in the settings.
 
 ### Is there an English interface, or a build for Intel Macs?
 
@@ -94,7 +105,8 @@ pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
 - `src-tauri/src/`: the Rust side, with what the bar shows, the windows and settings
 - `src-tauri/src/platform/`: the parts that differ between macOS and Windows
 - `src-tauri/src/market/`: market data behind one interface. The three exchanges share search, live streams and the order book in `crypto/` and only spell out what differs (`binance/`, `bybit.rs`, `okx.rs`); Longbridge lives in `longbridge/`. How to add a provider: [docs/market-data-providers.md](docs/market-data-providers.md)
-- `src/settings/` and `src/chart/`: the settings and chart windows, the chart built on [Liveline](https://github.com/benjitaylor/liveline)
+- `src-tauri/src/portfolio.rs` and each exchange's `account.rs`: holdings read with read-only API keys, valued in USDT
+- `src/settings/`, `src/chart/` and `src/holdings/`: the settings, chart and holdings windows, the chart built on [Liveline](https://github.com/benjitaylor/liveline)
 - `patches/liveline@0.0.7.patch`: dragging, zooming and the color setting for Liveline
 
 Built with [Tauri 2](https://tauri.app), Rust, React 19 and Tailwind CSS.

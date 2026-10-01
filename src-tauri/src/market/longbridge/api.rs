@@ -10,8 +10,7 @@ use std::{
 use ring::{digest, hmac};
 use serde::{Deserialize, de::DeserializeOwned};
 
-use super::clock;
-use crate::{credentials::LongbridgeKeys, http, market::Error, net};
+use crate::{calendar, credentials::LongbridgeKeys, http, market::Error, net};
 
 pub struct Hosts {
     pub http: &'static str,
@@ -63,7 +62,7 @@ pub async fn refresh_token(keys: &LongbridgeKeys, expires: i64) -> Result<String
     struct Token {
         token: String,
     }
-    let query = format!("expired_at={}", net::percent_encode(&clock::rfc3339(expires)));
+    let query = format!("expired_at={}", net::percent_encode(&calendar::rfc3339(expires)));
     let token: Token = get(keys, "/v1/token/refresh", &query).await?;
     Ok(token.token)
 }

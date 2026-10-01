@@ -609,6 +609,7 @@ impl Shell {
         if self.menu.is_some() {
             return None;
         }
+        bar::menu_opening(&self.app);
         let view = self.view.as_ref()?;
         // SAFETY: plain queries on our own window.
         let dpi = match unsafe { GetDpiForWindow(self.window) } {

@@ -8,10 +8,11 @@ use tokio::sync::oneshot;
 
 use crate::{
     bar,
-    credentials::{self, LongbridgeKeys},
+    credentials::{self, ApiKey, LongbridgeKeys},
     market::{self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, longbridge},
     model::{self, Instrument, Settings, Shared},
     platform,
+    portfolio::Portfolio,
     update::{self, UpdateView},
     window::{self, StatusView},
 };
@@ -184,6 +185,96 @@ pub fn set_longbridge(
 #[tauri::command]
 pub async fn check_longbridge() -> CmdResult<longbridge::Account> {
     Ok(longbridge::account().await?)
+}
+
+/// An exchange's API key as the settings window shows it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExchangeKey {
+    exchange: ProviderId,
+    /// The key's ends, enough to recognize it, when one is saved; the secrets
+    /// never leave.
+    key: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_exchange_keys(shared: State<'_, Shared>) -> Vec<ExchangeKey> {
+    let credentials = shared.credentials();
+    ProviderId::EXCHANGES
+        .map(|exchange| ExchangeKey {
+            exchange,
+            key: credentials.exchanges.get(&exchange).map(|key| masked(&key.key)),
+        })
+        .into()
+}
+
+/// Saves (or with `None`, removes) an exchange's API key, once the exchange
+/// confirms it works and can neither trade nor withdraw.
+#[tauri::command]
+pub async fn set_exchange_key(
+    app: AppHandle,
+    exchange: ProviderId,
+    key: Option<ApiKey>,
+) -> CmdResult<Vec<ExchangeKey>> {
+    if !exchange.is_exchange() {
+        return Err(CommandError::Invalid(format!("{}不使用 API Key", exchange.name())));
+    }
+    let key = key
+        .map(|key| {
+            let clean = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+            let passphrase = key.passphrase.as_deref().map(str::trim).unwrap_or_default();
+            let needs_passphrase = exchange == ProviderId::Okx;
+            let key = ApiKey {
+                key: clean(&key.key),
+                secret: clean(&key.secret),
+                passphrase: needs_passphrase.then(|| passphrase.to_owned()),
+            };
+            if key.key.is_empty()
+                || key.secret.is_empty()
+                || (needs_passphrase && passphrase.is_empty())
+            {
+                let fields = if needs_passphrase {
+                    "API Key、Secret 和 Passphrase"
+                } else {
+                    "API Key 和 Secret"
+                };
+                return Err(CommandError::Invalid(format!("请填写完整的 {fields}")));
+            }
+            Ok(key)
+        })
+        .transpose()?;
+    if let Some(key) = &key {
+        market::check_key(exchange, key).await?;
+    }
+    let shared = app.state::<Shared>();
+    let credentials = {
+        let mut stored = shared.credentials();
+        match key {
+            Some(key) => stored.exchanges.insert(exchange, key),
+            None => stored.exchanges.remove(&exchange),
+        };
+        credentials::save(&shared.credentials_path, &stored)?;
+        stored.clone()
+    };
+    shared.control.send_modify(|control| control.credentials = credentials);
+    Ok(get_exchange_keys(shared))
+}
+
+#[tauri::command]
+pub fn get_portfolio(shared: State<'_, Shared>) -> Portfolio {
+    Portfolio::of(&shared.model().accounts)
+}
+
+#[tauri::command]
+pub fn open_holdings(app: AppHandle) -> CmdResult<()> {
+    window::open_holdings(&app)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_settings(app: AppHandle) -> CmdResult<()> {
+    window::open_settings(&app)?;
+    Ok(())
 }
 
 /// `hk_abc1…wxyz`

@@ -17,7 +17,7 @@ use tauri::{
     ActivationPolicy, AppHandle, Wry,
     image::Image,
     menu::MenuEvent,
-    tray::{TrayIcon, TrayIconBuilder},
+    tray::{MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
 };
 use tray_icon::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem};
 
@@ -27,6 +27,7 @@ use crate::{
     model::{ColorScheme, Instrument},
 };
 
+const ID_HOLDINGS: &str = "holdings";
 const ID_SETTINGS: &str = "settings";
 const ID_UPDATE: &str = "update";
 const ID_CHECK_UPDATE: &str = "check-update";
@@ -48,15 +49,16 @@ struct Ui {
     menu: Option<Retained<NSMenu>>,
     status_item: Option<Retained<NSStatusItem>>,
     fonts: Fonts,
-    /// The watchlist and the offered update the current menu was built for;
-    /// a change to either rebuilds the menu. `None` until the first build, so
-    /// even an empty list gets a menu.
-    layout: Option<(Vec<Instrument>, Option<String>)>,
+    /// What the current menu was built for; a change rebuilds it. `None`
+    /// until the first build, so even an empty list gets a menu.
+    layout: Option<Layout>,
     /// Column widths in points. They only grow while the layout stays the
     /// same, so an open menu never shifts as prices tick.
     columns: Columns,
     tabs: Retained<NSMutableParagraphStyle>,
     scheme: ColorScheme,
+    /// As applied to the menu: the holdings row, then the watchlist's.
+    holdings: Option<Row>,
     rows: Vec<Row>,
     /// `None` until applied to the current menu.
     caption: Option<String>,
@@ -69,6 +71,23 @@ struct Fonts {
     /// The menu font with tabular digits, so prices line up digit by digit.
     row: Retained<NSFont>,
     caption: Retained<NSFont>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Layout {
+    watchlist: Vec<Instrument>,
+    /// The offered update.
+    update: Option<String>,
+    /// A holdings row leads the menu, with a separator after it.
+    holdings: bool,
+}
+
+impl Layout {
+    /// The menu index of watchlist row `index`; the status caption follows
+    /// the last row.
+    fn row(&self, index: usize) -> isize {
+        (index + if self.holdings { 2 } else { 0 }) as isize
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -88,6 +107,12 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("Candlewick")
         .show_menu_on_left_click(true)
         .on_menu_event(on_menu_event)
+        // The dropdown opens on the press.
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button_state: MouseButtonState::Down, .. } = event {
+                bar::menu_opening(tray.app_handle());
+            }
+        })
         .build(app)?;
 
     // This callback runs inline on the main thread. Both handles refer to
@@ -110,6 +135,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             columns: Columns::default(),
             tabs: NSMutableParagraphStyle::new(),
             scheme: ColorScheme::default(),
+            holdings: None,
             rows: Vec::new(),
             caption: None,
             ticker: None,
@@ -142,22 +168,33 @@ fn render(app: &AppHandle) {
 impl Ui {
     fn apply(&mut self, view: View) -> tauri::Result<()> {
         let mtm = MainThreadMarker::new().expect("tray renders on the main thread");
-        let layout = (view.watchlist, view.update);
+        let layout = Layout {
+            watchlist: view.watchlist,
+            update: view.update,
+            holdings: view.holdings.is_some(),
+        };
         if self.layout.as_ref() != Some(&layout) {
-            log::debug!("menu rebuilt for {} instruments", layout.0.len());
-            let menu = build_menu(&layout.0, layout.1.as_deref())?;
+            log::debug!("menu rebuilt for {} instruments", layout.watchlist.len());
+            let menu = build_menu(&layout)?;
             // SAFETY: muda returns its live NSMenu on macOS. Retain it on
             // the main thread before transferring the menu to tray-icon.
             self.menu = unsafe { Retained::retain(menu.ns_menu().cast::<NSMenu>()) };
             self.native_tray.set_menu(Some(Box::new(menu)));
             self.layout = Some(layout);
             self.columns = Columns::default();
+            self.holdings = None;
             self.rows.clear();
             self.caption = None;
         }
         let menu = self.menu.clone().expect("the tray menu has been built");
+        let layout = self.layout.clone().expect("the tray menu has been built");
 
         let mut columns = self.columns;
+        if let Some(row) = &view.holdings
+            && self.holdings.as_ref() != Some(row)
+        {
+            columns = columns.fit(row, &self.fonts.row);
+        }
         for (index, row) in view.rows.iter().enumerate() {
             if self.rows.get(index) != Some(row) {
                 columns = columns.fit(row, &self.fonts.row);
@@ -171,21 +208,28 @@ impl Ui {
             restyle_all = true;
         }
         self.scheme = view.scheme;
+        if let Some(row) = &view.holdings
+            && (restyle_all || self.holdings.as_ref() != Some(row))
+            && let Some(item) = menu.itemAtIndex(0)
+        {
+            item.setAttributedTitle(Some(&self.styled_row(row)));
+        }
+        self.holdings = view.holdings;
         for (index, row) in view.rows.iter().enumerate() {
             if !restyle_all && self.rows.get(index) == Some(row) {
                 continue;
             }
-            if let Some(item) = menu.itemAtIndex(index as isize) {
+            if let Some(item) = menu.itemAtIndex(layout.row(index)) {
                 log::trace!("row {index}: {row:?}");
                 item.setAttributedTitle(Some(&self.styled_row(row)));
             }
         }
         self.rows = view.rows;
 
-        let count = self.layout.as_ref().map_or(0, |(watchlist, _)| watchlist.len());
+        let count = layout.watchlist.len();
         if count > 0 && self.caption.as_ref() != Some(&view.caption) {
             log::debug!("caption: {:?}", view.caption);
-            set_caption(&menu, count, &view.caption, &self.fonts.caption);
+            set_caption(&menu, layout.row(count), &view.caption, &self.fonts.caption);
             self.caption = Some(view.caption);
         }
 
@@ -330,8 +374,8 @@ fn tab_stops(columns: Columns, font_size: f64) -> Retained<NSMutableParagraphSty
 
 /// A small dimmed line under the watchlist rows, shown only when a feed is not
 /// live (connecting, retrying, paused); hidden items take no space.
-fn set_caption(menu: &NSMenu, index: usize, text: &str, font: &NSFont) {
-    let Some(item) = menu.itemAtIndex(index as isize) else {
+fn set_caption(menu: &NSMenu, index: isize, text: &str, font: &NSFont) {
+    let Some(item) = menu.itemAtIndex(index) else {
         return;
     };
     item.setHidden(text.is_empty());
@@ -374,8 +418,14 @@ fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-fn build_menu(watchlist: &[Instrument], update: Option<&str>) -> tauri::Result<Menu> {
+fn build_menu(layout: &Layout) -> tauri::Result<Menu> {
+    let Layout { watchlist, update, holdings } = layout;
     let menu = Menu::new();
+    if *holdings {
+        // Styled by `apply`, like the rows.
+        menu.append(&MenuItem::with_id(ID_HOLDINGS, "总资产", true, None))?;
+        menu.append(&PredefinedMenuItem::separator())?;
+    }
     if watchlist.is_empty() {
         menu.append(&MenuItem::with_id("empty", "在设置中添加自选", false, None))?;
     } else {
@@ -402,6 +452,7 @@ fn build_menu(watchlist: &[Instrument], update: Option<&str>) -> tauri::Result<M
 
 fn on_menu_event(app: &AppHandle, event: MenuEvent) {
     let action = match event.id().as_ref() {
+        ID_HOLDINGS => Action::Holdings,
         ID_SETTINGS => Action::Settings,
         ID_UPDATE => Action::Update,
         ID_CHECK_UPDATE => Action::CheckUpdate,

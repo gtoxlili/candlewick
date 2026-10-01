@@ -36,6 +36,7 @@ on:
       - "src-tauri/**"
       - "index.html"
       - "chart.html"
+      - "holdings.html"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -59,7 +60,7 @@ env:
   # What counts as the app when deciding whether to release and what goes
   # into the notes. The workflow itself is not in it: changing only the
   # workflow builds, and releases nothing.
-  APP_PATHS: src src-tauri index.html chart.html package.json pnpm-lock.yaml pnpm-workspace.yaml patches tsconfig.json vite.config.ts
+  APP_PATHS: src src-tauri index.html chart.html holdings.html package.json pnpm-lock.yaml pnpm-workspace.yaml patches tsconfig.json vite.config.ts
 
 jobs:
   # Works out whether this push is a release and which version it is, and

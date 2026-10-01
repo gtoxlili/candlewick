@@ -18,6 +18,7 @@ use crate::{
     credentials::Credentials,
     market::{self, Feeds, ProviderId},
     net::Route,
+    portfolio,
 };
 
 pub const MAX_INSTRUMENTS: usize = 30;
@@ -317,6 +318,11 @@ pub struct FeedControl {
     /// Bit set of reasons the machine is not being looked at (see `platform::Pause`).
     pub paused: u8,
     pub credentials: Credentials,
+    /// The holdings window is open: holdings refresh often.
+    pub holdings_open: bool,
+    /// Goes up when someone is about to look at the holdings (the dropdown
+    /// opened), so old ones refresh.
+    pub holdings_wanted: u32,
 }
 
 pub struct Model {
@@ -328,6 +334,8 @@ pub struct Model {
     /// reads it on load, since a switch requested while it was still loading
     /// can't reach it as an event.
     pub chart: Option<String>,
+    /// Holdings of each exchange with an API key.
+    pub accounts: BTreeMap<ProviderId, portfolio::Account>,
 }
 
 impl Model {
@@ -358,8 +366,8 @@ impl Shared {
     ) -> (Self, watch::Receiver<FeedControl>) {
         let (control, rx) = watch::channel(FeedControl {
             symbols: settings.symbols(),
-            paused: 0,
             credentials: credentials.clone(),
+            ..FeedControl::default()
         });
         let shared = Self {
             model: Mutex::new(Model {
@@ -367,6 +375,7 @@ impl Shared {
                 quotes: HashMap::new(),
                 feeds: Feeds::new(),
                 chart: None,
+                accounts: BTreeMap::new(),
             }),
             control,
             render_pending: AtomicBool::new(false),

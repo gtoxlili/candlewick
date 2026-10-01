@@ -18,13 +18,16 @@ use crate::{
     market::ProviderId,
     model::{Model, Settings, Shared, Status},
     net, platform,
+    portfolio::Portfolio,
 };
 
 pub const SETTINGS: &str = "settings";
 pub const CHART: &str = "chart";
+pub const HOLDINGS: &str = "holdings";
 pub const STATUS_EVENT: &str = "status";
 pub const SETTINGS_EVENT: &str = "settings";
 pub const CHART_INSTRUMENT_EVENT: &str = "chart-instrument";
+pub const PORTFOLIO_EVENT: &str = "portfolio";
 
 /// The feed status line at the bottom of the settings window.
 #[derive(Debug, Clone, Serialize)]
@@ -91,6 +94,30 @@ pub fn open_settings(app: &AppHandle) -> tauri::Result<()> {
     )
 }
 
+/// Opens the holdings window; while it is open, holdings refresh often.
+pub fn open_holdings(app: &AppHandle) -> tauri::Result<()> {
+    set_holdings_open(app, true);
+    open(
+        app,
+        Spec {
+            label: HOLDINGS,
+            url: "holdings.html".to_owned(),
+            title: "Candlewick 持仓".to_owned(),
+            size: (760.0, 620.0),
+            min_size: (560.0, 420.0),
+            resizable: true,
+        },
+    )
+}
+
+fn set_holdings_open(app: &AppHandle, open: bool) {
+    app.state::<Shared>().control.send_if_modified(|control| {
+        let changed = control.holdings_open != open;
+        control.holdings_open = open;
+        changed
+    });
+}
+
 /// Opens the chart for the instrument `id`, or switches the open chart window to it.
 pub fn open_chart(app: &AppHandle, id: &str) -> tauri::Result<()> {
     let Some(title) = retarget_chart(app, id)? else {
@@ -140,8 +167,10 @@ fn retarget_chart(app: &AppHandle, id: &str) -> tauri::Result<Option<String>> {
 /// notch or a crowded menu bar, the tray icon in the taskbar's overflow, so
 /// this is the way back in.
 pub fn reopen(app: &AppHandle) -> tauri::Result<()> {
-    let open: Vec<WebviewWindow> =
-        [CHART, SETTINGS].into_iter().filter_map(|label| app.get_webview_window(label)).collect();
+    let open: Vec<WebviewWindow> = [CHART, HOLDINGS, SETTINGS]
+        .into_iter()
+        .filter_map(|label| app.get_webview_window(label))
+        .collect();
     let Some(first) = open.first() else {
         return open_settings(app);
     };
@@ -272,6 +301,9 @@ pub fn on_destroyed(app: &AppHandle, label: &str) {
             provider.provider().drop_search_cache();
         }
     }
+    if label == HOLDINGS {
+        set_holdings_open(app, false);
+    }
     if app.webview_windows().keys().any(|other| other != label) {
         return;
     }
@@ -284,9 +316,15 @@ pub fn emit_status(app: &AppHandle, status: &StatusView) {
     }
 }
 
+pub fn emit_portfolio(app: &AppHandle, portfolio: &Portfolio) {
+    if app.get_webview_window(HOLDINGS).is_some() {
+        let _ = app.emit_to(HOLDINGS, PORTFOLIO_EVENT, portfolio);
+    }
+}
+
 /// Keeps open windows in step with saved settings (watchlist, colors).
 pub fn emit_settings(app: &AppHandle, settings: &Settings) {
-    for label in [SETTINGS, CHART] {
+    for label in [SETTINGS, CHART, HOLDINGS] {
         if app.get_webview_window(label).is_some() {
             let _ = app.emit_to(label, SETTINGS_EVENT, settings);
         }

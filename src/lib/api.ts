@@ -203,6 +203,89 @@ export interface LongbridgeKeys {
   accessToken: string;
 }
 
+/** A read-only API key, as the user enters it. */
+export interface ApiKey {
+  key: string;
+  secret: string;
+  /** OKX's. */
+  passphrase?: string;
+}
+
+/** An exchange's saved key, as the settings window shows it. */
+export interface ExchangeKey {
+  exchange: Exchange;
+  /** The key's ends, when one is saved. */
+  key: string | null;
+}
+
+export type Wallet = "spot" | "trading" | "funding" | "earn" | "usdFutures" | "coinFutures";
+
+/** An asset across an exchange's wallets; amounts in USDT. */
+export interface HeldAsset {
+  asset: string;
+  amount: number;
+  /** null without a USDT pair or the exchange's own value. */
+  price: number | null;
+  value: number | null;
+  /** The 24h price change, in percent. */
+  changePct: number | null;
+  /** Where it sits, largest first. */
+  wallets: { label: string; amount: number }[];
+  /** Average cost in USD, where the exchange keeps one (OKX). */
+  cost: number | null;
+  pnl: number | null;
+}
+
+/** An open derivatives position. */
+export interface HeldPosition {
+  symbol: string;
+  /** "U 本位永续", "币本位交割", "期权"… */
+  kind: string;
+  long: boolean;
+  size: number;
+  /** "BTC", or "张" for contracts. */
+  sizeUnit: string;
+  entry: number;
+  mark: number;
+  liquidation: number | null;
+  leverage: number | null;
+  isolated: boolean;
+  /** Unrealized, in pnlAsset. */
+  pnl: number;
+  pnlAsset: string;
+  pnlUsd: number | null;
+}
+
+/** One exchange's holdings, in USDT. */
+export interface Holdings {
+  total: number;
+  /** What the 24h price moves made of today's holdings. */
+  change: number;
+  wallets: { wallet: Wallet; label: string; value: number }[];
+  /** Most valuable first. */
+  assets: HeldAsset[];
+  positions: HeldPosition[];
+}
+
+export interface ExchangeAccount {
+  exchange: Exchange;
+  name: string;
+  /** The last good refresh; null before the first. */
+  holdings: Holdings | null;
+  /** Epoch milliseconds. */
+  updated: number | null;
+  /** Why the last refresh failed. */
+  error: string | null;
+}
+
+/** Every exchange with a key. */
+export interface Portfolio {
+  accounts: ExchangeAccount[];
+  /** USDT, over the accounts refreshed at least once. */
+  total: number | null;
+  change: number | null;
+}
+
 export const MAX_INSTRUMENTS = 30;
 
 export const api = {
@@ -242,6 +325,16 @@ export const api = {
   setLongbridge: (keys: LongbridgeKeys | null) => invoke<Longbridge>("set_longbridge", { keys }),
   /** Logs in with the saved credentials and reports what the account may see. */
   checkLongbridge: () => invoke<LongbridgeAccount>("check_longbridge"),
+  getExchangeKeys: () => invoke<ExchangeKey[]>("get_exchange_keys"),
+  /** Checks the key with its exchange (it must be read-only) and saves it; null removes it. */
+  setExchangeKey: (exchange: Exchange, key: ApiKey | null) =>
+    invoke<ExchangeKey[]>("set_exchange_key", { exchange, key }),
+  getPortfolio: () => invoke<Portfolio>("get_portfolio"),
+  openHoldings: () => invoke<void>("open_holdings"),
+  openSettings: () => invoke<void>("open_settings"),
+  /** Fresh holdings, while the holdings window is open. */
+  onPortfolio: (handler: (portfolio: Portfolio) => void): Promise<UnlistenFn> =>
+    listen<Portfolio>("portfolio", (event) => handler(event.payload)),
   onStatus: (handler: (status: Status) => void): Promise<UnlistenFn> =>
     listen<Status>("status", (event) => handler(event.payload)),
   onUpdate: (handler: (update: Update) => void): Promise<UnlistenFn> =>

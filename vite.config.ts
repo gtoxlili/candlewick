@@ -51,6 +51,7 @@ export default defineConfig({
       input: {
         settings: path.resolve(import.meta.dirname, "index.html"),
         chart: path.resolve(import.meta.dirname, "chart.html"),
+        holdings: path.resolve(import.meta.dirname, "holdings.html"),
       },
     },
   },
