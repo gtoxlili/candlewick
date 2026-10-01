@@ -1,0 +1,3 @@
+# Embedded as text into the binary and written out to agents' skill folders:
+# the same bytes on every platform, whatever the checkout's line endings.
+src-tauri/src/agent/SKILL.md text eol=lf
