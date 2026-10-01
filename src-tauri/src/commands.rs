@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager, State, WebviewWindow, ipc::Channel};
 use tokio::sync::oneshot;
 
 use crate::{
+    agent::{self, Agent, AgentStatus},
     bar,
     credentials::{self, ApiKey, LongbridgeKeys},
     market::{self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, longbridge},
@@ -54,10 +55,13 @@ pub fn save_settings(
 ) -> CmdResult<Settings> {
     let settings = settings.validated().map_err(CommandError::Invalid)?;
     model::save(&shared.settings_path, &settings)?;
-    {
+    let agent_access_was = {
         let mut model = shared.model();
         model.quotes.retain(|id, _| settings.instrument(id).is_some());
-        model.settings = settings.clone();
+        std::mem::replace(&mut model.settings, settings.clone()).agent_access
+    };
+    if settings.agent_access != agent_access_was {
+        agent::sync(&app);
     }
     let symbols = settings.symbols();
     shared.control.send_if_modified(|control| {
@@ -69,6 +73,12 @@ pub fn save_settings(
     window::emit_settings(&app, &settings);
     window::sync_chart(&app);
     Ok(settings)
+}
+
+/// Whether agents have the skill, as the settings window shows it.
+#[tauri::command]
+pub fn get_agent(agent: State<'_, Agent>) -> AgentStatus {
+    agent.status()
 }
 
 #[tauri::command]
@@ -115,14 +125,7 @@ pub fn window_ready(window: WebviewWindow) -> CmdResult<()> {
 #[tauri::command]
 pub async fn search_instruments(app: AppHandle, query: String) -> Search {
     let exchange = app.state::<Shared>().model().settings.exchange;
-    let searches =
-        [exchange, ProviderId::Longbridge].map(|provider| provider.provider().search(&query));
-    let mut all = Search::default();
-    for found in futures_util::future::join_all(searches).await {
-        all.candidates.extend(found.candidates);
-        all.notes.extend(found.notes);
-    }
-    all
+    market::search(exchange, &query).await
 }
 
 /// The Longbridge credentials as the settings window shows them.

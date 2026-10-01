@@ -81,6 +81,18 @@ impl ProviderId {
     }
 }
 
+/// Instruments matching `query`: pairs on `exchange`, and stocks.
+pub async fn search(exchange: ProviderId, query: &str) -> Search {
+    let searches =
+        [exchange, ProviderId::Longbridge].map(|provider| provider.provider().search(query));
+    let mut all = Search::default();
+    for found in futures_util::future::join_all(searches).await {
+        all.candidates.extend(found.candidates);
+        all.notes.extend(found.notes);
+    }
+    all
+}
+
 /// Keeps the holdings of each exchange with an API key current, for as
 /// long as the app runs.
 pub fn watch_accounts(app: &AppHandle, control: &watch::Receiver<FeedControl>) {

@@ -9,6 +9,7 @@
 // A release build is a GUI app on Windows: no console window beside it.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod agent;
 mod bar;
 mod calendar;
 mod commands;
@@ -72,6 +73,7 @@ fn main() {
             commands::get_portfolio,
             commands::open_holdings,
             commands::open_settings,
+            commands::get_agent,
         ])
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
@@ -84,6 +86,8 @@ fn main() {
                 credentials_path,
             );
             app.manage(shared);
+            app.manage(agent::Agent::default());
+            agent::sync(app.handle());
 
             // Before the bar: Windows reports the display's state as soon as
             // the bar's thread asks for it.

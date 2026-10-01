@@ -3,7 +3,10 @@
 //! the exchange's own prices. `market::crypto::account` fetches them; this is
 //! what they are worth, as the menu bar's total and the holdings window show it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use serde::Serialize;
 
@@ -242,6 +245,11 @@ pub fn value(
     }
 }
 
+/// Epoch milliseconds, as holdings carry times.
+pub fn now_ms() -> f64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64)
+}
+
 /// `(last − open) / open` in percent, when there is an `open`.
 pub fn pct(last: f64, open: f64) -> Option<f64> {
     (open > 0.0).then(|| (last - open) / open * 100.0)
@@ -259,6 +267,9 @@ pub struct Account {
     pub updated: Option<f64>,
     /// Why the last refresh failed, if it did.
     pub error: Option<String>,
+    /// When the last refresh, good or not, finished.
+    #[serde(skip)]
+    pub checked: Option<f64>,
 }
 
 /// Every exchange with a key, as the holdings window shows them.
@@ -380,6 +391,7 @@ mod tests {
             }),
             updated: None,
             error: None,
+            checked: None,
         };
         let accounts = [
             (ProviderId::Binance, account(ProviderId::Binance, Some((110.0, 10.0)))),

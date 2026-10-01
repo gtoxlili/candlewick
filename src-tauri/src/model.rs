@@ -127,6 +127,8 @@ pub struct Settings {
     pub color_scheme: ColorScheme,
     /// Check for, download and apply updates on its own (`update.rs`).
     pub auto_update: bool,
+    /// AI agents may read the app's data (`agent`).
+    pub agent_access: bool,
 }
 
 impl Default for Settings {
@@ -142,6 +144,7 @@ impl Default for Settings {
             show_change: false,
             color_scheme: ColorScheme::GreenUp,
             auto_update: true,
+            agent_access: false,
         }
     }
 }

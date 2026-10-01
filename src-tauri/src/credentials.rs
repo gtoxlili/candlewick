@@ -76,14 +76,20 @@ pub fn load(path: &Path) -> Credentials {
     }
 }
 
-/// Writes through a temp file created with mode 0600, so the secrets are
-/// never readable by other users, not even halfway. On Windows the user's
-/// profile folder is theirs alone already.
 pub fn save(path: &Path, credentials: &Credentials) -> io::Result<()> {
+    write_private(path, &serde_json::to_vec_pretty(credentials)?)
+}
+
+/// Writes through a temp file created with mode 0600, so a secret is never
+/// readable by other users, not even halfway. On Windows the user's profile
+/// folder is theirs alone already.
+pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("json.tmp");
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
     // A leftover would keep its own permissions.
     let _ = fs::remove_file(&tmp);
     let mut options = fs::OpenOptions::new();
@@ -91,7 +97,7 @@ pub fn save(path: &Path, credentials: &Credentials) -> io::Result<()> {
     #[cfg(unix)]
     options.mode(0o600);
     let mut file = options.open(&tmp)?;
-    file.write_all(&serde_json::to_vec_pretty(credentials)?)?;
+    file.write_all(bytes)?;
     drop(file);
     fs::rename(&tmp, path)
 }

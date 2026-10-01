@@ -64,6 +64,17 @@ export interface Settings {
   colorScheme: ColorScheme;
   /** Check for, download and apply updates on its own. */
   autoUpdate: boolean;
+  /** AI agents may read the app's data through its local API and skill. */
+  agentAccess: boolean;
+}
+
+/** Where the skill went, while AI access is on. */
+export interface AgentStatus {
+  /** Access has been turned on (the switch may lead it by a moment). */
+  on: boolean;
+  /** The agents that have it: "Claude Code", "Codex", "OpenCode". */
+  agents: string[];
+  error: string | null;
 }
 
 /** What the updater is doing (update.rs). */
@@ -323,6 +334,9 @@ export const api = {
   setLongbridge: (keys: LongbridgeKeys | null) => invoke<Longbridge>("set_longbridge", { keys }),
   /** Logs in with the saved credentials and reports what the account may see. */
   checkLongbridge: () => invoke<LongbridgeAccount>("check_longbridge"),
+  getAgent: () => invoke<AgentStatus>("get_agent"),
+  onAgent: (handler: (status: AgentStatus) => void): Promise<UnlistenFn> =>
+    listen<AgentStatus>("agent", (event) => handler(event.payload)),
   getExchangeKeys: () => invoke<ExchangeKey[]>("get_exchange_keys"),
   /** Checks with its exchange that the key works and saves it; null removes it. */
   setExchangeKey: (exchange: Exchange, key: ApiKey | null) =>

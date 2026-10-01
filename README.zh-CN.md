@@ -29,6 +29,7 @@
 - 股票：美股（含盘前、盘后、夜盘）、港股、A 股，按代码添加
 - 行情图随每笔成交跳动，带盘口和最近成交
 - 填上交易所的 API Key，就能看总资产和各账户持仓
+- 打开「AI 助手接入」，Claude Code、Codex 和 OpenCode 就能读取你的行情和持仓，陪你分析
 - 红涨绿跌可选，开机启动，自动更新
 
 ## 安装
@@ -55,7 +56,7 @@
 
 **占用多少资源？** 在 Mac 上约 19 MB 内存，CPU 不到单核的 1%。
 
-**会收集数据吗？** 不会。它只连你用到的交易所和长桥，以及 GitHub（检查更新，可在设置里关掉）。凭证和 Key 只保存在本机，Candlewick 从不下单。
+**会收集数据吗？** 不会。它只连你用到的交易所和长桥，以及 GitHub（检查更新，可在设置里关掉）。凭证和 Key 只保存在本机，Candlewick 从不下单。打开「AI 助手接入」后，本机的 AI 助手能读取数据，别的电脑和网页都读不到。
 
 **有英文界面或 Intel 版本吗？** 暂时没有。
 
@@ -77,6 +78,7 @@ Windows 版是怎么实现的，见 [docs/windows.md](docs/windows.md)。main �
 - `src-tauri/src/platform/`：macOS 和 Windows 之间不同的部分
 - `src-tauri/src/market/`：行情与持仓，各数据源的实现。接入说明见 [docs/market-data-providers.md](docs/market-data-providers.md)
 - `src-tauri/src/portfolio.rs`：持仓估值
+- `src-tauri/src/agent/`：AI 助手接入，本机只读接口和 skill，见 [docs/agent-access.md](docs/agent-access.md)
 - `src/settings/`、`src/chart/` 与 `src/holdings/`：设置、行情和持仓窗口，图表基于 [Liveline](https://github.com/benjitaylor/liveline)
 - `patches/liveline@0.0.7.patch`：给 Liveline 加上拖动、缩放和涨跌配色
 

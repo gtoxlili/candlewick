@@ -29,7 +29,7 @@ use crate::{
     http,
     market::{Error, ProviderId},
     model::{FeedControl, Shared},
-    portfolio::{self, Balance, Position, Price},
+    portfolio::{self, Balance, Position, Price, now_ms},
     window,
 };
 
@@ -156,6 +156,7 @@ async fn refresh<E: Account>(app: &AppHandle, key: &ApiKey, kept: &mut Kept) {
                 let account = accounts.entry(E::ID).or_insert_with(|| empty(E::ID));
                 let changed = account.error.as_ref() != Some(&error);
                 account.error = Some(error);
+                account.checked = Some(now_ms());
                 changed
             });
             return;
@@ -166,12 +167,12 @@ async fn refresh<E: Account>(app: &AppHandle, key: &ApiKey, kept: &mut Kept) {
     }
     let prices = prices::<E>(&balances, &positions, &mut kept.unlisted).await;
     let holdings = portfolio::value(&balances, &positions, &prices);
-    let updated =
-        SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64);
+    let updated = now_ms();
     portfolio_changed(app, |accounts| {
         let account = accounts.entry(E::ID).or_insert_with(|| empty(E::ID));
         account.holdings = Some(holdings);
         account.updated = Some(updated);
+        account.checked = Some(updated);
         account.error = None;
         true
     });
@@ -184,6 +185,7 @@ fn empty(exchange: ProviderId) -> portfolio::Account {
         holdings: None,
         updated: None,
         error: None,
+        checked: None,
     }
 }
 

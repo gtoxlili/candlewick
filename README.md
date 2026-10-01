@@ -29,6 +29,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed. U
 - Stocks: US (including pre-market, after-hours and overnight), Hong Kong and China A-shares, by code
 - A chart that moves with every trade, with the order book and recent trades
 - With an exchange's API key, your total holdings and every account's positions
+- Turn on AI access and Claude Code, Codex and OpenCode can read your quotes and holdings to think them through with you
 - Red-up or green-up colors, launch at login, automatic updates
 
 ## Install
@@ -55,7 +56,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed. U
 
 **How much does it use?** About 19 MB of memory and under 1% of one CPU core on a Mac.
 
-**Does it collect any data?** No. It only talks to the exchanges and Longbridge you use, and to GitHub for updates (you can turn that off in the settings). Keys stay on your computer, and Candlewick never trades.
+**Does it collect any data?** No. It only talks to the exchanges and Longbridge you use, and to GitHub for updates (you can turn that off in the settings). Keys stay on your computer, and Candlewick never trades. With AI access on, AI agents on your computer can read its data; other computers and web pages can't.
 
 **Is there an English interface, or a build for Intel Macs?** Not yet.
 
@@ -77,6 +78,7 @@ pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
 - `src-tauri/src/platform/`: the parts that differ between macOS and Windows
 - `src-tauri/src/market/`: prices and holdings, one implementation per source. How to add one: [docs/market-data-providers.md](docs/market-data-providers.md)
 - `src-tauri/src/portfolio.rs`: what holdings are worth
+- `src-tauri/src/agent/`: AI access, a local read-only API and its skill; see [docs/agent-access.md](docs/agent-access.md)
 - `src/settings/`, `src/chart/` and `src/holdings/`: the settings, chart and holdings windows, the chart built on [Liveline](https://github.com/benjitaylor/liveline)
 - `patches/liveline@0.0.7.patch`: dragging, zooming and the color setting for Liveline
 

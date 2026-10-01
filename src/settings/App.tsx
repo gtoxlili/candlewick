@@ -20,6 +20,7 @@ import {
   marketLabel,
   MAX_INSTRUMENTS,
   subscribe,
+  type AgentStatus,
   type ApiKey,
   type Candidate,
   type Exchange,
@@ -144,6 +145,12 @@ export default function App() {
                 label="自动更新"
                 checked={settings.autoUpdate}
                 onChange={(autoUpdate) => void update({ ...settings, autoUpdate })}
+              />
+              <SwitchRow
+                label="AI 助手接入"
+                detail={settings.agentAccess && <AgentNote />}
+                checked={settings.agentAccess}
+                onChange={(agentAccess) => void update({ ...settings, agentAccess })}
               />
             </Group>
           </Section>
@@ -428,6 +435,37 @@ function Group({ children }: { children: ReactNode }) {
   return <div className="divide-y rounded-xl border bg-card">{children}</div>;
 }
 
+/** Which agents can read the app's data now. */
+function AgentNote() {
+  const [status, setStatus] = useState<AgentStatus | null>(null);
+
+  useEffect(() => {
+    // An event is always newer than the fetch.
+    let gotEvent = false;
+    const stop = subscribe(
+      api.onAgent((next) => {
+        gotEvent = true;
+        setStatus(next);
+      }),
+    );
+    api
+      .getAgent()
+      .then((found) => {
+        if (!gotEvent) setStatus(found);
+      })
+      .catch(() => {});
+    return stop;
+  }, []);
+
+  if (!status?.on) return null;
+  const text = status.error
+    ? status.error
+    : status.agents.length
+      ? `${status.agents.join("、")} 可以读取行情和持仓`
+      : "没有找到 Claude Code、Codex 或 OpenCode";
+  return <p className={cn("text-xs", status.error ? "text-destructive" : "text-muted-foreground")}>{text}</p>;
+}
+
 /** One line of a credentials form. */
 function CredentialField(props: {
   label: string;
@@ -470,6 +508,8 @@ function Problem(props: { className?: string; children: ReactNode }) {
 
 function SwitchRow(props: {
   label: string;
+  /** Under the label. */
+  detail?: ReactNode;
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
@@ -477,9 +517,12 @@ function SwitchRow(props: {
   const id = useId();
   return (
     <div className="flex min-h-10 items-center justify-between gap-4 px-3.5 py-2">
-      <Label htmlFor={id} className="font-normal">
-        {props.label}
-      </Label>
+      <div className="space-y-0.5">
+        <Label htmlFor={id} className="font-normal">
+          {props.label}
+        </Label>
+        {props.detail}
+      </div>
       <Switch
         id={id}
         checked={props.checked}
