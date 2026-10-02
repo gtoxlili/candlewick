@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import HoldingsApp from "./HoldingsApp";
+import { setupI18n } from "@/lib/i18n";
 import { setupPlatform } from "@/lib/platform";
 import "../index.css";
 
@@ -11,6 +12,7 @@ if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
 }
 
 setupPlatform();
+await setupI18n();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

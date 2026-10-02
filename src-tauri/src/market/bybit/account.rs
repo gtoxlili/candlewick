@@ -15,7 +15,7 @@ use crate::{
             account::{self, Account, Clock},
         },
     },
-    portfolio::{Balance, Position, Price, Wallet},
+    portfolio::{Balance, Position, PositionKind, Price, Wallet},
     sign,
 };
 
@@ -209,11 +209,11 @@ impl RawPosition {
         let (kind, size_unit, pnl_asset, exposure) = match category {
             "inverse" => {
                 let base = self.symbol.split("USD").next().unwrap_or_default().to_owned();
-                (Kind::Inverse, "USD".to_owned(), base, size)
+                (Kind::Inverse, Some("USD".to_owned()), base, size)
             }
             "option" => {
                 let base = self.symbol.split('-').next().unwrap_or_default().to_owned();
-                (Kind::Option, base, "USDC".to_owned(), 0.0)
+                (Kind::Option, Some(base), "USDC".to_owned(), 0.0)
             }
             _ => {
                 let settle = if self.symbol.contains("USDT") { "USDT" } else { "USDC" };
@@ -221,11 +221,11 @@ impl RawPosition {
                 let base =
                     base.strip_suffix(settle).or_else(|| base.strip_suffix("PERP")).unwrap_or(base);
                 let kind = if settle == "USDT" { Kind::Usdt } else { Kind::Usdc };
-                (kind, base.to_owned(), settle.to_owned(), size * mark)
+                (kind, Some(base.to_owned()), settle.to_owned(), size * mark)
             }
         };
         Some(Position {
-            kind: kind.label(delivery(&self.symbol, category)),
+            kind: kind.of(delivery(&self.symbol, category)),
             long,
             size,
             size_unit,
@@ -257,15 +257,15 @@ enum Kind {
 }
 
 impl Kind {
-    fn label(self, delivery: bool) -> &'static str {
+    fn of(self, delivery: bool) -> PositionKind {
         match (self, delivery) {
-            (Self::Usdt, false) => "U 本位永续",
-            (Self::Usdt, true) => "U 本位交割",
-            (Self::Usdc, false) => "USDC 永续",
-            (Self::Usdc, true) => "USDC 交割",
-            (Self::Inverse, false) => "币本位永续",
-            (Self::Inverse, true) => "币本位交割",
-            (Self::Option, _) => "期权",
+            (Self::Usdt, false) => PositionKind::UsdtPerpetual,
+            (Self::Usdt, true) => PositionKind::UsdtFutures,
+            (Self::Usdc, false) => PositionKind::UsdcPerpetual,
+            (Self::Usdc, true) => PositionKind::UsdcFutures,
+            (Self::Inverse, false) => PositionKind::CoinPerpetual,
+            (Self::Inverse, true) => PositionKind::CoinFutures,
+            (Self::Option, _) => PositionKind::Option,
         }
     }
 }
@@ -289,7 +289,7 @@ async fn get<T: DeserializeOwned>(key: &ApiKey, path: &str, query: &str) -> Resu
         .await?;
         // Some endpoints refuse a key with a bare 401, saying no more.
         if status == StatusCode::UNAUTHORIZED {
-            return Err(Error::Message("API Key 或 Secret 不对，或没有读取权限".to_owned()));
+            return Err(Error::Message(t!("error.keyRejected").to_owned()));
         }
         let reply: Reply =
             serde_json::from_str(&body).map_err(|_| http::Error::Status(status.as_u16()))?;
@@ -322,15 +322,16 @@ async fn sync_clock() -> Result<(), Error> {
 }
 
 fn refusal(code: i64, message: &str) -> String {
-    match code {
-        10002 => "系统时间不准，请校准后重试".to_owned(),
-        10003 => "API Key 不存在".to_owned(),
-        10004 => "API Secret 不对".to_owned(),
-        10005 => "API Key 没有读取权限".to_owned(),
-        10010 => "API Key 绑定了其他 IP".to_owned(),
-        33004 => "API Key 已过期".to_owned(),
-        _ => format!("{message}（{code}）"),
-    }
+    let known = match code {
+        10002 => t!("error.clockSkew"),
+        10003 => t!("error.keyNotFound"),
+        10004 => return t!("error.wrongSecret", field = "API Secret"),
+        10005 => t!("error.noReadPermission"),
+        10010 => t!("error.ipBound"),
+        33004 => t!("error.keyExpired"),
+        _ => return t!("error.exchangeReply", message = message, code = code),
+    };
+    known.to_owned()
 }
 
 #[cfg(test)]
@@ -372,17 +373,20 @@ mod tests {
     fn positions_read_their_contract() {
         let long = raw("1000PEPEUSDT", "Buy", "2").position("linear").unwrap();
         assert_eq!(
-            (long.kind, long.size_unit.as_str(), long.exposure),
-            ("U 本位永续", "1000PEPE", 220.0)
+            (long.kind, long.size_unit.as_deref(), long.exposure),
+            (PositionKind::UsdtPerpetual, Some("1000PEPE"), 220.0)
         );
         assert_eq!(long.liquidation, None);
         let short = raw("BTCUSDZ25", "Sell", "500").position("inverse").unwrap();
         assert_eq!(
             (short.kind, short.pnl_asset.as_str(), short.exposure),
-            ("币本位交割", "BTC", -500.0)
+            (PositionKind::CoinFutures, "BTC", -500.0)
         );
         let usdc = raw("ETH-26DEC25", "Buy", "1").position("linear").unwrap();
-        assert_eq!((usdc.kind, usdc.size_unit.as_str()), ("USDC 交割", "ETH"));
+        assert_eq!(
+            (usdc.kind, usdc.size_unit.as_deref()),
+            (PositionKind::UsdcFutures, Some("ETH"))
+        );
         assert!(raw("BTCUSDT", "", "0").position("linear").is_none());
     }
 }

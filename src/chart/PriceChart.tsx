@@ -1,24 +1,27 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronsRight } from "lucide-react";
 import { Liveline, type CandlePoint } from "liveline";
 
-import type { ChartMode, Interval } from "@/lib/api";
+import type { ChartMode, Interval, ProviderId } from "@/lib/api";
 import { fmtPrice } from "@/lib/format";
 import type { ChartData, Market } from "./market";
 import type { ChartColors } from "./palette";
 import { load, store } from "@/lib/prefs";
 import { clampBars, DEFAULT_BARS, Viewport } from "./viewport";
 
+/** What the stretch on screen did: the last `span` seconds while following
+ * the live edge, otherwise `from` to `to` (epoch seconds). */
 export interface VisibleStats {
-  /** "近 1 小时" while following the live edge, otherwise the stretch shown. */
-  label: string;
+  live: boolean;
+  span: number;
+  from: number;
+  to: number;
   changePct: number;
   amplitudePct: number;
-  live: boolean;
 }
 
 const MINUTE = 60;
-const HOUR = 3600;
 const DAY = 86_400;
 /** Pointer travel before a press becomes a drag, so clicks stay clicks. */
 const DRAG_SLOP = 4;
@@ -58,12 +61,13 @@ export function PriceChart(props: {
   paletteKey: number;
   decimals: number;
   offline: boolean;
-  /** The provider's name, for the offline message. */
-  source: string;
+  /** For the offline message. */
+  source: ProviderId;
   /** Seconds east of UTC at which daily candles open. */
   dayOffset: number;
   onStats: (stats: VisibleStats | null) => void;
 }) {
+  const { t } = useTranslation();
   const { market, interval, onStats } = props;
   const data = useSyncExternalStore(market.subscribeChart, market.chartData);
   const [viewport] = useState(
@@ -258,7 +262,7 @@ export function PriceChart(props: {
 
       {hint && ready && (
         <p className="pointer-events-none absolute top-2.5 left-4 text-2xs text-muted-foreground animate-in fade-in delay-1000 duration-700 fill-mode-both">
-          拖动查看更早的走势 · 滚动或双指缩放 · 双击复位
+          {t("chart.hint")}
         </p>
       )}
 
@@ -270,18 +274,20 @@ export function PriceChart(props: {
           onDoubleClick={(e) => e.stopPropagation()}
           className="absolute right-23 bottom-9 flex h-7 items-center gap-1 rounded-full border bg-popover pr-2 pl-3 text-xs text-foreground shadow-[0_2px_8px_rgb(0_0_0/0.12)] backdrop-blur-xl animate-in fade-in slide-in-from-right-2 duration-200 hover:bg-accent"
         >
-          回到最新
+          {t("chart.backToLive")}
           <ChevronsRight className="size-3.5 text-muted-foreground" />
         </button>
       )}
 
       {!ready && current?.loaded && (
-        <p className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">暂无 K 线数据</p>
+        <p className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+          {t("chart.noCandles")}
+        </p>
       )}
 
       {!ready && props.offline && (
         <p className="absolute inset-x-0 bottom-3 text-center text-xs text-muted-foreground">
-          无法连接{props.source}，正在重试…
+          {t("chart.unreachable", { source: t(`common.provider.${props.source}`) })}
         </p>
       )}
     </div>
@@ -308,23 +314,18 @@ function visibleStats(data: ChartData | null, viewport: Viewport): VisibleStats 
   const open = candles[first].open;
   const close = candles[last].close;
   return {
-    label: viewport.live ? `近 ${fmtSpan(span)}` : fmtRange(left, right),
+    live: viewport.live,
+    // Whole seconds, and the ends only off the live edge (where they move
+    // with the clock): a stretch that stays put reports nothing new.
+    span: Math.round(span),
+    from: viewport.live ? 0 : Math.round(left),
+    to: viewport.live ? 0 : Math.round(right),
     changePct: round2(((close - open) / open) * 100),
     amplitudePct: round2(((high - low) / low) * 100),
-    live: viewport.live,
   };
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
-
-/** A duration in words: "45 秒", "15 分钟", "1.5 小时", "60 天". */
-function fmtSpan(secs: number): string {
-  const tenths = (n: number) => (n < 10 ? Math.round(n * 10) / 10 : Math.round(n));
-  if (secs < MINUTE) return `${Math.round(secs)} 秒`;
-  if (secs < HOUR) return `${Math.round(secs / MINUTE)} 分钟`;
-  if (secs < 2 * DAY) return `${tenths(secs / HOUR)} 小时`;
-  return `${tenths(secs / DAY)} 天`;
-}
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const hm = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -332,24 +333,6 @@ const hms = (d: Date) => `${hm(d)}:${pad2(d.getSeconds())}`;
 
 function isToday(d: Date): boolean {
   return d.toDateString() === new Date().toDateString();
-}
-
-/** The stretch shown while browsing history: times within a day or two, dates beyond. */
-function fmtRange(left: number, right: number): string {
-  const a = new Date(left * 1000);
-  const b = new Date(right * 1000);
-  const span = right - left;
-  if (span < 2 * DAY) {
-    const day = (d: Date) => (isToday(d) ? "" : `${d.getMonth() + 1}月${d.getDate()}日 `);
-    const time = span < 10 * MINUTE ? hms : hm;
-    return a.toDateString() === b.toDateString()
-      ? `${day(a)}${time(a)}–${time(b)}`
-      : `${day(a)}${time(a)} – ${day(b)}${time(b)}`;
-  }
-  const thisYear = new Date().getFullYear();
-  const date = (d: Date) =>
-    `${d.getFullYear() === thisYear ? "" : `${d.getFullYear()}年`}${d.getMonth() + 1}月${d.getDate()}日`;
-  return `${date(a)} – ${date(b)}`;
 }
 
 /** Time axis labels; called for every label on every frame, so no Intl. */

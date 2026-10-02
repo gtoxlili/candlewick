@@ -26,7 +26,6 @@ use crate::{
     credentials::ApiKey,
     http,
     model::{FeedControl, Instrument, Shared, Status},
-    window::{self, StatusView},
 };
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -61,13 +60,13 @@ impl ProviderId {
         }
     }
 
-    /// For status lines.
+    /// As the user knows it, in the app's language.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Binance => "币安",
-            Self::Bybit => "Bybit",
-            Self::Okx => "OKX",
-            Self::Longbridge => "长桥",
+            Self::Binance => t!("common.provider.binance"),
+            Self::Bybit => t!("common.provider.bybit"),
+            Self::Okx => t!("common.provider.okx"),
+            Self::Longbridge => t!("common.provider.longbridge"),
         }
     }
 
@@ -111,7 +110,9 @@ pub async fn check_key(exchange: ProviderId, key: &ApiKey) -> Result<(), Error> 
         ProviderId::Binance => binance::Binance::check(key).await,
         ProviderId::Bybit => bybit::Bybit::check(key).await,
         ProviderId::Okx => okx::Okx::check(key).await,
-        ProviderId::Longbridge => Err(Error::Message("长桥不使用 API Key".to_owned())),
+        ProviderId::Longbridge => {
+            Err(Error::Message(t!("error.noApiKey", source = exchange.name())))
+        }
     }
 }
 
@@ -198,29 +199,40 @@ pub struct Candidate {
     pub manual: bool,
 }
 
+/// What the chart window offers for an instrument: data, not text; the page
+/// names it in its own language.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChartSpec {
-    /// The service's name, for messages like "cannot reach …".
-    pub source: &'static str,
+    pub source: ProviderId,
     pub intervals: Vec<IntervalSpec>,
-    /// What the statistics cover, e.g. `24h`.
-    pub stats_span: &'static str,
-    pub volume_unit: String,
+    /// What the statistics cover.
+    pub stats_span: StatsSpan,
+    /// The base asset volume counts in; none for shares.
+    pub volume_unit: Option<String>,
     pub turnover_unit: String,
     /// Seconds east of UTC at which daily candles open, for their date labels.
     pub day_offset: i64,
     /// Price steps the order book can be grouped by, finest first; book events
     /// carry it grouped by each. Empty: the book comes as it is.
     pub book_steps: Vec<f64>,
-    pub link: Option<Link>,
+    /// The instrument's page on the provider's website.
+    pub link: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StatsSpan {
+    /// The last 24 hours, as crypto counts a day.
+    Rolling24h,
+    /// The current trading day.
+    Today,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IntervalSpec {
     pub secs: u32,
-    pub label: &'static str,
     /// How the chart first shows it.
     pub mode: ChartMode,
     /// Candles line up with the clock (`time % secs == 0`), so the chart can
@@ -235,12 +247,6 @@ pub struct IntervalSpec {
 pub enum ChartMode {
     Line,
     Candle,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Link {
-    pub label: &'static str,
-    pub url: String,
 }
 
 /// Times are epoch seconds, as the chart library takes them.
@@ -343,27 +349,25 @@ pub async fn changed(
     }
 }
 
-/// Records a provider's feed status for the menu bar and settings window.
+/// Records a provider's feed status for the bar.
 pub fn set_status(app: &AppHandle, provider: ProviderId, status: Status) {
-    let shared = app.state::<Shared>();
-    let view = {
+    {
+        let shared = app.state::<Shared>();
         let mut model = shared.model();
         let feed = model.feeds.entry(provider).or_default();
         if feed.status == status {
             return;
         }
         match status {
-            Status::Live(_) => feed.stale = false,
+            Status::Live => feed.stale = false,
             // Paused: nothing arrives while asleep, so on wake the prices on
             // screen are old until the stream is live again.
-            Status::Retrying { .. } | Status::Paused | Status::Unavailable(_) => feed.stale = true,
+            Status::Retrying { .. } | Status::Paused | Status::NoCredentials => feed.stale = true,
             Status::Idle | Status::Connecting => {}
         }
         feed.status = status;
-        StatusView::from(&*model)
-    };
+    }
     bar::request_render(app);
-    window::emit_status(app, &view);
 }
 
 /// Feed status of every provider, by provider.

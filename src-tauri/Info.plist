@@ -5,12 +5,17 @@
   <!-- Menu bar app: no Dock icon or app menu until the settings window opens. -->
   <key>LSUIElement</key>
   <true/>
-  <!-- The UI is Chinese; system-provided strings (context menus, dialogs) should match. -->
+  <!-- The languages the app speaks (src-tauri/src/i18n.rs), so the system's
+       own strings in it (context menus, the About panel) match: the one the
+       system's preferred languages pick, or the one the settings pick, which
+       the app keeps as its language in System Settings → Language & Region. -->
   <key>CFBundleDevelopmentRegion</key>
-  <string>zh_CN</string>
+  <string>en</string>
   <key>CFBundleLocalizations</key>
   <array>
-    <string>zh_CN</string>
+    <string>en</string>
+    <string>zh-Hans</string>
+    <string>ja</string>
   </array>
 </dict>
 </plist>

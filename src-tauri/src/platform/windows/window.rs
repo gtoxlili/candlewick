@@ -32,6 +32,9 @@ fn mica() -> bool {
     windows_version::OsVersion::current().build >= 22000
 }
 
+/// No app menu to relabel: the tray's menu is built each time it opens.
+pub fn relabel(_app: &AppHandle) {}
+
 pub fn build(builder: Builder<'_>) -> tauri::Result<()> {
     let mica = mica();
     let builder = builder

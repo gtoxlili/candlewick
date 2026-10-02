@@ -46,6 +46,7 @@ pnpm dev
 # 浏览器打开 http://localhost:1420/holdings.html
 #            http://localhost:1420/holdings.html?state=loading   首个账户还没读到
 #            http://localhost:1420/holdings.html?state=empty     还没有 API Key
+#            http://localhost:1420/holdings.html?lang=ja         日文界面（en、zh-CN、ja；默认跟浏览器）
 ```
 
 没有 Tauri 时，各页面的 `main.tsx` 会在开发构建里加载 `src/dev/mock.ts`，用 `@tauri-apps/api/mocks` 的 `mockIPC` 回答 `get_settings`、`get_portfolio` 等命令，数据是两家交易所、十来项资产和两个仓位的固定样本。生产构建里这段是死代码，不会打进包。浅色 / 深色用浏览器 DevTools 的渲染面板模拟；窗口尺寸是 980×640，最小 800×500。

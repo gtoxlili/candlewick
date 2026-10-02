@@ -1,6 +1,11 @@
 //! Native regression test; no feeds, credentials, settings writes or windows.
 #![allow(dead_code, unused_imports)]
 
+// First, so `t!` reaches every module after it.
+#[cfg(target_os = "macos")]
+#[macro_use]
+#[path = "../src/i18n.rs"]
+mod i18n;
 #[cfg(target_os = "macos")]
 #[path = "../src/agent/mod.rs"]
 mod agent;

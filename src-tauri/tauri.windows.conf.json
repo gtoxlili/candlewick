@@ -7,7 +7,7 @@
       "minimumWebview2Version": "125.0.2535.41",
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimpChinese"],
+        "languages": ["English", "SimpChinese", "Japanese"],
         "installerIcon": "icons/icon.ico",
         "installerHooks": "windows/installer-hooks.nsh"
       }

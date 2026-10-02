@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { ChartCandlestick, ChartLine, ExternalLink } from "lucide-react";
 import { setFrameRate, setTrendColors } from "liveline";
 import { cn } from "cn";
@@ -21,9 +23,10 @@ import {
   type Interval,
   type Settings,
   type Stats,
+  type StatsSpan,
   type Trade,
 } from "@/lib/api";
-import { direction, fmtCompact, fmtPct, fmtPrice, priceDecimals } from "@/lib/format";
+import { direction, fmtCompact, fmtDuration, fmtPct, fmtPrice, fmtRange, priceDecimals } from "@/lib/format";
 import { Market } from "./market";
 import { bidShare, OrderBook } from "./OrderBook";
 import { readChartColors, sameColors, type ChartColors } from "./palette";
@@ -34,9 +37,23 @@ import { TradeList } from "./TradeList";
 type Tab = "book" | "trades";
 
 const TABS = [
-  { value: "book", label: "盘口" },
-  { value: "trades", label: "成交" },
+  { value: "book", label: "chart.book" },
+  { value: "trades", label: "chart.trades" },
 ] as const satisfies readonly { value: Tab; label: string }[];
+
+/** "1m", "4小时", "1日": an interval by its largest whole unit. */
+function intervalLabel(secs: number, t: TFunction): string {
+  const units = [
+    [604_800, "interval.week"],
+    [86_400, "interval.day"],
+    [3600, "interval.hour"],
+    [60, "interval.minute"],
+  ] as const;
+  for (const [size, key] of units) {
+    if (secs % size === 0) return t(key, { n: secs / size });
+  }
+  return t("interval.second", { n: secs });
+}
 
 /** The remembered interval if the provider offers it, else one minute, else its first. */
 function pickInterval(intervals: Interval[], secs: number): Interval | null {
@@ -49,6 +66,7 @@ const parseModes = (raw: string): Record<string, ChartMode> | undefined => {
 };
 
 export default function ChartApp() {
+  const { t, i18n } = useTranslation();
   const [id, setId] = useState(() => new URLSearchParams(location.search).get("id") ?? "");
   const [settings, setSettings] = useState<Settings | null>(null);
   /** The spec of the instrument it was loaded for. */
@@ -88,13 +106,15 @@ export default function ChartApp() {
   const interval = pickInterval(chartSpec?.intervals ?? [], intervalSecs);
   const mode: ChartMode = (interval && modes[interval.secs]) ?? interval?.mode ?? "candle";
   const instrument: Instrument | undefined = settings?.watchlist.find((i) => instrumentId(i) === id);
-  const volumeUnit = chartSpec?.volumeUnit ?? "";
+  const volumeUnit = chartSpec ? (chartSpec.volumeUnit ?? t("chart.shares")) : "";
   const priceUnit = chartSpec?.turnoverUnit ?? "";
   const decimals = priceDecimals(stats?.last ?? 0, instrument?.decimals ?? null);
   const bookSteps = chartSpec?.bookSteps ?? [];
   const step = Math.min(Math.max(bookStep, 0), Math.max(bookSteps.length - 1, 0));
   const book = books?.[Math.min(step, books.length - 1)] ?? null;
   const scheme = settings?.colorScheme ?? "greenUp";
+  const source = chartSpec && t(`common.provider.${chartSpec.source}`);
+  const linkLabel = source ? t("chart.openOn", { source }) : undefined;
 
   // Settings, the tray switching instruments, and showing the window.
   useEffect(() => {
@@ -251,8 +271,8 @@ export default function ChartApp() {
         <Button
           variant="ghost"
           size="icon-sm"
-          title={chartSpec?.link?.label}
-          aria-label={chartSpec?.link?.label}
+          title={linkLabel}
+          aria-label={linkLabel}
           className="text-muted-foreground"
           disabled={!chartSpec?.link}
           onClick={() => void api.openLink(id)}
@@ -265,18 +285,18 @@ export default function ChartApp() {
         <section className="flex min-w-0 flex-1 flex-col gap-3 pb-4">
           <Hero
             stats={stats}
-            span={chartSpec?.statsSpan ?? ""}
+            span={chartSpec?.statsSpan ?? "rolling24h"}
             decimals={decimals}
             lastDirection={lastDirection}
-            insight={insight(visible, book)}
+            insight={insight(visible, book, t, i18n.language)}
           />
 
           <div className="flex h-7 items-center gap-2 px-4">
             {interval && (
               <PillTabs
-                label="K 线周期"
+                label={t("chart.interval")}
                 value={interval.secs}
-                options={(chartSpec?.intervals ?? []).map((i) => ({ value: i.secs, label: i.label }))}
+                options={(chartSpec?.intervals ?? []).map((i) => ({ value: i.secs, label: intervalLabel(i.secs, t) }))}
                 onChange={setIntervalSecs}
               />
             )}
@@ -301,12 +321,24 @@ export default function ChartApp() {
             <div className="panel mx-4 min-h-0 flex-1" />
           )}
 
-          <StatsGrid stats={stats} span={chartSpec?.statsSpan ?? ""} decimals={decimals} spec={chartSpec} />
+          <StatsGrid
+            stats={stats}
+            span={chartSpec?.statsSpan ?? "rolling24h"}
+            decimals={decimals}
+            volumeUnit={volumeUnit}
+            turnoverUnit={priceUnit}
+          />
         </section>
 
         <aside className="flex w-70 shrink-0 flex-col border-l pt-2">
           <div className="px-3 pb-2.5">
-            <PillTabs label="盘口与成交" value={tab} options={TABS} onChange={setTab} className="w-full" />
+            <PillTabs
+              label={t("chart.bookAndTrades")}
+              value={tab}
+              options={TABS.map((o) => ({ value: o.value, label: t(o.label) }))}
+              onChange={setTab}
+              className="w-full"
+            />
           </div>
           {tab === "book" ? (
             <OrderBook
@@ -330,24 +362,34 @@ export default function ChartApp() {
 }
 
 /** One readable line about the stretch on screen, plus order book pressure while live. */
-function insight(stats: VisibleStats | null, book: Book | null): string | null {
+function insight(stats: VisibleStats | null, book: Book | null, t: TFunction, locale: string): string | null {
   if (!stats) return null;
-  const parts = [`${stats.label} ${fmtPct(stats.changePct)}`, `振幅 ${stats.amplitudePct.toFixed(2)}%`];
+  const stretch = stats.live
+    ? t("chart.lastSpan", { span: fmtDuration(stats.span, locale) })
+    : fmtRange(stats.from, stats.to, locale);
+  const parts = [`${stretch} ${fmtPct(stats.changePct)}`, t("chart.amplitude", { value: stats.amplitudePct.toFixed(2) })];
   const share = stats.live ? bidShare(book) : null;
   if (share !== null) {
-    parts.push(share >= 55 ? `买盘偏强 ${share.toFixed(0)}%` : share <= 45 ? `卖盘偏强 ${(100 - share).toFixed(0)}%` : "买卖均衡");
+    parts.push(
+      share >= 55
+        ? t("chart.bidsLead", { share: share.toFixed(0) })
+        : share <= 45
+          ? t("chart.asksLead", { share: (100 - share).toFixed(0) })
+          : t("chart.balanced"),
+    );
   }
   return parts.join(" · ");
 }
 
 function Hero(props: {
   stats: Stats | null;
-  /** What the change covers, e.g. "24h". */
-  span: string;
+  /** What the change covers. */
+  span: StatsSpan;
   decimals: number;
   lastDirection: 1 | -1 | 0;
   insight: string | null;
 }) {
+  const { t } = useTranslation();
   const { stats, decimals } = props;
   const change = stats ? direction(stats.changePct) : 0;
   return (
@@ -369,7 +411,7 @@ function Hero(props: {
           <ChangeBadge
             pct={stats.changePct}
             amount={`${change > 0 ? "+" : change < 0 ? "−" : ""}${fmtPrice(Math.abs(stats.change), decimals)}`}
-            span={props.span}
+            span={t("chart.span", { context: props.span })}
           />
         )}
       </div>
@@ -379,12 +421,13 @@ function Hero(props: {
 }
 
 function ModeToggle(props: { mode: ChartMode; onChange: (mode: ChartMode) => void }) {
+  const { t } = useTranslation();
   const options = [
-    { value: "line", label: "折线", Icon: ChartLine },
-    { value: "candle", label: "K 线", Icon: ChartCandlestick },
+    { value: "line", label: t("chart.line"), Icon: ChartLine },
+    { value: "candle", label: t("chart.candles"), Icon: ChartCandlestick },
   ] as const;
   return (
-    <div role="tablist" aria-label="图表类型" className="pill flex p-0.5">
+    <div role="tablist" aria-label={t("chart.chartType")} className="pill flex p-0.5">
       {options.map(({ value, label, Icon }) => {
         const selected = props.mode === value;
         return (
@@ -412,6 +455,7 @@ function ModeToggle(props: { mode: ChartMode; onChange: (mode: ChartMode) => voi
 }
 
 function LiveBadge(props: { state: FeedState }) {
+  const { t } = useTranslation();
   const live = props.state === "live";
   return (
     <span className="flex items-center gap-1.5 rounded-full px-2 text-xs text-muted-foreground">
@@ -426,7 +470,7 @@ function LiveBadge(props: { state: FeedState }) {
           )}
         />
       </span>
-      {live ? "实时" : props.state === "connecting" ? "连接中" : "重连中"}
+      {live ? t("chart.live") : props.state === "connecting" ? t("chart.connecting") : t("chart.reconnecting")}
     </span>
   );
 }
@@ -438,6 +482,7 @@ function InstrumentPicker(props: {
   id: string;
   onPick: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const label = props.instrument && instrumentLabel(props.instrument);
   const name = (
     <span className="text-sm">
@@ -454,19 +499,33 @@ function InstrumentPicker(props: {
     return { value: instrumentId(i), label: `${name}${detail}` };
   });
   return (
-    <Picker label="切换" value={props.id} options={options} onChange={props.onPick} className={look}>
+    <Picker label={t("chart.switch")} value={props.id} options={options} onChange={props.onPick} className={look}>
       {name}
     </Picker>
   );
 }
 
-function StatsGrid(props: { stats: Stats | null; span: string; decimals: number; spec: ChartSpec | null }) {
-  const { stats, span, decimals } = props;
+function StatsGrid(props: {
+  stats: Stats | null;
+  span: StatsSpan;
+  decimals: number;
+  volumeUnit: string;
+  turnoverUnit: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const { stats, decimals } = props;
+  const context = { context: props.span };
   const items = [
-    { label: `${span} 最高`, value: stats && fmtPrice(stats.high, decimals) },
-    { label: `${span} 最低`, value: stats && fmtPrice(stats.low, decimals) },
-    { label: `${span} 成交量`, value: stats && `${fmtCompact(stats.volume)} ${props.spec?.volumeUnit ?? ""}` },
-    { label: `${span} 成交额`, value: stats && `${fmtCompact(stats.turnover)} ${props.spec?.turnoverUnit ?? ""}` },
+    { label: t("chart.high", context), value: stats && fmtPrice(stats.high, decimals) },
+    { label: t("chart.low", context), value: stats && fmtPrice(stats.low, decimals) },
+    {
+      label: t("chart.volume", context),
+      value: stats && `${fmtCompact(stats.volume, i18n.language)} ${props.volumeUnit}`,
+    },
+    {
+      label: t("chart.turnover", context),
+      value: stats && `${fmtCompact(stats.turnover, i18n.language)} ${props.turnoverUnit}`,
+    },
   ];
   return (
     <dl className="grid grid-cols-4 gap-2 px-4">

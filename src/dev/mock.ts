@@ -6,6 +6,7 @@
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
 import type { Portfolio, Settings } from "@/lib/api";
+import { LOCALES, type Locale } from "@/lib/i18n";
 
 const settings: Settings = {
   exchange: "binance",
@@ -19,6 +20,7 @@ const settings: Settings = {
   colorScheme: "greenUp",
   autoUpdate: true,
   agentAccess: false,
+  language: "system",
 };
 
 const now = Date.now();
@@ -28,25 +30,23 @@ const portfolio: Portfolio = {
   accounts: [
     {
       exchange: "binance",
-      name: "币安",
       total: 78_210.1,
       change: 712.3,
       wallets: [
-        { wallet: "spot", label: "现货", value: 58_120.4 },
-        { wallet: "earn", label: "理财", value: 12_000 },
-        { wallet: "usdFutures", label: "U 本位合约", value: 8_089.7 },
+        { wallet: "spot", value: 58_120.4 },
+        { wallet: "earn", value: 12_000 },
+        { wallet: "usdFutures", value: 8_089.7 },
       ],
       updated: now - 4_000,
       error: null,
     },
     {
       exchange: "okx",
-      name: "OKX",
       total: 50_220.42,
       change: 860,
       wallets: [
-        { wallet: "trading", label: "交易账户", value: 48_020.42 },
-        { wallet: "funding", label: "资金", value: 2_200 },
+        { wallet: "trading", value: 48_020.42 },
+        { wallet: "funding", value: 2_200 },
       ],
       updated: now - 9_000,
       error: null,
@@ -64,8 +64,8 @@ const portfolio: Portfolio = {
       changePct: 2.1,
       stable: false,
       held: [
-        { exchange: "binance", wallet: "现货", amount: 0.5 },
-        { exchange: "okx", wallet: "交易账户", amount: 0.2612 },
+        { exchange: "binance", wallet: "spot", amount: 0.5 },
+        { exchange: "okx", wallet: "trading", amount: 0.2612 },
       ],
       cost: 61_200,
       pnl: 5_980.2,
@@ -79,8 +79,8 @@ const portfolio: Portfolio = {
       changePct: -0.95,
       stable: false,
       held: [
-        { exchange: "binance", wallet: "现货", amount: 4 },
-        { exchange: "binance", wallet: "理财", amount: 2.4 },
+        { exchange: "binance", wallet: "spot", amount: 4 },
+        { exchange: "binance", wallet: "earn", amount: 2.4 },
       ],
       cost: null,
       pnl: null,
@@ -94,9 +94,9 @@ const portfolio: Portfolio = {
       changePct: 0,
       stable: true,
       held: [
-        { exchange: "okx", wallet: "交易账户", amount: 20_010.2 },
-        { exchange: "binance", wallet: "U 本位合约", amount: 8_680 },
-        { exchange: "okx", wallet: "资金", amount: 2_200 },
+        { exchange: "okx", wallet: "trading", amount: 20_010.2 },
+        { exchange: "binance", wallet: "usdFutures", amount: 8_680 },
+        { exchange: "okx", wallet: "funding", amount: 2_200 },
       ],
       cost: null,
       pnl: null,
@@ -109,7 +109,7 @@ const portfolio: Portfolio = {
       change: 310.4,
       changePct: 4.27,
       stable: false,
-      held: [{ exchange: "okx", wallet: "交易账户", amount: 42.5 }],
+      held: [{ exchange: "okx", wallet: "trading", amount: 42.5 }],
       cost: 150.1,
       pnl: 1_202.7,
     },
@@ -121,7 +121,7 @@ const portfolio: Portfolio = {
       change: 0,
       changePct: 0,
       stable: true,
-      held: [{ exchange: "binance", wallet: "现货", amount: 2_000 }],
+      held: [{ exchange: "binance", wallet: "spot", amount: 2_000 }],
       cost: null,
       pnl: null,
     },
@@ -133,7 +133,7 @@ const portfolio: Portfolio = {
       change: 12.4,
       changePct: 1.14,
       stable: false,
-      held: [{ exchange: "binance", wallet: "现货", amount: 1.8 }],
+      held: [{ exchange: "binance", wallet: "spot", amount: 1.8 }],
       cost: null,
       pnl: null,
     },
@@ -145,7 +145,7 @@ const portfolio: Portfolio = {
       change: 140.1,
       changePct: 27.9,
       stable: false,
-      held: [{ exchange: "binance", wallet: "现货", amount: 52_000_000 }],
+      held: [{ exchange: "binance", wallet: "spot", amount: 52_000_000 }],
       cost: null,
       pnl: null,
     },
@@ -157,7 +157,7 @@ const portfolio: Portfolio = {
       change: -8.2,
       changePct: -2.2,
       stable: false,
-      held: [{ exchange: "okx", wallet: "交易账户", amount: 310 }],
+      held: [{ exchange: "okx", wallet: "trading", amount: 310 }],
       cost: 1.4,
       pnl: -71.3,
     },
@@ -169,7 +169,7 @@ const portfolio: Portfolio = {
       change: 0.04,
       changePct: 1.6,
       stable: false,
-      held: [{ exchange: "binance", wallet: "现货", amount: 12 }],
+      held: [{ exchange: "binance", wallet: "spot", amount: 12 }],
       cost: null,
       pnl: null,
     },
@@ -181,7 +181,7 @@ const portfolio: Portfolio = {
       change: 0,
       changePct: 0.3,
       stable: false,
-      held: [{ exchange: "binance", wallet: "现货", amount: 0.03 }],
+      held: [{ exchange: "binance", wallet: "spot", amount: 0.03 }],
       cost: null,
       pnl: null,
     },
@@ -193,7 +193,7 @@ const portfolio: Portfolio = {
       change: null,
       changePct: null,
       stable: false,
-      held: [{ exchange: "binance", wallet: "现货", amount: 3 }],
+      held: [{ exchange: "binance", wallet: "spot", amount: 3 }],
       cost: null,
       pnl: null,
     },
@@ -202,7 +202,7 @@ const portfolio: Portfolio = {
     {
       exchange: "binance",
       symbol: "BTCUSDT",
-      kind: "U 本位永续",
+      kind: "usdtPerpetual",
       long: true,
       size: 0.4,
       sizeUnit: "BTC",
@@ -220,10 +220,10 @@ const portfolio: Portfolio = {
     {
       exchange: "okx",
       symbol: "ETH-USDT-SWAP",
-      kind: "U 本位永续",
+      kind: "usdtPerpetual",
       long: false,
       size: 20,
-      sizeUnit: "张",
+      sizeUnit: null,
       entry: 3_380,
       mark: 3_412.1,
       liquidation: 3_610,
@@ -240,21 +240,31 @@ const portfolio: Portfolio = {
 
 /** A portfolio before any account has answered. */
 const loading: Portfolio = {
-  accounts: [{ exchange: "binance", name: "币安", total: null, change: null, wallets: [], updated: null, error: null }],
+  accounts: [{ exchange: "binance", total: null, change: null, wallets: [], updated: null, error: null }],
   total: null,
   change: null,
   assets: [],
   positions: [],
 };
 
-/** Answers the app's commands for `label`'s page; `?state=empty|loading` picks a portfolio. */
+/**
+ * Answers the app's commands for `label`'s page. `?state=empty|loading` picks
+ * a portfolio; `?lang=en|zh-CN|ja` the language the app speaks (default: the
+ * first of the browser's that it has).
+ */
 export function installMocks(label: string): void {
   mockWindows(label);
-  const state = new URLSearchParams(location.search).get("state");
+  const params = new URLSearchParams(location.search);
+  const state = params.get("state");
+  const locales = Object.keys(LOCALES) as Locale[];
+  const speaks = (tag: string) => locales.find((l) => l === tag) ?? locales.find((l) => l.split("-")[0] === tag.split("-")[0]);
+  const locale = [params.get("lang") ?? "", ...navigator.languages].map(speaks).find((l) => l !== undefined) ?? "en";
   mockIPC((cmd) => {
     switch (cmd) {
       case "get_settings":
         return settings;
+      case "get_locale":
+        return locale;
       case "get_portfolio":
         return state === "empty" ? { ...loading, accounts: [] } : state === "loading" ? loading : portfolio;
       case "plugin:event|listen":

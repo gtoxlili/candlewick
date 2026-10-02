@@ -14,7 +14,7 @@ pub fn escape(text: &str) -> String {
     text.replace('&', "&&")
 }
 
-/// `BTC/USDT⇥84,002.01 −0.24%`, `AAPL 苹果  盘后⇥182.33 +0.12%`: the name,
+/// `BTC/USDT⇥84,002.01 −0.24%`, `AAPL Apple  After-hours⇥182.33 +0.12%`: the name,
 /// its detail and session left, value and change right. Rows laid out
 /// together share one change column, so their values line up.
 pub fn rows(rows: &[Row]) -> Vec<String> {
@@ -73,11 +73,12 @@ mod tests {
         assert!(texts.iter().all(|text| change_column(text) == Some(7)));
     }
 
-    // Rows without any change (PnL rows) keep just the value column.
+    // Rows without any change (PnL rows) keep just the value column; the
+    // name's ampersand is a literal one.
     #[test]
     fn values_alone_take_no_change_column() {
-        let texts = rows(&[row("24h 盈亏", "+152.30", None)]);
-        assert_eq!(texts[0], "24h 盈亏\t+152.30");
+        let texts = rows(&[row("24h P&L", "+152.30", None)]);
+        assert_eq!(texts[0], "24h P&&L\t+152.30");
     }
 
     // AppendMenu treats `&` as a mnemonic prefix (MF_STRING docs); names such

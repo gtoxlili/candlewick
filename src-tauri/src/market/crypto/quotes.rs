@@ -67,12 +67,12 @@ pub async fn run<E: Exchange>(app: AppHandle, mut control: watch::Receiver<FeedC
         let connecting = net::connect(host, port, &path);
         let end = tokio::select! {
             result = timeout(CONNECT_TIMEOUT, connecting) => match result {
-                Err(_) => End::Lost("连接超时".to_owned()),
+                Err(_) => End::Lost("connection timed out".to_owned()),
                 Ok(Err(e)) => End::Lost(e.to_string()),
                 Ok(Ok((socket, route))) => {
                     log::info!("streaming {} quotes from {host} ({route})", E::ID.key());
                     preferred = server;
-                    pump::<E>(&app, &mut control, &wanted, socket, route).await
+                    pump::<E>(&app, &mut control, &wanted, socket).await
                 }
             },
             changed = market::changed(&mut control, E::ID, &wanted) => match changed {
@@ -96,11 +96,7 @@ pub async fn run<E: Exchange>(app: AppHandle, mut control: watch::Receiver<FeedC
         }
         failures += 1;
         let delay = Duration::from_secs((1u64 << (failures - 1).min(6)).min(MAX_BACKOFF_SECS));
-        market::set_status(
-            &app,
-            E::ID,
-            Status::Retrying { reason, retry_in_secs: delay.as_secs() },
-        );
+        market::set_status(&app, E::ID, Status::Retrying { retry_in_secs: delay.as_secs() });
         tokio::select! {
             () = sleep(delay) => {}
             changed = market::changed(&mut control, E::ID, &wanted) => if changed.is_err() { return },
@@ -113,14 +109,13 @@ async fn pump<E: Exchange>(
     control: &mut watch::Receiver<FeedControl>,
     wanted: &(Vec<String>, u8),
     mut socket: net::Socket,
-    route: net::Route,
 ) -> End {
     for frame in E::quotes_subscribe(&wanted.0) {
         if let Err(e) = socket.send(Message::text(frame)).await {
             return End::Lost(e.to_string());
         }
     }
-    market::set_status(app, E::ID, Status::Live(route));
+    market::set_status(app, E::ID, Status::Live);
     let mut keepalive = interval_at(Instant::now() + KEEPALIVE, KEEPALIVE);
     keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let silence = sleep(SILENCE_LIMIT);
@@ -150,11 +145,11 @@ async fn pump<E: Exchange>(
                     // Pings are answered by tungstenite on the next read.
                     Some(Ok(Message::Close(frame))) => {
                         let reason = frame.map(|f| f.reason.to_string()).unwrap_or_default();
-                        return End::Lost(format!("服务器关闭了连接 {reason}").trim_end().to_owned());
+                        return End::Lost(format!("the server closed the connection {reason}").trim_end().to_owned());
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return End::Lost(e.to_string()),
-                    None => return End::Lost("连接已断开".to_owned()),
+                    None => return End::Lost("disconnected".to_owned()),
                 }
             }
             _ = keepalive.tick(), if E::PING.is_some() => {
@@ -169,7 +164,7 @@ async fn pump<E: Exchange>(
                 redrawn = Some(Instant::now());
                 bar::request_render(app);
             }
-            () = &mut silence => return End::Lost("长时间没有收到行情".to_owned()),
+            () = &mut silence => return End::Lost("no quotes for too long".to_owned()),
         }
     }
 }
@@ -216,7 +211,7 @@ pub async fn subscribe<E: Exchange>(symbols: &[String]) -> Result<net::Socket, S
                 break;
             }
             Ok(Err(e)) => failure = e.to_string(),
-            Err(_) => failure = "连接超时".to_owned(),
+            Err(_) => failure = "connection timed out".to_owned(),
         }
     }
     let mut socket = connected.ok_or(failure)?;

@@ -10,19 +10,20 @@ use crate::{
     agent::{self, Agent, AgentStatus},
     bar,
     credentials::{self, ApiKey, LongbridgeKeys},
+    i18n::{self, Locale},
     market::{self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, longbridge},
     model::{self, Instrument, Settings, Shared},
     platform,
     portfolio::Portfolio,
     update::{self, UpdateView},
-    window::{self, StatusView},
+    window,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum CommandError {
     #[error("{0}")]
     Invalid(String),
-    #[error("无法保存设置：{0}")]
+    #[error("{}", save_failed(.0))]
     Io(#[from] std::io::Error),
     #[error("{0}")]
     LoginItem(String),
@@ -30,6 +31,10 @@ pub enum CommandError {
     Market(#[from] market::Error),
     #[error(transparent)]
     Tauri(#[from] tauri::Error),
+}
+
+fn save_failed(error: &std::io::Error) -> String {
+    t!("error.saveFailed", error = error)
 }
 
 // The webview only needs a readable message.
@@ -55,13 +60,18 @@ pub fn save_settings(
 ) -> CmdResult<Settings> {
     let settings = settings.validated().map_err(CommandError::Invalid)?;
     model::save(&shared.settings_path, &settings)?;
-    let agent_access_was = {
+    let before = {
         let mut model = shared.model();
         model.quotes.retain(|id, _| settings.instrument(id).is_some());
-        std::mem::replace(&mut model.settings, settings.clone()).agent_access
+        std::mem::replace(&mut model.settings, settings.clone())
     };
-    if settings.agent_access != agent_access_was {
+    if settings.agent_access != before.agent_access {
         agent::sync(&app);
+    }
+    if settings.language != before.language {
+        platform::remember_language(settings.language);
+        i18n::set(settings.language.locale());
+        window::relabel(&app);
     }
     let symbols = settings.symbols();
     shared.control.send_if_modified(|control| {
@@ -75,15 +85,17 @@ pub fn save_settings(
     Ok(settings)
 }
 
+/// The language the app speaks now, for a page as it loads; `locale` events
+/// tell it of changes (`window::relabel`).
+#[tauri::command]
+pub fn get_locale() -> Locale {
+    i18n::current()
+}
+
 /// Whether agents have the skill, as the settings window shows it.
 #[tauri::command]
 pub fn get_agent(agent: State<'_, Agent>) -> AgentStatus {
     agent.status()
-}
-
-#[tauri::command]
-pub fn get_status(shared: State<'_, Shared>) -> StatusView {
-    StatusView::from(&*shared.model())
 }
 
 #[tauri::command]
@@ -165,9 +177,7 @@ pub fn set_longbridge(
             if complete {
                 Ok(keys)
             } else {
-                Err(CommandError::Invalid(
-                    "请填写完整的 App Key、App Secret 和 Access Token".to_owned(),
-                ))
+                Err(CommandError::Invalid(t!("error.longbridgeIncomplete").to_owned()))
             }
         })
         .transpose()?;
@@ -220,7 +230,7 @@ pub async fn set_exchange_key(
     key: Option<ApiKey>,
 ) -> CmdResult<Vec<ExchangeKey>> {
     if !exchange.is_exchange() {
-        return Err(CommandError::Invalid(format!("{}不使用 API Key", exchange.name())));
+        return Err(CommandError::Invalid(t!("error.noApiKey", source = exchange.name())));
     }
     let key = key
         .map(|key| {
@@ -236,12 +246,12 @@ pub async fn set_exchange_key(
                 || key.secret.is_empty()
                 || (needs_passphrase && passphrase.is_empty())
             {
-                let fields = if needs_passphrase {
-                    "API Key、Secret 和 Passphrase"
+                let incomplete = if needs_passphrase {
+                    t!("error.keyIncompletePassphrase")
                 } else {
-                    "API Key 和 Secret"
+                    t!("error.keyIncomplete")
                 };
-                return Err(CommandError::Invalid(format!("请填写完整的 {fields}")));
+                return Err(CommandError::Invalid(incomplete.to_owned()));
             }
             Ok(key)
         })
@@ -363,7 +373,7 @@ pub fn chart_stream_stop(shared: State<'_, Shared>, handle: u32) {
 pub fn open_link(shared: State<'_, Shared>, id: String) -> CmdResult<()> {
     let instrument = instrument(&shared, &id)?;
     if let Some(link) = instrument.provider.provider().chart_spec(&instrument).link {
-        platform::open_url(&link.url);
+        platform::open_url(&link);
     }
     Ok(())
 }
@@ -371,5 +381,5 @@ pub fn open_link(shared: State<'_, Shared>, id: String) -> CmdResult<()> {
 fn instrument(shared: &Shared, id: &str) -> CmdResult<Instrument> {
     let model = shared.model();
     let found = model.settings.instrument(id).cloned();
-    found.ok_or_else(|| CommandError::Invalid(format!("不在自选中：{id}")))
+    found.ok_or_else(|| CommandError::Invalid(t!("error.notInWatchlist", id = id)))
 }

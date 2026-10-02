@@ -8,15 +8,15 @@
 
 use std::time::Duration;
 
-use serde::Serialize;
 use tauri::{
     AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     webview::NewWindowResponse,
 };
 
 use crate::{
+    i18n,
     market::ProviderId,
-    model::{Model, Settings, Shared, Status},
+    model::{Instrument, Settings, Shared},
     net, platform,
     portfolio::Portfolio,
 };
@@ -24,52 +24,10 @@ use crate::{
 pub const SETTINGS: &str = "settings";
 pub const CHART: &str = "chart";
 pub const HOLDINGS: &str = "holdings";
-pub const STATUS_EVENT: &str = "status";
 pub const SETTINGS_EVENT: &str = "settings";
+pub const LOCALE_EVENT: &str = "locale";
 pub const CHART_INSTRUMENT_EVENT: &str = "chart-instrument";
 pub const PORTFOLIO_EVENT: &str = "portfolio";
-
-/// The feed status line at the bottom of the settings window.
-#[derive(Debug, Clone, Serialize)]
-pub struct StatusView {
-    pub label: String,
-    pub tone: &'static str,
-}
-
-impl From<&Model> for StatusView {
-    /// The status of each provider the watchlist uses, named when there are
-    /// several; the most urgent tone wins.
-    fn from(model: &Model) -> Self {
-        let providers: Vec<_> = model.settings.symbols().into_keys().collect();
-        let status = |provider| {
-            model.feeds.get(provider).map(|feed| feed.status.clone()).unwrap_or_default()
-        };
-        match providers.as_slice() {
-            [] => Self { label: Status::Idle.label(), tone: Status::Idle.tone() },
-            [only] => {
-                let status = status(only);
-                Self { label: status.label(), tone: status.tone() }
-            }
-            several => {
-                let statuses: Vec<Status> = several.iter().map(status).collect();
-                let label = several
-                    .iter()
-                    .zip(&statuses)
-                    .map(|(provider, status)| format!("{} {}", provider.name(), status.label()))
-                    .collect::<Vec<_>>()
-                    .join("；");
-                let urgency =
-                    |tone: &str| ["live", "idle", "busy", "error"].iter().position(|t| *t == tone);
-                let tone = statuses
-                    .iter()
-                    .map(Status::tone)
-                    .max_by_key(|tone| urgency(tone))
-                    .unwrap_or("idle");
-                Self { label, tone }
-            }
-        }
-    }
-}
 
 struct Spec {
     label: &'static str,
@@ -86,7 +44,7 @@ pub fn open_settings(app: &AppHandle) -> tauri::Result<()> {
         Spec {
             label: SETTINGS,
             url: "index.html".to_owned(),
-            title: "Candlewick 设置".to_owned(),
+            title: t!("window.settings").to_owned(),
             size: (460.0, 640.0),
             min_size: (460.0, 640.0),
             resizable: false,
@@ -102,7 +60,7 @@ pub fn open_holdings(app: &AppHandle) -> tauri::Result<()> {
         Spec {
             label: HOLDINGS,
             url: "holdings.html".to_owned(),
-            title: "Candlewick 持仓".to_owned(),
+            title: t!("window.holdings").to_owned(),
             size: (980.0, 640.0),
             min_size: (800.0, 500.0),
             resizable: true,
@@ -147,7 +105,7 @@ fn retarget_chart(app: &AppHandle, id: &str) -> tauri::Result<Option<String>> {
         let Some(instrument) = model.settings.instrument(id) else {
             return Ok(None);
         };
-        let title = format!("{} 行情", instrument.pair_label());
+        let title = chart_title(instrument);
         model.chart = Some(id.to_owned());
         title
     };
@@ -156,6 +114,37 @@ fn retarget_chart(app: &AppHandle, id: &str) -> tauri::Result<Option<String>> {
         app.emit_to(CHART, CHART_INSTRUMENT_EVENT, id)?;
     }
     Ok(Some(title))
+}
+
+fn chart_title(instrument: &Instrument) -> String {
+    t!("window.chart", pair = instrument.pair_label())
+}
+
+/// The app speaks another language now: so do open windows' titles and
+/// pages, and the app menu.
+pub fn relabel(app: &AppHandle) {
+    let locale = i18n::current();
+    let chart = {
+        let shared = app.state::<Shared>();
+        let model = shared.model();
+        model.chart.as_deref().and_then(|id| model.settings.instrument(id)).map(chart_title)
+    };
+    for (label, title) in [
+        (SETTINGS, Some(t!("window.settings").to_owned())),
+        (CHART, chart),
+        (HOLDINGS, Some(t!("window.holdings").to_owned())),
+    ] {
+        let Some(window) = app.get_webview_window(label) else {
+            continue;
+        };
+        if let Some(title) = title
+            && let Err(e) = window.set_title(&title)
+        {
+            log::error!("cannot retitle {label}: {e}");
+        }
+        let _ = app.emit_to(label, LOCALE_EVENT, locale);
+    }
+    platform::window::relabel(app);
 }
 
 /// The Dock icon was clicked, or the app was launched again while running.
@@ -308,12 +297,6 @@ pub fn on_destroyed(app: &AppHandle, label: &str) {
         return;
     }
     platform::window::did_close_all(app);
-}
-
-pub fn emit_status(app: &AppHandle, status: &StatusView) {
-    if app.get_webview_window(SETTINGS).is_some() {
-        let _ = app.emit_to(SETTINGS, STATUS_EVENT, status);
-    }
 }
 
 pub fn emit_portfolio(app: &AppHandle, portfolio: &Portfolio) {

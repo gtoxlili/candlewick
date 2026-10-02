@@ -14,7 +14,7 @@ use crate::{
     calendar,
     credentials::LongbridgeKeys,
     http,
-    market::Error,
+    market::{Error, ProviderId},
     net,
     sign::{hex, hmac_sha256},
 };
@@ -55,9 +55,11 @@ pub async fn one_time_password(keys: &LongbridgeKeys) -> Result<String, Error> {
     }
     let otp: Otp = get(keys, "/v1/socket/token", "").await?;
     if otp.online >= otp.limit {
-        return Err(Error::Message(format!(
-            "长桥连接数已满（{} / {}），请关闭其他使用这组凭证的程序",
-            otp.online, otp.limit
+        return Err(Error::Message(t!(
+            "error.sourceFull",
+            source = ProviderId::Longbridge.name(),
+            used = otp.online,
+            limit = otp.limit
         )));
     }
     Ok(otp.otp)
@@ -122,6 +124,8 @@ async fn get<T: DeserializeOwned>(
             .header("X-Timestamp", &timestamp)
             .header("X-Api-Signature", &signature)
             .header("x-dc-region", region(keys))
+            // Its messages, in the app's language.
+            .header("accept-language", super::language())
     })
     .await?;
     let status = response.status();
@@ -132,8 +136,12 @@ async fn get<T: DeserializeOwned>(
         Envelope { code: 0, data: Some(data), .. } => Ok(data),
         Envelope { code, message, .. } => {
             log::warn!("longbridge {path}: {code} {message}");
-            let message = if message.is_empty() { format!("错误 {code}") } else { message };
-            Err(Error::Message(format!("长桥：{message}")))
+            let source = ProviderId::Longbridge.name();
+            Err(Error::Message(if message.is_empty() {
+                t!("error.sourceCode", source = source, code = code)
+            } else {
+                t!("error.sourceSays", source = source, message = message)
+            }))
         }
     }
 }

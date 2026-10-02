@@ -1,4 +1,4 @@
-//! AI agents' access to Candlewick (settings → 通用 → AI 助手接入): while on,
+//! AI agents' access to Candlewick (settings → General → AI Agent Access): while on,
 //! a read-only HTTP API on this machine (`api.rs`) and a skill that tells
 //! Claude Code, Codex and OpenCode how to call it (`skill.rs`). The skill
 //! exists exactly while the API runs: both start when access is turned on or
@@ -78,7 +78,7 @@ async fn apply(app: &AppHandle) {
 async fn start(app: &AppHandle, agent: &Agent) -> AgentStatus {
     let failed = |error: String| AgentStatus { on: true, agents: Vec::new(), error: Some(error) };
     let (Ok(config), Ok(home)) = (app.path().app_config_dir(), app.path().home_dir()) else {
-        return failed("找不到配置目录".to_owned());
+        return failed(t!("error.noConfigDir").to_owned());
     };
     let token_path = config.join("agent-token");
     let running = agent
@@ -98,12 +98,12 @@ async fn start(app: &AppHandle, agent: &Agent) -> AgentStatus {
         Err(e) => {
             // A skill from before would point agents at nothing, or at someone else.
             skill::uninstall(&home);
-            return failed(format!("无法启动本机接口：{e}"));
+            return failed(t!("error.agentServer", error = e));
         }
     };
     match skill::install(&home, &format!("http://127.0.0.1:{port}"), &token_path) {
         Ok(agents) => AgentStatus { on: true, agents, error: None },
-        Err(e) => failed(format!("无法写入 skill：{e}")),
+        Err(e) => failed(t!("error.agentSkill", error = e)),
     }
 }
 

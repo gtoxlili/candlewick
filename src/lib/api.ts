@@ -1,6 +1,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { Language, Locale } from "@/lib/i18n";
+
 export type ColorScheme = "greenUp" | "redUp";
 
 /** The crypto exchanges; the settings pick one for every pair. */
@@ -8,12 +10,7 @@ export type Exchange = "binance" | "bybit" | "okx";
 
 export type ProviderId = Exchange | "longbridge";
 
-/** Named as the app names them (`ProviderId::name`). */
-export const EXCHANGES = [
-  { value: "binance", label: "币安" },
-  { value: "bybit", label: "Bybit" },
-  { value: "okx", label: "OKX" },
-] as const satisfies readonly { value: Exchange; label: string }[];
+export const EXCHANGES = ["binance", "bybit", "okx"] as const satisfies readonly Exchange[];
 
 /** A watchlist entry. */
 export interface Instrument {
@@ -38,7 +35,7 @@ export const instrumentId = (instrument: Pick<Instrument, "provider" | "symbol">
 
 /**
  * The name and the dimmed part after it, as the dropdown shows them (see
- * `Instrument::row_label` in the app): "BTC" "/USDT", "AAPL" " 苹果", "腾讯控股" " 700".
+ * `Instrument::row_label` in the app): "BTC" "/USDT", "AAPL" " Apple", "腾讯控股" " 700".
  */
 export function instrumentLabel(instrument: Instrument): { name: string; detail: string } {
   if (instrument.provider !== "longbridge") return { name: instrument.base, detail: `/${instrument.quote}` };
@@ -48,11 +45,14 @@ export function instrumentLabel(instrument: Instrument): { name: string; detail:
   return { name, detail: ` ${instrument.base}` };
 }
 
-const MARKETS: Record<string, string> = { US: "美股", HK: "港股", SH: "A 股", SZ: "A 股" };
+/** Where Longbridge's markets are. */
+export type Market = "US" | "HK" | "CN";
 
-/** 美股, 港股, A 股; nothing for crypto. */
-export function marketLabel(instrument: Instrument): string {
-  return instrument.provider === "longbridge" ? (MARKETS[instrument.symbol.split(".").at(-1) ?? ""] ?? "") : "";
+const MARKETS: Record<string, Market> = { US: "US", HK: "HK", SH: "CN", SZ: "CN" };
+
+/** The market a stock trades in, by its symbol's suffix; none for crypto. */
+export function marketOf(instrument: Instrument): Market | null {
+  return instrument.provider === "longbridge" ? (MARKETS[instrument.symbol.split(".").at(-1) ?? ""] ?? null) : null;
 }
 
 export interface Settings {
@@ -68,6 +68,8 @@ export interface Settings {
   autoUpdate: boolean;
   /** AI agents may read the app's data through its local API and skill. */
   agentAccess: boolean;
+  /** What the app speaks; the page hears it as `onLocale`. */
+  language: Language;
 }
 
 /** Where the skill went, while AI access is on. */
@@ -96,11 +98,6 @@ export interface Update {
   state: UpdateState;
 }
 
-export interface Status {
-  label: string;
-  tone: "live" | "busy" | "error" | "idle";
-}
-
 export interface Candidate extends Instrument {
   /** Taken from the typed text because the instrument list was unavailable. */
   manual: boolean;
@@ -117,7 +114,6 @@ export type ChartMode = "line" | "candle";
 export interface Interval {
   /** Seconds per candle. */
   secs: number;
-  label: string;
   /** How it first shows. */
   mode: ChartMode;
   /** Candles line up with the clock, so trades can be bucketed here; otherwise new candles come from the app. */
@@ -126,20 +122,23 @@ export interface Interval {
   regularOnly: boolean;
 }
 
+/** What the statistics cover: the last 24 hours (crypto), or the trading day. */
+export type StatsSpan = "rolling24h" | "today";
+
 /** What the chart window offers for an instrument. */
 export interface ChartSpec {
-  /** The provider's name, for messages like "cannot reach …". */
-  source: string;
+  source: ProviderId;
   intervals: Interval[];
-  /** What the statistics cover, e.g. "24h". */
-  statsSpan: string;
-  volumeUnit: string;
+  statsSpan: StatsSpan;
+  /** The base asset volume counts in; null for shares. */
+  volumeUnit: string | null;
   turnoverUnit: string;
   /** Seconds east of UTC at which daily candles open, for their date labels. */
   dayOffset: number;
   /** Price steps the book can be grouped by, finest first. Empty: the book comes as it is. */
   bookSteps: number[];
-  link: { label: string; url: string } | null;
+  /** The instrument's page on the provider's website. */
+  link: string | null;
 }
 
 /** Times in epoch seconds, as Liveline takes them. */
@@ -196,9 +195,9 @@ export type LiveEvent =
   /** New trades, oldest first. */
   | { kind: "trades"; trades: Trade[] };
 
-/** What a Longbridge account may see. */
+/** What a Longbridge account may see; packages and notes as Longbridge words them. */
 export interface LongbridgeAccount {
-  markets: { market: string; packages: string[]; note: string | null }[];
+  markets: { market: Market; packages: string[]; note: string | null }[];
 }
 
 export interface Longbridge {
@@ -234,8 +233,7 @@ export type Wallet = "spot" | "trading" | "funding" | "earn" | "usdFutures" | "c
 /** Some of an asset in one wallet of one exchange. */
 export interface Holding {
   exchange: Exchange;
-  /** 现货, 交易账户, 资金, 理财, U 本位合约, 币本位合约. */
-  wallet: string;
+  wallet: Wallet;
   amount: number;
 }
 
@@ -259,16 +257,27 @@ export interface HeldAsset {
   pnl: number | null;
 }
 
+/** What a position is: what it settles in, and whether it expires. */
+export type PositionKind =
+  | "usdtPerpetual"
+  | "usdtFutures"
+  | "usdcPerpetual"
+  | "usdcFutures"
+  | "coinPerpetual"
+  | "coinFutures"
+  | "option"
+  | "margin"
+  | "other";
+
 /** An open derivatives position. */
 export interface HeldPosition {
   exchange: Exchange;
   symbol: string;
-  /** "U 本位永续", "币本位交割", "期权"… */
-  kind: string;
+  kind: PositionKind;
   long: boolean;
   size: number;
-  /** "BTC", or "张" for contracts. */
-  sizeUnit: string;
+  /** The base asset, or null for a number of contracts. */
+  sizeUnit: string | null;
   entry: number;
   mark: number;
   liquidation: number | null;
@@ -286,14 +295,12 @@ export interface HeldPosition {
 
 export interface WalletValue {
   wallet: Wallet;
-  label: string;
   value: number;
 }
 
 /** One exchange's part of the portfolio. */
 export interface ExchangeAccount {
   exchange: Exchange;
-  name: string;
   /** null before the first good refresh. */
   total: number | null;
   change: number | null;
@@ -321,7 +328,8 @@ export const MAX_INSTRUMENTS = 30;
 export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
-  getStatus: () => invoke<Status>("get_status"),
+  /** The language the app speaks now. */
+  getLocale: () => invoke<Locale>("get_locale"),
   getLoginItem: () => invoke<boolean>("get_login_item"),
   setLoginItem: (enabled: boolean) => invoke<boolean>("set_login_item", { enabled }),
   getUpdate: () => invoke<Update>("get_update"),
@@ -368,8 +376,9 @@ export const api = {
   /** Fresh holdings, while the holdings window is open: every refresh, and every price tick in between. */
   onPortfolio: (handler: (portfolio: Portfolio) => void): Promise<UnlistenFn> =>
     listen<Portfolio>("portfolio", (event) => handler(event.payload)),
-  onStatus: (handler: (status: Status) => void): Promise<UnlistenFn> =>
-    listen<Status>("status", (event) => handler(event.payload)),
+  /** The language the app speaks from now on, whenever the settings change it. */
+  onLocale: (handler: (locale: Locale) => void): Promise<UnlistenFn> =>
+    listen<Locale>("locale", (event) => handler(event.payload)),
   onUpdate: (handler: (update: Update) => void): Promise<UnlistenFn> =>
     listen<Update>("update", (event) => handler(event.payload)),
   /** Saved settings, from whichever window saved them. */

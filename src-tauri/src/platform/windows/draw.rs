@@ -48,8 +48,13 @@ use super::portable::{
 };
 use crate::{
     bar::{self, Ticker},
+    i18n::{self, Locale},
     model::ColorScheme,
 };
+
+/// A text format's size (its bits), weight, and the language its fallback
+/// fonts suit.
+type FormatKey = (u32, i32, Locale);
 
 /// Sizes in device-independent pixels (1/96 inch). Two rows at the taskbar
 /// clock's size and line pitch; the symbol and one-line text a step larger.
@@ -103,7 +108,7 @@ pub struct Painter {
     /// Cap height as a share of the font size: text is centered by its
     /// capitals, as the clock's is.
     cap: f32,
-    formats: RefCell<Vec<((u32, i32), IDWriteTextFormat)>>,
+    formats: RefCell<Vec<(FormatKey, IDWriteTextFormat)>>,
     // Keeps the factory alive as long as its target.
     _d2d: ID2D1Factory,
 }
@@ -309,12 +314,19 @@ impl Painter {
     }
 
     fn format(&self, size: f32, weight: DWRITE_FONT_WEIGHT) -> Result<IDWriteTextFormat> {
-        let key = (size.to_bits(), weight.0);
+        let locale = i18n::current();
+        let key = (size.to_bits(), weight.0, locale);
         if let Some((_, format)) = self.formats.borrow().iter().find(|(k, _)| *k == key) {
             return Ok(format.clone());
         }
-        // SAFETY: plain DirectWrite calls. The Chinese locale makes font
-        // fallback pick Microsoft YaHei for stock names.
+        // The app's language picks the font for what Segoe UI lacks: Chinese
+        // names in Microsoft YaHei, Japanese in Yu Gothic.
+        let locale_name = match locale {
+            Locale::En => w!("en-US"),
+            Locale::ZhCn => w!("zh-CN"),
+            Locale::Ja => w!("ja-JP"),
+        };
+        // SAFETY: plain DirectWrite calls.
         let format = unsafe {
             let format = self.dwrite.CreateTextFormat(
                 &self.family,
@@ -323,7 +335,7 @@ impl Painter {
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
                 size,
-                w!("zh-CN"),
+                locale_name,
             )?;
             format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
             format

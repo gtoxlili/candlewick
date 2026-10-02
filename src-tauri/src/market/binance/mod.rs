@@ -13,10 +13,10 @@ use serde::{
 };
 
 use super::{
-    Candle, Error, Link, ProviderId, Stats, Trade,
+    Candle, Error, ProviderId, Stats, Trade,
     crypto::{self, Exchange, Interval, Pair, Tick},
 };
-use crate::{model::Instrument, net};
+use crate::{i18n, model::Instrument, net};
 
 /// Binance's most klines or trades per request.
 const MAX_PAGE: usize = 1000;
@@ -31,13 +31,13 @@ impl Exchange for Binance {
     // Binance pings every 20 seconds itself.
     const PING: Option<&'static str> = None;
     const INTERVALS: &'static [Interval] = &[
-        Interval::new(1, "1秒", "1s"),
-        Interval::new(60, "1分", "1m"),
-        Interval::new(300, "5分", "5m"),
-        Interval::new(900, "15分", "15m"),
-        Interval::new(3600, "1小时", "1h"),
-        Interval::new(14_400, "4小时", "4h"),
-        Interval::new(86_400, "1日", "1d"),
+        Interval::new(1, "1s"),
+        Interval::new(60, "1m"),
+        Interval::new(300, "5m"),
+        Interval::new(900, "15m"),
+        Interval::new(3600, "1h"),
+        Interval::new(14_400, "4h"),
+        Interval::new(86_400, "1d"),
     ];
 
     type Live = live::Live;
@@ -46,15 +46,17 @@ impl Exchange for Binance {
         format!("{base}{quote}")
     }
 
-    fn link(instrument: &Instrument) -> Link {
-        Link {
-            label: "在币安打开",
-            url: format!(
-                "https://www.binance.com/zh-CN/trade/{}_{}?type=spot",
-                net::percent_encode(&instrument.base),
-                net::percent_encode(&instrument.quote)
-            ),
-        }
+    fn link(instrument: &Instrument) -> String {
+        let language = match i18n::current() {
+            i18n::Locale::En => "en",
+            i18n::Locale::ZhCn => "zh-CN",
+            i18n::Locale::Ja => "ja",
+        };
+        format!(
+            "https://www.binance.com/{language}/trade/{}_{}?type=spot",
+            net::percent_encode(&instrument.base),
+            net::percent_encode(&instrument.quote)
+        )
     }
 
     async fn pairs() -> Result<Vec<Pair>, Error> {

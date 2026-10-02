@@ -15,7 +15,7 @@ pub(crate) fn verify_closed_menu_refresh(app: &AppHandle) {
         let menu = ui.as_ref().unwrap().menu.as_ref().unwrap();
         assert!(
             (0..menu.numberOfItems())
-                .any(|i| { menu.itemAtIndex(i).unwrap().title().to_string() == "检查更新…" })
+                .any(|i| menu.itemAtIndex(i).unwrap().title().to_string() == t!("tray.checkUpdate"))
         );
         let item = ui.as_ref().unwrap().status_item.as_ref().unwrap();
         assert!(item.menu(mtm).is_none(), "exercise the closed dropdown");
@@ -72,7 +72,7 @@ pub(crate) fn verify_closed_menu_refresh(app: &AppHandle) {
         assert!(ui.status_item.as_ref().unwrap().menu(mtm).is_none());
         assert_eq!(
             ui.menu.as_ref().unwrap().itemAtIndex(0).unwrap().title().to_string(),
-            "在设置中添加自选"
+            t!("tray.emptyWatchlist")
         );
     });
 
@@ -83,6 +83,8 @@ pub(crate) fn verify_closed_menu_refresh(app: &AppHandle) {
 /// it holds; both update in place, and the total can take the bar.
 fn verify_holdings_menu(app: &AppHandle) {
     use crate::{
+        format,
+        i18n::{self, Locale},
         market::ProviderId,
         model::Shared,
         portfolio::{self, Balance, Price, Wallet},
@@ -126,15 +128,18 @@ fn verify_holdings_menu(app: &AppHandle) {
         let ui = ui.as_ref().unwrap();
         let menu = ui.menu.as_ref().unwrap();
         let total = titles(menu)[0].clone();
-        assert!(total.starts_with("总资产 USDT\t84,500.00\t"), "{total}");
+        let label = t!("common.holdings.total");
+        assert!(total.starts_with(&format!("{label} USDT\t84,500.00\t")), "{total}");
         let submenu = menu.itemAtIndex(0).unwrap().submenu().expect("a holdings submenu");
         let rows = titles(&submenu);
-        assert_eq!(rows[0], "查看持仓…");
-        assert!(rows.iter().any(|r| r.starts_with("24h 盈亏\t+4,000.00")), "{rows:?}");
-        assert!(rows.iter().any(|r| r == "资产"), "section header: {rows:?}");
+        assert_eq!(rows[0], t!("tray.viewHoldings"));
+        let day = format!("{}\t+4,000.00", t!("common.holdings.dayPnl"));
+        assert!(rows.iter().any(|r| r.starts_with(&day)), "{rows:?}");
+        assert!(rows.iter().any(|r| *r == t!("common.holdings.assets")), "header: {rows:?}");
         assert!(rows.iter().any(|r| r.starts_with("BTC  1\t84,000.00\t+5.00%")), "{rows:?}");
         assert!(rows.iter().any(|r| r.starts_with("USDT  500\t500.00")), "{rows:?}");
-        assert!(rows.last().unwrap().starts_with("更新于 "), "{rows:?}");
+        let updated = t!("common.holdings.updated", time = format::clock(1_700_000_000_000.0));
+        assert_eq!(rows.last().unwrap(), &updated, "{rows:?}");
     });
 
     // A price tick updates the open menu's rows without rebuilding it.
@@ -163,9 +168,24 @@ fn verify_holdings_menu(app: &AppHandle) {
         model.settings.show_change = false;
     }
     bar::request_render(app);
-    assert_eq!(button.title().to_string(), "总资产 85,500");
+    assert_eq!(button.title().to_string(), format!("{} 85,500", t!("common.holdings.total")));
     shared.model().settings.show_change = true;
     bar::request_render(app);
     assert!(button.title().is_empty());
     assert!(button.image().is_some(), "two-row total");
+
+    // Another language rebuilds the menu in it, submenu headers included.
+    i18n::set(Locale::Ja);
+    bar::request_render(app);
+    UI.with_borrow(|ui| {
+        let ui = ui.as_ref().unwrap();
+        let menu = ui.menu.as_ref().unwrap();
+        assert!(titles(menu)[0].starts_with("総資産 USDT\t"), "{:?}", titles(menu));
+        assert_eq!(titles(menu).last().unwrap(), "Candlewick を終了");
+        let rows = titles(ui.submenu.as_ref().unwrap());
+        assert_eq!(rows[0], "保有資産を表示…");
+        assert!(rows.iter().any(|r| r == "資産"), "header: {rows:?}");
+    });
+    i18n::set(Locale::En);
+    bar::request_render(app);
 }

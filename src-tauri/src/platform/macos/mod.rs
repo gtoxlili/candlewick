@@ -13,11 +13,12 @@ use objc2_app_kit::{
     NSWorkspaceScreensDidWakeNotification, NSWorkspaceSessionDidBecomeActiveNotification,
     NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillSleepNotification,
 };
-use objc2_foundation::{NSNotification, NSString, NSURL};
+use objc2_foundation::{NSArray, NSNotification, NSString, NSURL, NSUserDefaults, ns_string};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 use tauri::{Builder, Wry};
 
 use super::Pause;
+use crate::i18n::{Language, Locale};
 
 /// Whether the first launch from an install location opens the settings
 /// window. The status item is in plain sight, so macOS leaves the app to it.
@@ -30,6 +31,31 @@ pub fn claim_single_instance() {}
 /// The app menu (see [`window::app_menu`]).
 pub fn configure(builder: Builder<Wry>) -> Builder<Wry> {
     builder.menu(window::app_menu)
+}
+
+/// The settings picked another language. The app's own text follows at
+/// once; the system's text in it (a text field's context menu, the About
+/// panel) follows at the next launch, reading the app's language where
+/// System Settings → General → Language & Region → Applications keeps it.
+/// Following the system clears it, so the system's preferred languages
+/// decide again, here and there. Called before the language is resolved.
+pub fn remember_language(language: Language) {
+    let id = match language {
+        Language::System => None,
+        Language::Only(Locale::En) => Some("en"),
+        Language::Only(Locale::ZhCn) => Some("zh-Hans"),
+        Language::Only(Locale::Ja) => Some("ja"),
+    };
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let key = ns_string!("AppleLanguages");
+    match id {
+        Some(id) => {
+            let languages = NSArray::from_retained_slice(&[NSString::from_str(id)]);
+            // SAFETY: an array of strings is a valid property list value.
+            unsafe { defaults.setObject_forKey(Some(&languages), key) };
+        }
+        None => defaults.removeObjectForKey(key),
+    }
 }
 
 /// Calls `on_change(reason, paused)` on sleep/wake, display sleep/wake and

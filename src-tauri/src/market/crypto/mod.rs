@@ -21,8 +21,8 @@ pub use self::{
     pairs::Pair,
 };
 use super::{
-    BoxFuture, Candle, ChartMode, ChartSpec, Error, IntervalSpec, Link, LiveEvent, Provider,
-    ProviderId, Search, Stats, Trade,
+    BoxFuture, Candle, ChartMode, ChartSpec, Error, IntervalSpec, LiveEvent, Provider, ProviderId,
+    Search, Stats, StatsSpan, Trade,
 };
 use crate::{
     http,
@@ -54,8 +54,9 @@ pub trait Exchange: Send + Sync + 'static {
     /// The pair's symbol as the exchange writes it: `BTCUSDT`, `BTC-USDT`.
     fn symbol(base: &str, quote: &str) -> String;
 
-    /// The pair's page on the exchange's website.
-    fn link(instrument: &Instrument) -> Link;
+    /// The pair's page on the exchange's website, in the app's language
+    /// where the site has it.
+    fn link(instrument: &Instrument) -> String;
 
     /// Every spot pair being traded.
     fn pairs() -> impl Future<Output = Result<Vec<Pair>, Error>> + Send;
@@ -89,7 +90,6 @@ pub trait Exchange: Send + Sync + 'static {
 /// A candle interval the chart offers.
 pub struct Interval {
     pub secs: u32,
-    pub label: &'static str,
     /// The exchange's name for it.
     pub name: &'static str,
     /// How the chart first shows it.
@@ -97,10 +97,10 @@ pub struct Interval {
 }
 
 impl Interval {
-    pub const fn new(secs: u32, label: &'static str, name: &'static str) -> Self {
+    pub const fn new(secs: u32, name: &'static str) -> Self {
         // One-second candles are mostly noise; a line reads better.
         let mode = if secs < 60 { ChartMode::Line } else { ChartMode::Candle };
-        Self { secs, label, name, mode }
+        Self { secs, name, mode }
     }
 }
 
@@ -118,10 +118,10 @@ impl<E: Exchange> Provider for E {
             *field = field.trim().to_uppercase();
         }
         if !valid_asset(&instrument.base) || !valid_asset(&instrument.quote) {
-            return Err(format!("无效的交易对：{}", instrument.symbol));
+            return Err(t!("error.invalidPair", symbol = instrument.symbol));
         }
         if instrument.symbol != E::symbol(&instrument.base, &instrument.quote) {
-            return Err(format!("交易对与币种不匹配：{}", instrument.symbol));
+            return Err(t!("error.pairMismatch", symbol = instrument.symbol));
         }
         Ok(())
     }
@@ -144,19 +144,18 @@ impl<E: Exchange> Provider for E {
 
     fn chart_spec(&self, instrument: &Instrument) -> ChartSpec {
         ChartSpec {
-            source: E::ID.name(),
+            source: E::ID,
             intervals: E::INTERVALS
                 .iter()
                 .map(|interval| IntervalSpec {
                     secs: interval.secs,
-                    label: interval.label,
                     mode: interval.mode,
                     aligned: true,
                     regular_only: false,
                 })
                 .collect(),
-            stats_span: "24h",
-            volume_unit: instrument.base.clone(),
+            stats_span: StatsSpan::Rolling24h,
+            volume_unit: Some(instrument.base.clone()),
             turnover_unit: instrument.quote.clone(),
             day_offset: 0,
             book_steps: book::steps(instrument.decimals).into_iter().map(book::price).collect(),
@@ -172,10 +171,9 @@ impl<E: Exchange> Provider for E {
         limit: usize,
     ) -> BoxFuture<'a, Result<Vec<Candle>, Error>> {
         Box::pin(async move {
-            let interval = E::INTERVALS
-                .iter()
-                .find(|i| i.secs == interval)
-                .ok_or_else(|| Error::Message(format!("不支持的周期：{interval} 秒")))?;
+            let interval = E::INTERVALS.iter().find(|i| i.secs == interval).ok_or_else(|| {
+                Error::Message(t!("error.unsupportedInterval", seconds = interval))
+            })?;
             E::history(instrument, interval, end, limit).await
         })
     }

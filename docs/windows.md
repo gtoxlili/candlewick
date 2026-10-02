@@ -24,7 +24,7 @@ macOS 的菜单栏在 Windows 上对应任务栏。所以固定的价格直接�
 
 位置取自通知区域窗口 `TrayNotifyWnd` 的左缘，高度占满任务栏。Windows 11 把任务栏设为左对齐时，小组件按钮（天气）会挪到通知区域左边，这时行情条再往左让出 160 DIP。任务栏的布局会在没有通知的情况下变化，比如托盘图标增减，所以 shell 线程每 2 秒核对一次位置和层级。这个定时器允许晚到 0.5 秒，系统可以把它和别的唤醒合并，省电。XAML 做的任务栏内容盖在整条任务栏上，行情条每次核对时确保自己在最上层，只在不是最上层时才调整，避免让 Explorer 反复重绘。
 
-排版照着任务栏时钟来。两排模式下价格和涨跌都是 12 DIP、基线间距 16 DIP，和时钟的两行一致；名称和单行文字是 14 DIP。字体是 Segoe UI Variable Text，Windows 10 上退回 Segoe UI，股票的中文名由 DirectWrite 回退到微软雅黑。数字用等宽字形，价格跳动时宽度不抖。涨跌幅的颜色和 macOS 一样，是在文字颜色里混入 45% 的涨跌色。任务栏矮于 38 DIP（小任务栏按钮）时两排放不下，涨跌幅改为跟在价格后面同一行显示。
+排版照着任务栏时钟来。两排模式下价格和涨跌都是 12 DIP、基线间距 16 DIP，和时钟的两行一致；名称和单行文字是 14 DIP。字体是 Segoe UI Variable Text，Windows 10 上退回 Segoe UI；它没有的字由 DirectWrite 按界面语言回退，中文名用微软雅黑，日文界面用 Yu Gothic。数字用等宽字形，价格跳动时宽度不抖。涨跌幅的颜色和 macOS 一样，是在文字颜色里混入 45% 的涨跌色。任务栏矮于 38 DIP（小任务栏按钮）时两排放不下，涨跌幅改为跟在价格后面同一行显示。
 
 鼠标悬停时出现 Windows 11 任务栏按钮那样的圆角底板，按下时变浅，下拉菜单打开期间保持高亮，和点开时钟时一样。左键或右键松开时打开下拉菜单。
 
@@ -84,7 +84,7 @@ pnpm tauri dev
 pnpm tauri build   # 安装程序
 ```
 
-安装程序在 `src-tauri/target/release/bundle/nsis/`，文件名形如 `Candlewick_0.5.0_x64-setup.exe`。Windows 专用的打包配置在 `src-tauri/tauri.windows.conf.json`，构建时与 `tauri.conf.json` 合并：只打 NSIS 安装包；按当前用户安装，不需要管理员权限；安装界面为简体中文；WebView2 低于 125 版时由安装程序更新，Fluent 覆盖式滚动条和标题栏的非客户区支持都依赖这个版本。
+安装程序在 `src-tauri/target/release/bundle/nsis/`，文件名形如 `Candlewick_0.5.0_x64-setup.exe`。Windows 专用的打包配置在 `src-tauri/tauri.windows.conf.json`，构建时与 `tauri.conf.json` 合并：只打 NSIS 安装包；按当前用户安装，不需要管理员权限；安装界面有英文、简体中文和日文，按系统语言显示，其他语言的系统上是英文；WebView2 低于 125 版时由安装程序更新，Fluent 覆盖式滚动条和标题栏的非客户区支持都依赖这个版本。
 
 程序清单在 `src-tauri/windows/app.manifest`，由 `build.rs` 嵌入。它声明了 Windows 10/11 兼容性、Per-Monitor V2 DPI 和 Common Controls 6。兼容性声明必不可少，没有它系统会拒绝创建分层子窗口，行情条就挂不上任务栏。清单还启用了 Segment Heap，Windows 10 2004 起生效，对整天运行的进程来说占用和碎片更少。`tauri build` 静态链接 VC 运行库，干净的系统上不需要另装 VC++ 运行库。
 

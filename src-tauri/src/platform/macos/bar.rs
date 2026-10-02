@@ -24,6 +24,7 @@ use tray_icon::menu::{ContextMenu, IsMenuItem, Menu, MenuItem, PredefinedMenuIte
 use super::ticker;
 use crate::{
     bar::{self, Action, Holdings, Row, Shape, Slot, Ticker, View},
+    i18n::Locale,
     model::{ColorScheme, Instrument},
 };
 
@@ -86,6 +87,8 @@ struct Layout {
     /// A holdings row with this submenu leads the menu, with a separator
     /// after it.
     holdings: Option<Shape>,
+    /// What the fixed items say.
+    locale: Locale,
 }
 
 impl Layout {
@@ -206,6 +209,7 @@ impl Ui {
             watchlist: view.watchlist,
             update: view.update,
             holdings: view.holdings.as_ref().map(Holdings::shape),
+            locale: view.locale,
         };
         if self.layout.as_ref() != Some(&layout) {
             log::debug!("menu rebuilt for {} instruments", layout.watchlist.len());
@@ -530,7 +534,12 @@ fn build_menu(layout: &Layout, holdings: Option<&Holdings>) -> tauri::Result<Men
             .into_iter()
             .filter_map(|slot| -> Option<Box<dyn IsMenuItem>> {
                 Some(match slot {
-                    Slot::Open => Box::new(MenuItem::with_id(ID_HOLDINGS, "查看持仓…", true, None)),
+                    Slot::Open => Box::new(MenuItem::with_id(
+                        ID_HOLDINGS,
+                        t!("tray.viewHoldings"),
+                        true,
+                        None,
+                    )),
                     Slot::Separator => Box::new(PredefinedMenuItem::separator()),
                     Slot::Header(_) => return None,
                     Slot::Caption(_) => {
@@ -541,11 +550,12 @@ fn build_menu(layout: &Layout, holdings: Option<&Holdings>) -> tauri::Result<Men
             })
             .collect();
         let refs: Vec<&dyn IsMenuItem> = items.iter().map(|item| item.as_ref()).collect();
-        menu.append(&Submenu::with_id_and_items("holdings-menu", "总资产", true, &refs)?)?;
+        let title = t!("common.holdings.total");
+        menu.append(&Submenu::with_id_and_items("holdings-menu", title, true, &refs)?)?;
         menu.append(&PredefinedMenuItem::separator())?;
     }
     if watchlist.is_empty() {
-        menu.append(&MenuItem::with_id("empty", "在设置中添加自选", false, None))?;
+        menu.append(&MenuItem::with_id("empty", t!("tray.emptyWatchlist"), false, None))?;
     } else {
         for instrument in watchlist {
             let id = format!("{INSTRUMENT_PREFIX}{}", instrument.id());
@@ -556,24 +566,25 @@ fn build_menu(layout: &Layout, holdings: Option<&Holdings>) -> tauri::Result<Men
     }
     menu.append(&PredefinedMenuItem::separator())?;
     if let Some(version) = update {
-        let title = format!("更新到 {version} 并重新启动");
+        let title = t!("tray.update", version = version);
         menu.append(&MenuItem::with_id(ID_UPDATE, title, true, None))?;
     } else {
-        menu.append(&MenuItem::with_id(ID_CHECK_UPDATE, "检查更新…", true, None))?;
+        menu.append(&MenuItem::with_id(ID_CHECK_UPDATE, t!("tray.checkUpdate"), true, None))?;
     }
     // No key equivalents: AppKit reserves a shortcut column on every row, which
     // would leave a wide empty band to the right of the prices.
-    menu.append(&MenuItem::with_id(ID_SETTINGS, "设置…", true, None))?;
-    menu.append(&MenuItem::with_id(ID_QUIT, "退出 Candlewick", true, None))?;
+    menu.append(&MenuItem::with_id(ID_SETTINGS, t!("tray.settings"), true, None))?;
+    menu.append(&MenuItem::with_id(ID_QUIT, t!("tray.quit"), true, None))?;
     Ok(menu)
 }
 
-/// Inserts the section headers (`账户`, `资产`, `合约`) where the slots
-/// put them, in order, so every slot ends up at its index.
+/// Inserts the section headers (Accounts, Assets, Positions) where the
+/// slots put them, in order, so every slot ends up at its index.
 fn add_headers(submenu: &NSMenu, holdings: &Holdings, mtm: MainThreadMarker) {
     for (index, slot) in holdings.slots().into_iter().enumerate() {
-        if let Slot::Header(title) = slot {
-            let header = NSMenuItem::sectionHeaderWithTitle(&NSString::from_str(title), mtm);
+        if let Slot::Header(section) = slot {
+            let title = NSString::from_str(section.title());
+            let header = NSMenuItem::sectionHeaderWithTitle(&title, mtm);
             submenu.insertItem_atIndex(&header, index as isize);
         }
     }

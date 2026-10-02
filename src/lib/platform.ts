@@ -3,9 +3,6 @@
 // pages; what only the running system knows (on Windows, the backdrop behind
 // the window) comes from the app before the first render.
 
-/** Where the pinned entry shows. */
-export const BAR = __WINDOWS__ ? "任务栏" : "菜单栏";
-
 /** Set by the app before the page loads (platform/windows/window.rs). */
 interface Chrome {
   backdrop: "mica" | "solid";

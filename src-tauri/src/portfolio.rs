@@ -32,19 +32,6 @@ pub enum Wallet {
     CoinFutures,
 }
 
-impl Wallet {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Spot => "现货",
-            Self::Trading => "交易账户",
-            Self::Funding => "资金",
-            Self::Earn => "理财",
-            Self::UsdFutures => "U 本位合约",
-            Self::CoinFutures => "币本位合约",
-        }
-    }
-}
-
 /// An asset in a wallet, as the exchange reports it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Balance {
@@ -72,13 +59,12 @@ impl Balance {
 pub struct Position {
     /// As the exchange writes it: `BTCUSDT`, `BTCUSD_PERP`, `BTC-USDT-SWAP`.
     pub symbol: String,
-    /// `U 本位永续`, `币本位交割`, `期权`…
-    pub kind: &'static str,
+    pub kind: PositionKind,
     pub long: bool,
     /// How much, in `size_unit`.
     pub size: f64,
-    /// `BTC`, or `张` for contracts.
-    pub size_unit: String,
+    /// The base asset, or none for a number of contracts.
+    pub size_unit: Option<String>,
     pub entry: f64,
     pub mark: f64,
     pub liquidation: Option<f64>,
@@ -94,6 +80,24 @@ pub struct Position {
     /// tell what its 24h move made of the position.
     #[serde(skip)]
     pub day: Option<Price>,
+}
+
+/// What a position is: what its margin and PnL are settled in, and
+/// whether it expires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PositionKind {
+    UsdtPerpetual,
+    UsdtFutures,
+    UsdcPerpetual,
+    UsdcFutures,
+    /// Settled in the coin itself (inverse).
+    CoinPerpetual,
+    CoinFutures,
+    Option,
+    /// A spot margin position (OKX).
+    Margin,
+    Other,
 }
 
 /// A price in USDT: now, and 24 hours before.
@@ -121,7 +125,6 @@ pub struct Holdings {
 #[serde(rename_all = "camelCase")]
 pub struct WalletValue {
     pub wallet: Wallet,
-    pub label: &'static str,
     pub value: f64,
 }
 
@@ -151,7 +154,7 @@ pub struct Asset {
 #[serde(rename_all = "camelCase")]
 pub struct Holding {
     pub exchange: ProviderId,
-    pub wallet: &'static str,
+    pub wallet: Wallet,
     pub amount: f64,
 }
 
@@ -227,7 +230,7 @@ pub fn value(
             change += moved.unwrap_or(0.0);
             let mut where_held: Vec<Holding> = held
                 .iter()
-                .map(|b| Holding { exchange, wallet: b.wallet.label(), amount: b.amount })
+                .map(|b| Holding { exchange, wallet: b.wallet, amount: b.amount })
                 .collect();
             where_held.sort_by(|a, b| b.amount.total_cmp(&a.amount));
             let costed: Vec<&&Balance> = held.iter().filter(|b| b.cost.is_some()).collect();
@@ -267,10 +270,7 @@ pub fn value(
     Holdings {
         total: wallets.values().sum(),
         change,
-        wallets: wallets
-            .into_iter()
-            .map(|(wallet, value)| WalletValue { wallet, label: wallet.label(), value })
-            .collect(),
+        wallets: wallets.into_iter().map(|(wallet, value)| WalletValue { wallet, value }).collect(),
         assets,
         positions,
     }
@@ -322,7 +322,6 @@ impl Account {
 #[serde(rename_all = "camelCase")]
 pub struct AccountView {
     pub exchange: ProviderId,
-    pub name: &'static str,
     /// None before the first good refresh.
     pub total: Option<f64>,
     pub change: Option<f64>,
@@ -362,7 +361,6 @@ impl Portfolio {
                 .values()
                 .map(|account| AccountView {
                     exchange: account.exchange,
-                    name: account.exchange.name(),
                     total: account.holdings.as_ref().map(|h| h.total),
                     change: account.holdings.as_ref().map(|h| h.change),
                     wallets: account
@@ -482,17 +480,17 @@ mod tests {
         let wallets: Vec<(Wallet, f64)> =
             holdings.wallets.iter().map(|w| (w.wallet, w.value)).collect();
         assert_eq!(wallets, [(Wallet::Spot, 100.0), (Wallet::Funding, 57.0), (Wallet::Earn, 50.0)]);
-        assert_eq!(holdings.assets[0].held[0].wallet, "现货");
+        assert_eq!(holdings.assets[0].held[0].wallet, Wallet::Spot);
     }
 
     #[test]
     fn positions_move_with_their_base() {
         let short = Position {
             symbol: "BTCUSDT".into(),
-            kind: "U 本位永续",
+            kind: PositionKind::UsdtPerpetual,
             long: false,
             size: 2.0,
-            size_unit: "BTC".into(),
+            size_unit: Some("BTC".into()),
             entry: 90.0,
             mark: 100.0,
             liquidation: None,

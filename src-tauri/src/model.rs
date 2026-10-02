@@ -16,8 +16,8 @@ use tokio::sync::{oneshot, watch};
 
 use crate::{
     credentials::Credentials,
+    i18n::Language,
     market::{self, Feeds, ProviderId},
-    net::Route,
     portfolio,
 };
 
@@ -132,6 +132,8 @@ pub struct Settings {
     pub auto_update: bool,
     /// AI agents may read the app's data (`agent`).
     pub agent_access: bool,
+    /// What the app speaks (`i18n`).
+    pub language: Language,
 }
 
 impl Default for Settings {
@@ -149,6 +151,7 @@ impl Default for Settings {
             color_scheme: ColorScheme::GreenUp,
             auto_update: true,
             agent_access: false,
+            language: Language::System,
         }
     }
 }
@@ -159,14 +162,14 @@ impl Settings {
     /// takes them off the watchlist.
     pub fn validated(mut self) -> Result<Self, String> {
         if !self.exchange.is_exchange() {
-            return Err(format!("不支持的交易所：{}", self.exchange.name()));
+            return Err(t!("error.unsupportedExchange", name = self.exchange.name()));
         }
         let exchange = self.exchange;
         self.watchlist.retain(|instrument| {
             !instrument.provider.is_exchange() || instrument.provider == exchange
         });
         if self.watchlist.len() > MAX_INSTRUMENTS {
-            return Err(format!("最多添加 {MAX_INSTRUMENTS} 个"));
+            return Err(t!("error.watchlistFull", max = MAX_INSTRUMENTS));
         }
         let mut seen = HashSet::new();
         for instrument in &mut self.watchlist {
@@ -175,11 +178,11 @@ impl Settings {
                 instrument.decimals = None;
             }
             if !seen.insert(instrument.id()) {
-                return Err(format!("重复添加：{}", instrument.symbol));
+                return Err(t!("error.duplicate", symbol = instrument.symbol));
             }
         }
         if self.watchlist.iter().filter(|instrument| instrument.pinned).count() > 1 {
-            return Err("菜单栏只能显示一个".to_owned());
+            return Err(t!("error.onePinned").to_owned());
         }
         if self.holdings_in_bar {
             for instrument in &mut self.watchlist {
@@ -249,7 +252,8 @@ pub struct Quote {
     pub session: Option<Session>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Session {
     Pre,
     Post,
@@ -259,65 +263,41 @@ pub enum Session {
 impl Session {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Pre => "盘前",
-            Self::Post => "盘后",
-            Self::Overnight => "夜盘",
+            Self::Pre => t!("session.pre"),
+            Self::Post => t!("session.post"),
+            Self::Overnight => t!("session.overnight"),
         }
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Status {
     /// Nothing to stream.
     Idle,
     Paused,
     #[default]
     Connecting,
-    Live(Route),
+    Live,
+    /// The connection failed; the next attempt is this far off.
     Retrying {
-        reason: String,
         retry_in_secs: u64,
     },
-    /// Waits for the user, e.g. to enter credentials; not retried.
-    Unavailable(String),
+    /// Waits for the user to enter credentials; not retried.
+    NoCredentials,
 }
 
 impl Status {
     /// Short line under the watchlist in the dropdown; empty (hidden) while
     /// live. `source` names the provider.
-    pub fn caption(&self, source: &str) -> String {
+    pub fn caption(self, source: &str) -> String {
         match self {
-            Self::Idle | Self::Live(_) => String::new(),
-            Self::Paused => "已暂停".to_owned(),
-            Self::Connecting => format!("正在连接{source}…"),
-            Self::Retrying { retry_in_secs, .. } => {
-                format!("{source}连接失败 · {retry_in_secs} 秒后重试")
+            Self::Idle | Self::Live => String::new(),
+            Self::Paused => t!("status.paused").to_owned(),
+            Self::Connecting => t!("status.connecting", source = source),
+            Self::Retrying { retry_in_secs } => {
+                t!("status.retrying", source = source, seconds = retry_in_secs)
             }
-            Self::Unavailable(reason) => reason.clone(),
-        }
-    }
-
-    /// Full description for the settings window, including the route.
-    pub fn label(&self) -> String {
-        match self {
-            Self::Idle => "还没有自选".to_owned(),
-            Self::Paused => "已暂停（屏幕休眠）".to_owned(),
-            Self::Connecting => "连接中…".to_owned(),
-            Self::Live(route) => format!("实时 · {route}"),
-            Self::Retrying { reason, retry_in_secs } => {
-                let reason: String = reason.chars().take(48).collect();
-                format!("{retry_in_secs} 秒后重连 · {reason}")
-            }
-            Self::Unavailable(reason) => reason.clone(),
-        }
-    }
-
-    pub fn tone(&self) -> &'static str {
-        match self {
-            Self::Live(_) => "live",
-            Self::Retrying { .. } | Self::Unavailable(_) => "error",
-            Self::Connecting => "busy",
-            Self::Idle | Self::Paused => "idle",
+            Self::NoCredentials => t!("status.noCredentials", source = source),
         }
     }
 }

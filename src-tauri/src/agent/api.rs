@@ -27,7 +27,7 @@ use tokio::{
 use crate::{
     bar,
     market::{self, Candle, LiveEvent, ProviderId, Trade},
-    model::{Instrument, Shared},
+    model::{Instrument, Session, Shared},
     portfolio::{self, Portfolio, now_ms},
 };
 
@@ -69,7 +69,7 @@ pub fn router(app: AppHandle, port: u16, token: &str) -> Router {
         .route("/v1/candles", get(candles))
         .route("/v1/trades", get(trades))
         .route("/v1/market", get(market_now))
-        .fallback(|| async { failure(StatusCode::NOT_FOUND, "没有这个接口，见 GET /v1") })
+        .fallback(|| async { failure(StatusCode::NOT_FOUND, "no such endpoint; see GET /v1") })
         .layer(middleware::from_fn_with_state(api.clone(), guard))
         .with_state(api)
 }
@@ -88,7 +88,7 @@ fn admit(headers: &HeaderMap, port: u16, knows: impl Fn(&str) -> bool) -> Result
     let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default();
     let local = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
     if headers.contains_key(header::ORIGIN) || !local.iter().any(|l| l == host) {
-        return Err(failure(StatusCode::FORBIDDEN, "只接受本机命令行的请求"));
+        return Err(failure(StatusCode::FORBIDDEN, "only programs on this machine may call"));
     }
     let bearer = headers
         .get(header::AUTHORIZATION)
@@ -96,7 +96,7 @@ fn admit(headers: &HeaderMap, port: u16, knows: impl Fn(&str) -> bool) -> Result
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim);
     if !bearer.is_some_and(knows) {
-        return Err(failure(StatusCode::UNAUTHORIZED, "令牌缺失或不对"));
+        return Err(failure(StatusCode::UNAUTHORIZED, "missing or wrong token"));
     }
     Ok(())
 }
@@ -129,13 +129,7 @@ struct Index {
     /// Stocks can be read: Longbridge credentials are set.
     stocks: bool,
     /// Candle intervals in seconds, by source.
-    intervals: BTreeMap<ProviderId, Vec<IntervalInfo>>,
-}
-
-#[derive(Serialize)]
-struct IntervalInfo {
-    secs: u32,
-    label: &'static str,
+    intervals: BTreeMap<ProviderId, Vec<u32>>,
 }
 
 async fn index(State(api): State<Api>) -> Json<Index> {
@@ -149,12 +143,7 @@ async fn index(State(api): State<Api>) -> Json<Index> {
         .into_iter()
         .map(|provider| {
             let spec = provider.provider().chart_spec(&bare(provider, ""));
-            let intervals = spec
-                .intervals
-                .iter()
-                .map(|i| IntervalInfo { secs: i.secs, label: i.label })
-                .collect();
-            (provider, intervals)
+            (provider, spec.intervals.iter().map(|i| i.secs).collect())
         })
         .collect();
     Json(Index {
@@ -200,7 +189,7 @@ struct WatchlistEntry {
     /// 24 hours ago for crypto, the last regular close for stocks.
     reference: Option<f64>,
     change_pct: Option<f64>,
-    session: Option<&'static str>,
+    session: Option<Session>,
 }
 
 async fn watchlist(State(api): State<Api>) -> Json<Vec<WatchlistEntry>> {
@@ -222,7 +211,7 @@ async fn watchlist(State(api): State<Api>) -> Json<Vec<WatchlistEntry>> {
                 last: quote.map(|q| q.last),
                 reference: quote.map(|q| q.open),
                 change_pct: quote.and_then(|q| portfolio::pct(q.last, q.open)),
-                session: quote.and_then(|q| q.session).map(|s| s.label()),
+                session: quote.and_then(|q| q.session),
                 id,
             }
         })
@@ -358,7 +347,7 @@ fn resolve(app: &AppHandle, id: &str) -> Result<Instrument, Failure> {
     let invalid = || {
         failure(
             StatusCode::BAD_REQUEST,
-            format!("无效的 id：{id}，格式为 来源:代码，如 okx:BTC-USDT"),
+            format!("invalid id {id}: expected source:symbol, such as okx:BTC-USDT"),
         )
     };
     let (source, symbol) = id.split_once(':').ok_or_else(invalid)?;

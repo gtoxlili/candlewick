@@ -14,7 +14,7 @@ use super::{
     service::{self, Push},
 };
 use crate::{
-    market::{Book, Error, FeedState, Level, LiveEvent, Stats, Trade},
+    market::{Book, Error, FeedState, Level, LiveEvent, ProviderId, Stats, Trade},
     model::Instrument,
 };
 
@@ -114,11 +114,9 @@ async fn snapshot(symbol: String) -> Result<(Day, Depth), Error> {
         service::call::<_, proto::QuoteResponse>(cmd::QUOTE, &quote_request),
         service::call::<_, proto::DepthResponse>(cmd::DEPTH, &depth_request),
     );
-    let quote = quotes?
-        .secu_quote
-        .into_iter()
-        .next()
-        .ok_or_else(|| Error::Message("长桥没有这只股票的报价".to_owned()))?;
+    let quote = quotes?.secu_quote.into_iter().next().ok_or_else(|| {
+        Error::Message(t!("error.noQuote", source = ProviderId::Longbridge.name()))
+    })?;
     let mut depth = Depth::default();
     if let Ok(book) = book {
         depth.replace(&book.ask, &book.bid);

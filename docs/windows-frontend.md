@@ -20,7 +20,7 @@
 
 `backdrop` 表示窗口背后有没有 Mica，只有 Windows 11 有。
 
-两个入口都在 `createRoot` 之前调用 `setupPlatform()`，它负责：
+每个入口都在 `createRoot` 之前调用 `setupPlatform()`，再等 `setupI18n()` 向应用问到界面语言（见 [i18n.md](i18n.md)）。`setupPlatform()` 负责：
 
 - 给根元素加 `data-platform`
 - Windows 上加 `data-backdrop`
@@ -39,7 +39,7 @@
 
 配色两个平台共用一套，是 Candlewick 自己的，不跟随系统强调色，见 [design.md](design.md)。
 
-字体栈两个平台共用：`-apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", …`。macOS 上命中系统字体，中文回退到苹方。Windows 上命中 Segoe UI Variable（Windows 10 上是 Segoe UI），中文回退到微软雅黑。
+字体栈两个平台共用：`-apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", …`。macOS 上命中系统字体，中文回退到苹方。Windows 上命中 Segoe UI Variable（Windows 10 上是 Segoe UI），中文回退到微软雅黑。日文界面（`<html lang="ja">`）把 Hiragino Sans、Yu Gothic UI、Meiryo UI 排在中文字体前面，汉字用日文字形。
 
 小号文字用 `text-2xs`，macOS 上是 11px，Windows 上是 12px，后者是 Windows 字号阶梯里最小的一级。Windows 上 `text-xs`、`text-sm`、`text-base` 分别是 12、14、14px，对应 Fluent 的 Caption 与 Body。
 
@@ -60,7 +60,7 @@ Windows 独有的几个变量只用于模仿系统自身的控件，写在 `:roo
 `TitleBar` 有两种用法：
 
 ```tsx
-<TitleBar title="设置" divider={scrolled} />               // 普通标题
+<TitleBar title={t("settings.title")} divider={scrolled} /> // 普通标题
 <TitleBar className={cn(TITLE_INSET, "gap-2")} maximizable> // 自定义内容
   …
 </TitleBar>
@@ -81,7 +81,7 @@ Windows 上的标题栏靠 CSS `app-region: drag` 成为系统标题栏，拖动
 
 ## 文案
 
-「菜单栏」用常量 `BAR`，Windows 上显示「任务栏」。设置页里另有三处按平台区分：自选的说明、「红涨绿跌」的说明，以及开机启动开关的名称和说明。
+文字都在 `src/locales/`，见 [i18n.md](i18n.md)。两个平台说法不同的消息，Windows 那句是同名加 `_windows` 后缀，页面用 `t(key, PLATFORM)` 取：「菜单栏」与「任务栏」（自选里的开关、显示名称、显示涨跌幅、显示总资产、自选的说明），以及开机启动开关的名称。
 
 ## 权限
 

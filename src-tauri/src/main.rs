@@ -9,6 +9,10 @@
 // A release build is a GUI app on Windows: no console window beside it.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+// First, so `t!` reaches every module after it.
+#[macro_use]
+mod i18n;
+
 mod agent;
 mod bar;
 mod calendar;
@@ -49,7 +53,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::save_settings,
-            commands::get_status,
+            commands::get_locale,
             commands::get_login_item,
             commands::set_login_item,
             commands::get_update,
@@ -79,8 +83,11 @@ fn main() {
             let config_dir = app.path().app_config_dir()?;
             let settings_path = config_dir.join("settings.json");
             let credentials_path = config_dir.join("credentials.json");
+            let settings = model::load(&settings_path);
+            // Before anything says a word: the bar, the menus, the first window.
+            i18n::set(settings.language.locale());
             let (shared, control) = Shared::new(
-                model::load(&settings_path),
+                settings,
                 settings_path,
                 credentials::load(&credentials_path),
                 credentials_path,

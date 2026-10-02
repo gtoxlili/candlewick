@@ -18,7 +18,7 @@ use windows::{
             SetMenuItemInfoW,
         },
     },
-    core::{BOOL, HSTRING, PCWSTR, PWSTR, Result, w},
+    core::{BOOL, HSTRING, PCWSTR, PWSTR, Result},
 };
 
 use super::{
@@ -32,6 +32,7 @@ use super::{
 use crate::{
     bar::{self, Action, Hue, Row, Shape, Slot, View},
     format::Direction,
+    i18n::Locale,
 };
 
 const SETTINGS: u32 = 1;
@@ -39,7 +40,7 @@ const QUIT: u32 = 2;
 const STATUS: u32 = 3;
 const UPDATE: u32 = 4;
 const CHECK_UPDATE: u32 = 5;
-/// The holdings row (whose submenu opens) and `查看持仓…` inside it.
+/// The holdings row (whose submenu opens) and `View Holdings…` inside it.
 const HOLDINGS: u32 = 6;
 const OPEN_HOLDINGS: u32 = 7;
 /// Watchlist row n has this id plus n.
@@ -55,6 +56,8 @@ pub struct Open {
     ids: Vec<String>,
     /// The submenu it was built with, if any.
     shape: Option<Shape>,
+    /// What its fixed items say.
+    locale: Locale,
     /// The command id, text and mark of each row shown, holdings first.
     shown: Vec<(u32, String, Option<HBITMAP>)>,
 }
@@ -106,6 +109,7 @@ impl Open {
                 menu,
                 ids: Vec::new(),
                 shape: view.holdings.as_ref().map(bar::Holdings::shape),
+                locale: view.locale,
                 shown: Vec::new(),
             };
             let mut position = 0;
@@ -137,7 +141,8 @@ impl Open {
                 }
             }
             if view.watchlist.is_empty() {
-                AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, w!("在设置中添加自选"))?;
+                let empty = HSTRING::from(escape(t!("tray.emptyWatchlist")));
+                AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &empty)?;
             } else {
                 open.ids = view.watchlist.iter().map(|instrument| instrument.id()).collect();
                 if !view.caption.is_empty() {
@@ -151,13 +156,15 @@ impl Open {
             }
             AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
             if let Some(version) = &view.update {
-                let title = escape(&format!("更新到 {version} 并重新启动"));
+                let title = escape(&t!("tray.update", version = version));
                 AppendMenuW(menu, MF_STRING, UPDATE as usize, &HSTRING::from(title))?;
             } else {
-                AppendMenuW(menu, MF_STRING, CHECK_UPDATE as usize, w!("检查更新…"))?;
+                let title = HSTRING::from(escape(t!("tray.checkUpdate")));
+                AppendMenuW(menu, MF_STRING, CHECK_UPDATE as usize, &title)?;
             }
-            AppendMenuW(menu, MF_STRING, SETTINGS as usize, w!("设置…"))?;
-            AppendMenuW(menu, MF_STRING, QUIT as usize, w!("退出 Candlewick"))?;
+            let settings = HSTRING::from(escape(t!("tray.settings")));
+            AppendMenuW(menu, MF_STRING, SETTINGS as usize, &settings)?;
+            AppendMenuW(menu, MF_STRING, QUIT as usize, &HSTRING::from(escape(t!("tray.quit"))))?;
             Ok(open)
         }
     }
@@ -173,11 +180,13 @@ impl Open {
             for slot in view.holdings.iter().flat_map(|h| h.slots()) {
                 match slot {
                     Slot::Open => {
-                        AppendMenuW(menu, MF_STRING, OPEN_HOLDINGS as usize, w!("查看持仓…"))?;
+                        let open = HSTRING::from(escape(t!("tray.viewHoldings")));
+                        AppendMenuW(menu, MF_STRING, OPEN_HOLDINGS as usize, &open)?;
                     }
                     Slot::Separator => AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?,
-                    Slot::Header(title) => {
-                        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(title))?;
+                    Slot::Header(section) => {
+                        let title = HSTRING::from(escape(section.title()));
+                        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &title)?;
                     }
                     Slot::Caption(text) => {
                         AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &HSTRING::from(escape(text)))?;
@@ -205,11 +214,14 @@ impl Open {
     }
 
     /// Brings the open menu's rows up to date and repaints it. A changed
-    /// watchlist, or holdings appearing, going or changing shape, waits
-    /// for the next time it opens.
+    /// watchlist, holdings appearing, going or changing shape, or another
+    /// language waits for the next time it opens.
     pub fn update(&mut self, view: &View, marks: &mut Marks) {
         let ids: Vec<String> = view.watchlist.iter().map(|instrument| instrument.id()).collect();
-        if ids != self.ids || view.holdings.as_ref().map(bar::Holdings::shape) != self.shape {
+        if ids != self.ids
+            || view.holdings.as_ref().map(bar::Holdings::shape) != self.shape
+            || view.locale != self.locale
+        {
             return;
         }
         let lines: Vec<Line> = priced(view).into_iter().chain(sub(view)).collect();

@@ -19,7 +19,7 @@ use crate::{
         },
     },
     net,
-    portfolio::{Balance, Position, Price, Wallet},
+    portfolio::{Balance, Position, PositionKind, Price, Wallet},
     sign,
 };
 
@@ -174,7 +174,7 @@ impl RawPosition {
             kind: kind(&self.inst_type, &self.inst_id),
             long,
             size: pos.abs(),
-            size_unit: if self.inst_type == "MARGIN" { self.pos_ccy } else { "张".to_owned() },
+            size_unit: (self.inst_type == "MARGIN").then_some(self.pos_ccy),
             entry: crypto::num(&self.avg_px),
             mark: crypto::num(&self.mark_px),
             liquidation: self.liq_px.parse().ok().filter(|p: &f64| *p > 0.0),
@@ -195,19 +195,19 @@ impl RawPosition {
     }
 }
 
-/// `BTC-USDT-SWAP` → `U 本位永续`, `BTC-USD-250926` → `币本位交割`.
-fn kind(inst_type: &str, inst_id: &str) -> &'static str {
+/// `BTC-USDT-SWAP` → USDT perpetual, `BTC-USD-250926` → coin-margined futures.
+fn kind(inst_type: &str, inst_id: &str) -> PositionKind {
     let settle = inst_id.split('-').nth(1).unwrap_or_default();
     match (inst_type, settle) {
-        ("SWAP", "USDT") => "U 本位永续",
-        ("SWAP", "USDC") => "USDC 永续",
-        ("SWAP", _) => "币本位永续",
-        ("FUTURES", "USDT") => "U 本位交割",
-        ("FUTURES", "USDC") => "USDC 交割",
-        ("FUTURES", _) => "币本位交割",
-        ("OPTION", _) => "期权",
-        ("MARGIN", _) => "杠杆",
-        _ => "合约",
+        ("SWAP", "USDT") => PositionKind::UsdtPerpetual,
+        ("SWAP", "USDC") => PositionKind::UsdcPerpetual,
+        ("SWAP", _) => PositionKind::CoinPerpetual,
+        ("FUTURES", "USDT") => PositionKind::UsdtFutures,
+        ("FUTURES", "USDC") => PositionKind::UsdcFutures,
+        ("FUTURES", _) => PositionKind::CoinFutures,
+        ("OPTION", _) => PositionKind::Option,
+        ("MARGIN", _) => PositionKind::Margin,
+        _ => PositionKind::Other,
     }
 }
 
@@ -293,16 +293,17 @@ async fn sync_clock() -> Result<(), Error> {
 }
 
 fn refusal(code: &str, message: &str) -> String {
-    match code {
-        "50102" => "系统时间不准，请校准后重试".to_owned(),
-        "50105" => "Passphrase 不对".to_owned(),
-        "50110" => "API Key 绑定了其他 IP".to_owned(),
-        "50111" | "50119" => "API Key 不存在".to_owned(),
-        "50113" => "Secret Key 不对".to_owned(),
-        "50120" | "50030" => "API Key 没有读取权限".to_owned(),
-        "50101" => "这是模拟盘的 API Key".to_owned(),
-        _ => format!("{message}（{code}）"),
-    }
+    let known = match code {
+        "50102" => t!("error.clockSkew"),
+        "50105" => t!("error.wrongPassphrase"),
+        "50110" => t!("error.ipBound"),
+        "50111" | "50119" => t!("error.keyNotFound"),
+        "50113" => return t!("error.wrongSecret", field = "Secret Key"),
+        "50120" | "50030" => t!("error.noReadPermission"),
+        "50101" => t!("error.demoKey"),
+        _ => return t!("error.exchangeReply", message = message, code = code),
+    };
+    known.to_owned()
 }
 
 #[cfg(test)]
@@ -359,10 +360,10 @@ mod tests {
         let net_short = raw("SWAP", "BTC-USDT-SWAP", "net", "-5").position().unwrap();
         assert_eq!(
             (net_short.kind, net_short.long, net_short.size, net_short.exposure),
-            ("U 本位永续", false, 5.0, -550.0)
+            (PositionKind::UsdtPerpetual, false, 5.0, -550.0)
         );
         let long = raw("FUTURES", "BTC-USD-250926", "long", "3").position().unwrap();
-        assert_eq!((long.kind, long.long, long.exposure), ("币本位交割", true, 550.0));
+        assert_eq!((long.kind, long.long, long.exposure), (PositionKind::CoinFutures, true, 550.0));
         assert!(raw("SWAP", "ETH-USDT-SWAP", "net", "0").position().is_none());
     }
 }

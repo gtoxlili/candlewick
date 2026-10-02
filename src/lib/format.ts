@@ -1,5 +1,8 @@
 // Number and time formatting shared by the windows; the rules match the tray's
-// (src-tauri/src/format.rs) so a price reads the same everywhere.
+// (src-tauri/src/format.rs) so a price reads the same everywhere. Prices,
+// amounts and the clock read the same in every language, as trading screens
+// write them; what is said in words (compact units, durations, dates) takes
+// the page's locale.
 
 const fixed = new Map<number, Intl.NumberFormat>();
 
@@ -24,16 +27,32 @@ export function priceDecimals(price: number, tickDecimals: number | null): numbe
   return Math.min(Math.max(6 - intDigits, 2), 10);
 }
 
-const compact = new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 2 });
+/** One formatter per key (a locale, and what else tells them apart), made on first use. */
+function cached<K extends string[], T>(make: (...key: K) => T): (...key: K) => T {
+  const made = new Map<string, T>();
+  return (...key) => {
+    const id = key.join(" ");
+    let found = made.get(id);
+    if (found === undefined) {
+      found = make(...key);
+      made.set(id, found);
+    }
+    return found;
+  };
+}
 
-/** Chinese compact units: 12345 → "1.23万", 1034567890 → "10.35亿". */
-export function fmtCompact(value: number): string {
-  return compact.format(value);
+const compact = cached(
+  (locale: string) => new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 2 }),
+);
+
+/** Compact units as the language counts: 12345 → "1.23万" (zh, ja), "12.35K" (en). */
+export function fmtCompact(value: number, locale: string): string {
+  return compact(locale).format(value);
 }
 
 /** Order-book and trade sizes: compact when huge, fewer decimals as they grow. */
-export function fmtQty(value: number): string {
-  if (value >= 100_000) return fmtCompact(value);
+export function fmtQty(value: number, locale: string): string {
+  if (value >= 100_000) return fmtCompact(value, locale);
   const decimals = value >= 1000 ? 2 : value >= 1 ? 4 : 5;
   return fmtPrice(value, decimals);
 }
@@ -72,14 +91,76 @@ export function direction(pct: number): 1 | -1 | 0 {
   return hundredths > 0 ? 1 : hundredths < 0 ? -1 : 0;
 }
 
-const clock = new Intl.DateTimeFormat("zh-CN", {
+const clock = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
   minute: "2-digit",
   second: "2-digit",
-  hour12: false,
+  hourCycle: "h23",
 });
 
-/** Epoch milliseconds → "14:03:27" in local time. */
+/** Epoch milliseconds → "14:03:27" in local time, a 24-hour clock in every language. */
 export function fmtClock(ms: number): string {
   return clock.format(ms);
+}
+
+const MINUTE = 60;
+const HOUR = 3600;
+const DAY = 86_400;
+
+const units = cached(
+  (locale: string, unit: string) => new Intl.NumberFormat(locale, { style: "unit", unit, unitDisplay: "long" }),
+);
+
+/** A stretch of time in words, rounded to its largest unit: "45 seconds", "15分钟", "1.5 時間". */
+export function fmtDuration(secs: number, locale: string): string {
+  const tenths = (n: number) => (n < 10 ? Math.round(n * 10) / 10 : Math.round(n));
+  const [value, unit] =
+    secs < MINUTE
+      ? [Math.round(secs), "second"]
+      : secs < HOUR
+        ? [Math.round(secs / MINUTE), "minute"]
+        : secs < 2 * DAY
+          ? [tenths(secs / HOUR), "hour"]
+          : [tenths(secs / DAY), "day"];
+  return units(locale, unit).format(value);
+}
+
+const CLOCK: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+const DATE: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+
+/** How a stretch reads, by how long it is and where it falls. */
+const RANGES = {
+  clock: CLOCK,
+  clockSeconds: { ...CLOCK, second: "2-digit" },
+  datedClock: { ...DATE, ...CLOCK },
+  datedClockSeconds: { ...DATE, ...CLOCK, second: "2-digit" },
+  dates: DATE,
+  datesWithYears: { ...DATE, year: "numeric" },
+} satisfies Record<string, Intl.DateTimeFormatOptions>;
+
+const ranges = cached(
+  (locale: string, shape: keyof typeof RANGES) => new Intl.DateTimeFormat(locale, RANGES[shape]),
+);
+
+/**
+ * A stretch between two epoch seconds, the language's way: clock times
+ * within a day or two (seconds too below ten minutes; dates unless all of
+ * it is today), dates beyond (years unless this one). "14:00–15:30",
+ * "5月3日 22:00～5月4日 01:30", "May 3 – 9".
+ */
+export function fmtRange(from: number, to: number, locale: string): string {
+  const a = new Date(from * 1000);
+  const b = new Date(to * 1000);
+  const span = to - from;
+  let shape: keyof typeof RANGES;
+  if (span < 2 * DAY) {
+    const today = new Date().toDateString();
+    const dated = a.toDateString() !== today || b.toDateString() !== today;
+    const seconds = span < 10 * MINUTE;
+    shape = dated ? (seconds ? "datedClockSeconds" : "datedClock") : seconds ? "clockSeconds" : "clock";
+  } else {
+    const thisYear = new Date().getFullYear();
+    shape = a.getFullYear() === thisYear && b.getFullYear() === thisYear ? "dates" : "datesWithYears";
+  }
+  return ranges(locale, shape).formatRange(a, b);
 }

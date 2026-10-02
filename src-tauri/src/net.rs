@@ -31,12 +31,13 @@ pub enum Route {
     Socks5 { host: String, port: u16 },
 }
 
+/// For the log.
 impl fmt::Display for Route {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Direct => f.write_str("直连"),
-            Self::Http { host, port } => write!(f, "HTTP 代理 {}", Authority(host, *port)),
-            Self::Socks5 { host, port } => write!(f, "SOCKS5 代理 {}", Authority(host, *port)),
+            Self::Direct => f.write_str("direct"),
+            Self::Http { host, port } => write!(f, "HTTP proxy {}", Authority(host, *port)),
+            Self::Socks5 { host, port } => write!(f, "SOCKS5 proxy {}", Authority(host, *port)),
         }
     }
 }
@@ -68,10 +69,15 @@ impl fmt::Display for Authority<'_> {
 pub enum Error {
     #[error("{0}")]
     Io(#[from] io::Error),
-    #[error("代理拒绝了连接（{0}）")]
+    /// Why the proxy refused, said in the app's language.
+    #[error("{}", refused(.0))]
     Proxy(String),
     #[error("{0}")]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+}
+
+fn refused(reason: &str) -> String {
+    t!("error.proxyRefused", reason = reason)
 }
 
 /// Connects to `wss://{host}:{port}{path}` through whatever route the system
@@ -192,14 +198,14 @@ async fn http_connect(tcp: &mut TcpStream, host: &str, port: u16) -> Result<(), 
     loop {
         let n = tcp.read(&mut chunk).await?;
         if n == 0 {
-            return Err(Error::Proxy("连接被关闭".to_owned()));
+            return Err(Error::Proxy(t!("error.proxyClosed").to_owned()));
         }
         head.extend_from_slice(&chunk[..n]);
         if head.windows(4).any(|w| w == b"\r\n\r\n") {
             break;
         }
         if head.len() > 8 * 1024 {
-            return Err(Error::Proxy("响应头过长".to_owned()));
+            return Err(Error::Proxy(t!("error.proxyHeaderTooLong").to_owned()));
         }
     }
     let status_line = head.split(|&b| b == b'\r').next().unwrap_or_default();
@@ -212,17 +218,16 @@ async fn http_connect(tcp: &mut TcpStream, host: &str, port: u16) -> Result<(), 
 
 /// RFC 1928, no authentication, remote DNS resolution.
 async fn socks5_connect(tcp: &mut TcpStream, host: &str, port: u16) -> Result<(), Error> {
-    let fail = |what: &str| Error::Proxy(format!("SOCKS5 {what}"));
-
     tcp.write_all(&[0x05, 0x01, 0x00]).await?;
     let mut reply = [0u8; 2];
     tcp.read_exact(&mut reply).await?;
     if reply != [0x05, 0x00] {
-        return Err(fail("需要认证"));
+        return Err(Error::Proxy(t!("error.proxyAuth").to_owned()));
     }
 
     let name = host.as_bytes();
-    let len = u8::try_from(name.len()).map_err(|_| fail("主机名过长"))?;
+    let len = u8::try_from(name.len())
+        .map_err(|_| Error::Proxy(t!("error.proxyHostTooLong").to_owned()))?;
     let mut request = Vec::with_capacity(7 + name.len());
     request.extend_from_slice(&[0x05, 0x01, 0x00, 0x03, len]);
     request.extend_from_slice(name);
@@ -232,14 +237,14 @@ async fn socks5_connect(tcp: &mut TcpStream, host: &str, port: u16) -> Result<()
     let mut head = [0u8; 4];
     tcp.read_exact(&mut head).await?;
     if head[1] != 0x00 {
-        return Err(fail(&format!("错误码 {}", head[1])));
+        return Err(Error::Proxy(t!("error.proxyCode", code = head[1])));
     }
     // Skip the bound address: IPv4, domain (length-prefixed) or IPv6, then port.
     let addr_len = match head[3] {
         0x01 => 4,
         0x04 => 16,
         0x03 => usize::from(tcp.read_u8().await?),
-        _ => return Err(fail("地址类型未知")),
+        _ => return Err(Error::Proxy(t!("error.proxyAddress").to_owned())),
     };
     let mut rest = vec![0u8; addr_len + 2];
     tcp.read_exact(&mut rest).await?;
@@ -281,7 +286,7 @@ mod tests {
 
     #[test]
     fn route_labels() {
-        assert_eq!(http("::1", 7890).to_string(), "HTTP 代理 [::1]:7890");
-        assert_eq!(socks5("127.0.0.1", 1080).to_string(), "SOCKS5 代理 127.0.0.1:1080");
+        assert_eq!(http("::1", 7890).to_string(), "HTTP proxy [::1]:7890");
+        assert_eq!(socks5("127.0.0.1", 1080).to_string(), "SOCKS5 proxy 127.0.0.1:1080");
     }
 }

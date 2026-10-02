@@ -133,7 +133,7 @@ pub async fn run<E: Exchange>(
                 }
             }
             Ok(Err(e)) => e.to_string(),
-            Err(_) => "连接超时".to_owned(),
+            Err(_) => "connection timed out".to_owned(),
         };
         log::info!("chart stream for {} ended: {reason}", instrument.id());
         if !send(&events, LiveEvent::State { state: FeedState::Offline }) {
@@ -199,11 +199,11 @@ async fn pump<S: Session>(
                     // Pings are answered by tungstenite on the next read.
                     Some(Ok(Message::Close(frame))) => {
                         let reason = frame.map(|f| f.reason.to_string()).unwrap_or_default();
-                        return Ended::Lost(format!("服务器关闭了连接 {reason}").trim_end().to_owned());
+                        return Ended::Lost(format!("the server closed the connection {reason}").trim_end().to_owned());
                     }
                     Some(Ok(_)) => {}
                     Some(Err(e)) => return Ended::Lost(e.to_string()),
-                    None => return Ended::Lost("连接已断开".to_owned()),
+                    None => return Ended::Lost("disconnected".to_owned()),
                 }
             }
             () = &mut flush, if !batch.is_empty() => {
@@ -216,7 +216,7 @@ async fn pump<S: Session>(
                     out.send(ping.to_owned());
                 }
             }
-            () = &mut silence => return Ended::Lost("长时间没有收到行情".to_owned()),
+            () = &mut silence => return Ended::Lost("no quotes for too long".to_owned()),
         }
     }
 }

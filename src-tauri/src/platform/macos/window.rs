@@ -129,13 +129,21 @@ fn release_free_memory() {
     log::debug!("returned {} KiB of free heap to the system", released / 1024);
 }
 
-/// The app menu shown while a window makes this a regular app.
-/// Edit items matter: without them Cmd-C/V/A do nothing in the text field.
+/// The app speaks another language: so does its menu.
+pub fn relabel(app: &AppHandle) {
+    if let Err(e) = app_menu(app).and_then(|menu| app.set_menu(menu).map(|_| ())) {
+        log::error!("cannot relabel the app menu: {e}");
+    }
+}
+
+/// The app menu shown while a window makes this a regular app, in the
+/// app's language. Edit items matter: without them Cmd-C/V/A do nothing in
+/// the text field.
 pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let about = AboutMetadata {
         name: Some("Candlewick".to_owned()),
         version: Some(app.package_info().version.to_string()),
-        comments: Some("在菜单栏显示实时行情".to_owned()),
+        comments: Some(t!("appMenu.tagline").to_owned()),
         copyright: app.config().bundle.copyright.clone(),
         ..Default::default()
     };
@@ -144,36 +152,36 @@ pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         "Candlewick",
         true,
         &[
-            &PredefinedMenuItem::about(app, Some("关于 Candlewick"), Some(about))?,
+            &PredefinedMenuItem::about(app, Some(t!("appMenu.about")), Some(about))?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::hide(app, Some("隐藏 Candlewick"))?,
-            &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
-            &PredefinedMenuItem::show_all(app, Some("全部显示"))?,
+            &PredefinedMenuItem::hide(app, Some(t!("appMenu.hide")))?,
+            &PredefinedMenuItem::hide_others(app, Some(t!("appMenu.hideOthers")))?,
+            &PredefinedMenuItem::show_all(app, Some(t!("appMenu.showAll")))?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::quit(app, Some("退出 Candlewick"))?,
+            &PredefinedMenuItem::quit(app, Some(t!("tray.quit")))?,
         ],
     )?;
     let edit = Submenu::with_items(
         app,
-        "编辑",
+        t!("appMenu.edit"),
         true,
         &[
-            &PredefinedMenuItem::undo(app, Some("撤销"))?,
-            &PredefinedMenuItem::redo(app, Some("重做"))?,
+            &PredefinedMenuItem::undo(app, Some(t!("appMenu.undo")))?,
+            &PredefinedMenuItem::redo(app, Some(t!("appMenu.redo")))?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::cut(app, Some("剪切"))?,
-            &PredefinedMenuItem::copy(app, Some("拷贝"))?,
-            &PredefinedMenuItem::paste(app, Some("粘贴"))?,
-            &PredefinedMenuItem::select_all(app, Some("全选"))?,
+            &PredefinedMenuItem::cut(app, Some(t!("appMenu.cut")))?,
+            &PredefinedMenuItem::copy(app, Some(t!("appMenu.copy")))?,
+            &PredefinedMenuItem::paste(app, Some(t!("appMenu.paste")))?,
+            &PredefinedMenuItem::select_all(app, Some(t!("appMenu.selectAll")))?,
         ],
     )?;
     let window = Submenu::with_items(
         app,
-        "窗口",
+        t!("appMenu.window"),
         true,
         &[
-            &PredefinedMenuItem::minimize(app, Some("最小化"))?,
-            &PredefinedMenuItem::close_window(app, Some("关闭窗口"))?,
+            &PredefinedMenuItem::minimize(app, Some(t!("appMenu.minimize")))?,
+            &PredefinedMenuItem::close_window(app, Some(t!("appMenu.closeWindow")))?,
         ],
     )?;
     Menu::with_items(app, &[&app_submenu, &edit, &window])

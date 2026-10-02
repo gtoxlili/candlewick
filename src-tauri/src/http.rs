@@ -45,18 +45,23 @@ fn builder() -> reqwest::ClientBuilder {
         .pool_max_idle_per_host(1)
 }
 
+/// Said in the app's language when shown.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("请求超时")]
+    #[error("{}", t!("error.timeout"))]
     Timeout,
-    #[error("无法连接服务器")]
+    #[error("{}", t!("error.unreachable"))]
     Connect,
-    #[error("服务器返回 HTTP {0}")]
+    #[error("{}", status(.0))]
     Status(u16),
-    #[error("数据格式有误")]
+    #[error("{}", t!("error.badFormat"))]
     Format,
-    #[error("网络错误")]
+    #[error("{}", t!("error.network"))]
     Other,
+}
+
+fn status(code: &u16) -> String {
+    t!("error.httpStatus", status = code)
 }
 
 impl From<reqwest::Error> for Error {

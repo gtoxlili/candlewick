@@ -13,6 +13,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     format::{self, Direction},
+    i18n::{self, Locale},
     model::{ColorScheme, Instrument, Model, Quote, Session, Shared},
     platform,
     portfolio::{Portfolio, Totals},
@@ -33,6 +34,8 @@ pub struct View {
     pub scheme: ColorScheme,
     /// The version of a downloaded update a restart would run.
     pub update: Option<String>,
+    /// What all of it is said in; another one rebuilds the menu.
+    pub locale: Locale,
 }
 
 /// A dropdown row: `BTC` `/USDT` `84,002.01` `−0.24%`.
@@ -44,7 +47,7 @@ pub struct Row {
     /// The main number, in the trend color of its direction when it is a
     /// move itself (a PnL); flat for a price.
     pub value: (String, Direction),
-    /// Shown dimmed before the change, e.g. `盘后`.
+    /// Shown dimmed before the change, e.g. `After-hours`.
     pub session: Option<&'static str>,
     pub change: Option<(String, Direction)>,
 }
@@ -70,14 +73,14 @@ impl Row {
 /// account when there are several, the largest assets and positions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Holdings {
-    /// `总资产 USDT  12,345.67  +1.24%`; the amount is `—` until the first
+    /// `Total USDT  12,345.67  +1.24%`; the amount is `—` until the first
     /// refresh.
     pub total: Row,
-    /// `24h 盈亏  +152.30`, once there is a total.
+    /// `24h P&L  +152.30`, once there is a total.
     pub day: Option<Row>,
     /// One per exchange, when there is more than one.
     pub accounts: Vec<Row>,
-    /// The most valuable, then `其他 n 项` for the rest.
+    /// The most valuable, then `Others (n)` for the rest.
     pub assets: Vec<Row>,
     /// The largest unrealized PnL first.
     pub positions: Vec<Row>,
@@ -92,14 +95,31 @@ const MENU_POSITIONS: usize = 4;
 /// One item of the holdings submenu, top to bottom.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Slot<'a> {
-    /// `查看持仓…`
+    /// `View Holdings…`
     Open,
     Separator,
-    /// A section's title: `账户`, `资产`, `合约`.
-    Header(&'static str),
+    Header(Section),
     Row(&'a Row),
     /// The dimmed line at the end.
     Caption(&'a str),
+}
+
+/// A titled part of the holdings submenu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Accounts,
+    Assets,
+    Positions,
+}
+
+impl Section {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Accounts => t!("common.holdings.accounts"),
+            Self::Assets => t!("common.holdings.assets"),
+            Self::Positions => t!("common.holdings.positions"),
+        }
+    }
 }
 
 /// How many rows of each kind a submenu holds; the same shape means the
@@ -129,11 +149,13 @@ impl Holdings {
         if let Some(day) = &self.day {
             slots.extend([Slot::Separator, Slot::Row(day)]);
         }
-        for (title, rows) in
-            [("账户", &self.accounts), ("资产", &self.assets), ("合约", &self.positions)]
-        {
+        for (section, rows) in [
+            (Section::Accounts, &self.accounts),
+            (Section::Assets, &self.assets),
+            (Section::Positions, &self.positions),
+        ] {
             if !rows.is_empty() {
-                slots.extend([Slot::Separator, Slot::Header(title)]);
+                slots.extend([Slot::Separator, Slot::Header(section)]);
                 slots.extend(rows.iter().map(Slot::Row));
             }
         }
@@ -146,7 +168,7 @@ impl Holdings {
 /// shown, the symbol beside a two-row block (price over change).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ticker {
-    /// `BTC`, or `ETH/BTC` for a non-USD quote, or `总资产`; `None` when
+    /// `BTC`, or `ETH/BTC` for a non-USD quote, or `Total`; `None` when
     /// symbols are hidden.
     pub symbol: Option<String>,
     /// `—` until the first quote arrives.
@@ -276,6 +298,7 @@ pub fn view(app: &AppHandle) -> View {
         caption: caption(&model),
         scheme: model.settings.color_scheme,
         update,
+        locale: i18n::current(),
     }
 }
 
@@ -286,7 +309,7 @@ fn ticker(model: &Model) -> Option<Ticker> {
     if settings.holdings_in_bar && !model.accounts.is_empty() {
         let totals = Totals::of(&model.accounts);
         return Some(Ticker {
-            symbol: settings.show_symbol.then(|| "总资产".to_owned()),
+            symbol: settings.show_symbol.then(|| t!("common.holdings.total").to_owned()),
             price: totals.map_or_else(
                 || "—".to_owned(),
                 |t| format::price(t.total, format::compact_decimals(t.total, Some(2))),
@@ -333,13 +356,15 @@ fn holdings(model: &Model) -> Option<Holdings> {
     let totals = Totals::of(&model.accounts);
     let portfolio = Portfolio::of(&model.accounts);
     let total = Row::new(
-        "总资产",
+        t!("common.holdings.total"),
         " USDT",
         totals.map_or_else(|| "—".to_owned(), |t| format::price(t.total, 2)),
     )
     .with_change(totals.and_then(Totals::change_pct));
-    let day = totals
-        .map(|t| Row { value: signed(t.change), ..Row::new("24h 盈亏", "", String::new()) });
+    let day = totals.map(|t| Row {
+        value: signed(t.change),
+        ..Row::new(t!("common.holdings.dayPnl"), "", String::new())
+    });
     let accounts = if portfolio.accounts.len() > 1 {
         portfolio
             .accounts
@@ -350,7 +375,7 @@ fn holdings(model: &Model) -> Option<Holdings> {
                     .zip(account.change)
                     .and_then(|(total, change)| crate::portfolio::pct(total, total - change));
                 Row::new(
-                    account.name,
+                    account.exchange.name(),
                     "",
                     account.total.map_or_else(|| "—".to_owned(), |t| format::price(t, 2)),
                 )
@@ -376,7 +401,7 @@ fn holdings(model: &Model) -> Option<Holdings> {
     if priced.len() > MENU_ASSETS {
         let rest: f64 = priced[MENU_ASSETS..].iter().filter_map(|a| a.value).sum();
         assets.push(Row::new(
-            format!("其他 {} 项", priced.len() - MENU_ASSETS),
+            t!("tray.otherAssets", count = priced.len() - MENU_ASSETS),
             "",
             format::price(rest, 2),
         ));
@@ -387,7 +412,8 @@ fn holdings(model: &Model) -> Option<Holdings> {
         .take(MENU_POSITIONS)
         .map(|position| {
             let p = &position.position;
-            let side = if p.long { "多" } else { "空" };
+            let side =
+                if p.long { t!("common.holdings.long") } else { t!("common.holdings.short") };
             let leverage =
                 p.leverage.map(|l| format!(" {}x", format::amount(l))).unwrap_or_default();
             let pnl = position.pnl_usd.unwrap_or(p.pnl);
@@ -401,13 +427,15 @@ fn holdings(model: &Model) -> Option<Holdings> {
         .accounts
         .iter()
         .find_map(|account| {
-            account.error.as_ref().map(|error| format!("{}读取失败：{error}", account.name))
+            account.error.as_ref().map(|error| {
+                t!("tray.readFailedBecause", exchange = account.exchange.name(), error = error)
+            })
         })
         .or_else(|| {
             let latest = portfolio.accounts.iter().filter_map(|a| a.updated).fold(0.0, f64::max);
-            (latest > 0.0).then(|| format!("更新于 {}", format::clock(latest)))
+            (latest > 0.0).then(|| t!("common.holdings.updated", time = format::clock(latest)))
         })
-        .unwrap_or_else(|| "正在读取…".to_owned());
+        .unwrap_or_else(|| t!("common.holdings.reading").to_owned());
     Some(Holdings { total, day, accounts, assets, positions, caption })
 }
 
@@ -418,8 +446,7 @@ fn caption(model: &Model) -> String {
         .symbols()
         .into_keys()
         .map(|provider| {
-            let status =
-                model.feeds.get(&provider).map(|feed| feed.status.clone()).unwrap_or_default();
+            let status = model.feeds.get(&provider).map(|feed| feed.status).unwrap_or_default();
             status.caption(provider.name())
         })
         .find(|caption| !caption.is_empty())

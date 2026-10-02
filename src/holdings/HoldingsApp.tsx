@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 import { KeyRound } from "lucide-react";
 import { cn } from "cn";
 
@@ -18,14 +19,15 @@ import { allocation, figures, insight, listed, type Sort } from "./summary";
 type Tab = "accounts" | "positions";
 
 const SORTS = [
-  { value: "value", label: "按价值" },
-  { value: "change", label: "按 24h 盈亏" },
+  { value: "value", label: "holdings.byValue" },
+  { value: "change", label: "holdings.byChange" },
 ] as const satisfies readonly { value: Sort; label: string }[];
 
 /** Numbers this recent are live: the lit dot in the title bar and on the bar. */
 const LIVE_MS = 20_000;
 
 export default function HoldingsApp() {
+  const { t } = useTranslation();
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [sort, setSort] = useState<Sort>(() => load("holdings.sort", (raw) => SORTS.find((s) => s.value === raw)?.value, "value"));
   const [showSmall, setShowSmall] = useState(() => load("holdings.showSmall", (raw) => raw === "true", false));
@@ -85,14 +87,14 @@ export default function HoldingsApp() {
   return (
     <main className="flex h-screen flex-col select-none">
       <TitleBar className={cn(TITLE_INSET, "gap-2", !__WINDOWS__ && "pr-2")} maximizable>
-        <span className="text-sm font-semibold">持仓</span>
+        <span className="text-sm font-semibold">{t("holdings.title")}</span>
         <span className="flex-1" />
         {portfolio && portfolio.accounts.length > 0 && <Freshness portfolio={portfolio} live={live} />}
         <Button
           variant="ghost"
           size="icon-sm"
-          title="管理 API Key"
-          aria-label="管理 API Key"
+          title={t("holdings.manageKeys")}
+          aria-label={t("holdings.manageKeys")}
           className="text-muted-foreground"
           onClick={() => void api.openSettings()}
         >
@@ -102,7 +104,7 @@ export default function HoldingsApp() {
 
       {!portfolio ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
-          <Spinner className="size-5" aria-label="加载中" />
+          <Spinner className="size-5" aria-label={t("loading")} />
         </div>
       ) : portfolio.accounts.length === 0 ? (
         <NoKeys />
@@ -110,10 +112,15 @@ export default function HoldingsApp() {
         <div className="flex min-h-0 flex-1">
           <section className="flex min-w-0 flex-1 flex-col gap-3 pb-4">
             <Hero portfolio={portfolio} />
-            <Allocation shares={allocation(portfolio.assets, total ?? 0)} live={live} />
+            <Allocation shares={allocation(portfolio.assets, total ?? 0, t)} live={live} />
 
             <div className="flex h-7 items-center gap-2 px-4">
-              <PillTabs label="排序" value={sort} options={SORTS} onChange={pickSort} />
+              <PillTabs
+                label={t("holdings.sort")}
+                value={sort}
+                options={SORTS.map((o) => ({ value: o.value, label: t(o.label) }))}
+                onChange={pickSort}
+              />
             </div>
 
             <Assets portfolio={portfolio} sort={sort} showSmall={showSmall} onToggleSmall={toggleSmall} several={several} />
@@ -124,11 +131,16 @@ export default function HoldingsApp() {
           <aside className="flex w-70 shrink-0 flex-col border-l pt-2">
             <div className="px-3 pb-2.5">
               <PillTabs
-                label="账户与仓位"
+                label={t("holdings.accountsAndPositions")}
                 value={tab}
                 options={[
-                  { value: "accounts", label: "账户" },
-                  { value: "positions", label: portfolio.positions.length ? `合约 ${portfolio.positions.length}` : "合约" },
+                  { value: "accounts", label: t("common.holdings.accounts") },
+                  {
+                    value: "positions",
+                    label: portfolio.positions.length
+                      ? t("holdings.positionsCount", { n: portfolio.positions.length })
+                      : t("common.holdings.positions"),
+                  },
                 ]}
                 onChange={pickTab}
                 className="w-full"
@@ -148,10 +160,11 @@ export default function HoldingsApp() {
 
 /** The total, its day, and one line on what did it; the number flashes as it moves. */
 function Hero(props: { portfolio: Portfolio }) {
+  const { t } = useTranslation();
   const { total, change } = props.portfolio;
   const before = total !== null && change !== null ? total - change : null;
   const pct = before !== null && before > 0 && change !== null ? (change / before) * 100 : null;
-  const line = insight(props.portfolio);
+  const line = insight(props.portfolio, t);
   return (
     <div className="px-5 pt-2">
       <div className="flex items-baseline gap-3">
@@ -172,7 +185,9 @@ function Hero(props: { portfolio: Portfolio }) {
           <ChangeBadge pct={pct} amount={fmtSigned(change, 2)} span="24h" />
         )}
       </div>
-      <p className="mt-2 h-4 text-xs text-muted-foreground tabular">{line ?? (total === null ? "正在读取各账户…" : "")}</p>
+      <p className="mt-2 h-4 text-xs text-muted-foreground tabular">
+        {line ?? (total === null ? t("holdings.readingAccounts") : "")}
+      </p>
     </div>
   );
 }
@@ -208,16 +223,18 @@ function Assets(props: {
 
 /** The four figures that say how the money is placed, as the chart's day statistics. */
 function Tiles(props: { portfolio: Portfolio }) {
+  const { t } = useTranslation();
   const { total, change } = props.portfolio;
   const f = figures(props.portfolio);
   const share = (value: number) => (total && total > 0 ? ` · ${Math.round((value / total) * 100)}%` : "");
   const items: { label: string; value: string | null; tone?: string }[] = [
-    { label: "24h 盈亏", value: change === null ? null : fmtSigned(change, 2), tone: trend(change) },
-    { label: "加密资产", value: total === null ? null : `${fmtPrice(f.risk, 2)}${share(f.risk)}` },
-    { label: "稳定币", value: total === null ? null : `${fmtPrice(f.cash, 2)}${share(f.cash)}` },
+    { label: t("common.holdings.dayPnl"), value: change === null ? null : fmtSigned(change, 2), tone: trend(change) },
+    { label: t("holdings.crypto"), value: total === null ? null : `${fmtPrice(f.risk, 2)}${share(f.risk)}` },
+    { label: t("holdings.stablecoins"), value: total === null ? null : `${fmtPrice(f.cash, 2)}${share(f.cash)}` },
     {
-      label: "合约浮动盈亏",
-      value: total === null ? null : f.positionsPnl === null ? "无仓位" : fmtSigned(f.positionsPnl, 2),
+      label: t("holdings.unrealized"),
+      value:
+        total === null ? null : f.positionsPnl === null ? t("holdings.noPositions") : fmtSigned(f.positionsPnl, 2),
       tone: trend(f.positionsPnl),
     },
   ];
@@ -233,18 +250,19 @@ function Tiles(props: { portfolio: Portfolio }) {
   );
 }
 
-/** When the numbers are from, and whether they still move: like the chart's 实时. */
+/** When the numbers are from, and whether they still move: like the chart's live badge. */
 function Freshness(props: { portfolio: Portfolio; live: boolean }) {
+  const { t } = useTranslation();
   const { accounts } = props.portfolio;
   const failed = accounts.find((a) => a.error !== null);
   const loading = accounts.some((a) => a.updated === null && a.error === null);
   const latest = Math.max(0, ...accounts.map((a) => a.updated ?? 0));
   const text = failed
-    ? `${failed.name}读取失败`
+    ? t("common.holdings.readFailed", { exchange: t(`common.provider.${failed.exchange}`) })
     : loading
-      ? "正在读取"
+      ? t("common.holdings.reading")
       : latest > 0
-        ? `更新于 ${fmtClock(latest)}`
+        ? t("common.holdings.updated", { time: fmtClock(latest) })
         : "";
   return (
     <span className="flex items-center gap-1.5 rounded-full px-2 text-xs text-muted-foreground tabular" title={failed?.error ?? undefined}>
@@ -263,16 +281,15 @@ function Freshness(props: { portfolio: Portfolio; live: boolean }) {
 }
 
 function NoKeys() {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8 pb-8 text-center">
       <div className="space-y-1.5">
-        <p className="text-base font-semibold">还没有交易所的 API Key</p>
-        <p className="max-w-xs text-xs text-balance text-muted-foreground">
-          填上币安、Bybit 或 OKX 的只读 Key，这里就能看到总资产、各账户的分布和合约仓位。
-        </p>
+        <p className="text-base font-semibold">{t("holdings.noKeys")}</p>
+        <p className="max-w-xs text-xs text-balance text-muted-foreground">{t("holdings.noKeysDetail")}</p>
       </div>
       <Button size="sm" onClick={() => void api.openSettings()}>
-        去设置
+        {t("holdings.openSettings")}
       </Button>
     </div>
   );

@@ -20,7 +20,7 @@
    - `quotes_path` / `quotes_subscribe` / `quote`：菜单栏报价连哪、连上后发什么订阅、怎么从一帧里读出最新价和 24 小时前的价格。
    - `live`：行情窗口的 `Session`。它是不碰 I/O 的状态机：`connected` 时清空并订阅，`frame` 处理每一帧，通过 `Out` 发帧、发事件、交成交、或者起一个后台请求（结果回到 `fetched`）。连接、重连退避、保活、成交攒批都由 `live::run` 负责，所以会话逻辑可以直接用帧文本做单测。
 3. 实现 `crypto::account::Account`（见下文「持仓」），并在 `market::watch_accounts` 和 `market::check_key` 里加上它。
-4. 前端 `src/lib/api.ts` 的 `Exchange` 和 `EXCHANGES` 加上它，设置页的选择器和 API Key 一栏就有了。
+4. 前端 `src/lib/api.ts` 的 `Exchange` 和 `EXCHANGES` 加上它，设置页的选择器和 API Key 一栏就有了；它的名字写进三种语言的 `src-tauri/locales/*.json` 的 `common.provider`（托盘和页面共用，见 [i18n.md](i18n.md)）。
 
 ### 加别的数据源
 
@@ -32,7 +32,9 @@
 - `watch`：菜单栏（Windows 上是任务栏）报价的常驻任务，读取 `FeedControl` 里的 symbols、paused 和 credentials，写 `model.quotes`，用 `market::set_status` 报告状态。
 - `chart_spec` / `history` / `recent_trades` / `stream`：行情窗口的能力说明、K 线翻页、最近成交和实时流。
 
-前端 `src/lib/api.ts` 的 `ProviderId`、`instrumentLabel`、`marketLabel` 加上对应分支。
+前端 `src/lib/api.ts` 的 `ProviderId`、`instrumentLabel`、`marketOf` 加上对应分支，名字写进 `common.provider`。
+
+`chart_spec` 和账户数据里只放代码和数字，不放给人看的文字：数据源给 `ProviderId`，周期给秒数，统计范围给 `StatsSpan`，合约类型给 `PositionKind`，由显示它的一方按界面语言说出来。错误信息例外，用 `t!` 按当时的语言写。
 
 ### 几个容易踩错的约定
 
@@ -42,7 +44,7 @@
 - `ChartSpec.book_steps`：盘口可选的合并档位，从细到粗；`LiveEvent::Book.books` 按同样顺序各给一份合并好的盘口。留空表示不合并，`books` 只放一份原样的盘口。
 - 本地盘口的价格存成 10^-18 为单位的 `u128` 整数（Bybit 的 tick 细到 10^-13，币安 BTC/IDR 价格到 15 亿），同一价格总能落到同一档；转回 `f64` 时与直接解析原字符串的结果一致。
 - `Trade.id` 必须随时间递增、对同一笔成交稳定（查询和推送会各来一次，前端按 id 去重），而且小于 2^53，否则 WebView 里的数字会把相邻的 id 并成一个。
-- 需要账户的数据源：凭证放在 `credentials.rs` 管理的 `credentials.json`（0600），缺凭证时用 `Status::Unavailable` 提示，不要重试空转。
+- 需要账户的数据源：凭证放在 `credentials.rs` 管理的 `credentials.json`（0600），缺凭证时用 `Status::NoCredentials` 提示，不要重试空转。
 - `Quote.open` 是涨跌幅的参考价：币是 24 小时前的价格，股票是最近一次收盘价；`Quote.session` 标注盘前、盘后、夜盘。
 - 菜单栏每秒最多重绘一次：OKX 每个币对每秒最多推 10 次，币安是每秒一批。
 

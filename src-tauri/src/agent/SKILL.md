@@ -11,7 +11,7 @@ While it runs, Candlewick answers read-only HTTP requests at `{{url}}`. Each req
 {{example}}
 ```
 
-Responses are JSON. Failures are `{"error": "…"}` with a 4xx or 5xx status.
+Responses are JSON. Failures are `{"error": "…"}` with a 4xx or 5xx status. Fields are codes and numbers; only messages from the sources (a failure's `error`, an account's `error`) are prose, in the language the user runs Candlewick in.
 
 The API only reads: it places no orders, moves no funds and changes no settings. Trades happen in the exchanges' own apps.
 
@@ -33,12 +33,12 @@ An instrument id is `source:symbol`: `binance:BTCUSDT`, `bybit:BTCUSDT`, `okx:BT
 
 `{accounts, total, change, assets, positions}`, amounts in USDT.
 
-- `accounts`: one per exchange with a key: `{exchange, name, total, change, wallets: [{wallet, label, value}], updated, error}`. `wallets` says where the money sits: 现货 (Binance spot), 交易账户 (Bybit's unified account, OKX's trading account: spot and derivatives together), 资金 (funding), 理财 (earn), U 本位合约 and 币本位合约 (Binance's futures wallets). `total` and `change` are null until the account has been read once.
-- `assets` merges the same asset across exchanges into one line, most valuable first: `{asset, amount, price, value, change, changePct, stable, held: [{exchange, wallet, amount}], cost, pnl}`. Each is valued at the exchange's own price for its USDT pair; without one, at the exchange's own USD figure where it gives one, otherwise `value` is null and the asset isn't in `total`. `stable` marks dollar stablecoins (cash).
+- `accounts`: one per exchange with a key: `{exchange, total, change, wallets: [{wallet, value}], updated, error}`. `wallets` says where the money sits: `spot` (Binance spot), `trading` (Bybit's unified account, OKX's trading account: spot and derivatives together), `funding`, `earn`, `usdFutures` and `coinFutures` (Binance's USDⓈ-M and COIN-M futures wallets). `total` and `change` are null until the account has been read once.
+- `assets` merges the same asset across exchanges into one line, most valuable first: `{asset, amount, price, value, change, changePct, stable, held: [{exchange, wallet, amount}], cost, pnl}`, `wallet` as above. Each is valued at the exchange's own price for its USDT pair; without one, at the exchange's own USD figure where it gives one, otherwise `value` is null and the asset isn't in `total`. `stable` marks dollar stablecoins (cash).
 - Trading and futures accounts count at equity: the balance plus the unrealized PnL of their positions. `positions` are therefore already inside `total`; their `pnl` is part of it, not an addition.
 - `change` is what the last 24 hours' price moves made of what is held now: each asset's amount times its 24h price change (`asset.change`), plus each position's dollar exposure times its contract's 24h move (`position.change`). Deposits, withdrawals and trades during the day are not in it. `asset.changePct` is the asset's own 24h price change.
 - `asset.cost` and `asset.pnl` come from OKX only: the spot holding's average cost and unrealized PnL, in USD. Elsewhere they are null.
-- A position has `exchange`, `symbol`, `kind` (U 本位永续, 币本位交割, 期权…), `long`, `size` in `sizeUnit` (a base asset, or 张 for contracts), `entry`, `mark`, `liquidation`, `leverage`, `isolated`, `exposure` (USD at the mark, negative when short), and `pnl` in `pnlAsset` with `pnlUsd`. Largest PnL, either way, first.
+- A position has `exchange`, `symbol`, `kind`, `long`, `size` in `sizeUnit` (a base asset, or null for a number of contracts), `entry`, `mark`, `liquidation`, `leverage`, `isolated`, `exposure` (USD at the mark, negative when short), and `pnl` in `pnlAsset` with `pnlUsd`. Largest PnL, either way, first. `kind` is what it settles in and whether it expires: `usdtPerpetual`, `usdtFutures`, `usdcPerpetual`, `usdcFutures`, `coinPerpetual`, `coinFutures` (coin-margined, inverse), `option`, `margin` (OKX spot margin) or `other`.
 - `updated` (epoch ms) is when the account's balances were last read. A request first refreshes accounts older than 15 seconds, which takes a few seconds. `error` explains a failed read; the account's numbers are then those from `updated`.
 
 ## Watchlist
@@ -46,7 +46,7 @@ An instrument id is `source:symbol`: `binance:BTCUSDT`, `bybit:BTCUSDT`, `okx:BT
 `[{id, symbol, base, quote, name, pinned, last, reference, changePct, session}]`
 
 - `reference` is the price 24 hours ago for crypto and the last regular close for stocks; `changePct` is measured against it.
-- `session` is 盘前, 盘后 or 夜盘 for US stocks outside regular hours.
+- `session` is `pre`, `post` or `overnight` for US stocks outside regular hours, null otherwise.
 - `last` is null until the first quote arrives. `pinned` marks the one shown in the menu bar.
 
 ## Candles

@@ -93,6 +93,9 @@ pub fn claim_single_instance() {
     std::process::exit(0);
 }
 
+/// Windows keeps no language per app; the settings hold it.
+pub fn remember_language(_language: crate::i18n::Language) {}
+
 /// No app menu: Windows windows carry their own controls.
 pub fn configure(builder: Builder<Wry>) -> Builder<Wry> {
     builder
@@ -155,9 +158,9 @@ fn startup_approved() -> bool {
 /// Starts the app at login (the Run key), or stops it. Turning it on also
 /// clears a "disabled" left in Task Manager, which would otherwise win.
 pub fn set_login_item(enabled: bool) -> Result<(), String> {
-    let fail = |e: windows::core::Error| format!("无法修改开机启动：{}", e.message());
+    let fail = |e: windows::core::Error| t!("error.loginItem", error = e.message());
     if enabled {
-        let exe = std::env::current_exe().map_err(|e| format!("无法修改开机启动：{e}"))?;
+        let exe = std::env::current_exe().map_err(|e| t!("error.loginItem", error = e))?;
         let command: Vec<u16> =
             format!("\"{}\"", exe.display()).encode_utf16().chain(std::iter::once(0)).collect();
         let approved = [2u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];

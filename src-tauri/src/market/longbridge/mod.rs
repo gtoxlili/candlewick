@@ -16,16 +16,18 @@ use self::{
     proto::{adjust, cmd, period, trade_session},
 };
 use super::{
-    BoxFuture, Candidate, Candle, ChartMode, ChartSpec, Error, IntervalSpec, Link, LiveEvent,
-    Provider, ProviderId, Search, Trade,
+    BoxFuture, Candidate, Candle, ChartMode, ChartSpec, Error, IntervalSpec, LiveEvent, Provider,
+    ProviderId, Search, StatsSpan, Trade,
 };
-use crate::model::{FeedControl, Instrument};
+use crate::{
+    i18n::{self, Locale},
+    model::{FeedControl, Instrument},
+};
 
 pub struct Longbridge;
 
 struct IntervalDef {
     secs: u32,
-    label: &'static str,
     period: i32,
     /// Trades can be bucketed by time alone: every session starts on the
     /// half hour, so candles up to 30 minutes line up with the clock.
@@ -35,55 +37,13 @@ struct IntervalDef {
 }
 
 const INTERVALS: [IntervalDef; 7] = [
-    IntervalDef {
-        secs: 60,
-        label: "1分",
-        period: period::MIN_1,
-        aligned: true,
-        regular_only: false,
-    },
-    IntervalDef {
-        secs: 300,
-        label: "5分",
-        period: period::MIN_5,
-        aligned: true,
-        regular_only: false,
-    },
-    IntervalDef {
-        secs: 900,
-        label: "15分",
-        period: period::MIN_15,
-        aligned: true,
-        regular_only: false,
-    },
-    IntervalDef {
-        secs: 1800,
-        label: "30分",
-        period: period::MIN_30,
-        aligned: true,
-        regular_only: false,
-    },
-    IntervalDef {
-        secs: 3600,
-        label: "1小时",
-        period: period::MIN_60,
-        aligned: false,
-        regular_only: false,
-    },
-    IntervalDef {
-        secs: 86_400,
-        label: "1日",
-        period: period::DAY,
-        aligned: false,
-        regular_only: true,
-    },
-    IntervalDef {
-        secs: 604_800,
-        label: "1周",
-        period: period::WEEK,
-        aligned: false,
-        regular_only: true,
-    },
+    IntervalDef { secs: 60, period: period::MIN_1, aligned: true, regular_only: false },
+    IntervalDef { secs: 300, period: period::MIN_5, aligned: true, regular_only: false },
+    IntervalDef { secs: 900, period: period::MIN_15, aligned: true, regular_only: false },
+    IntervalDef { secs: 1800, period: period::MIN_30, aligned: true, regular_only: false },
+    IntervalDef { secs: 3600, period: period::MIN_60, aligned: false, regular_only: false },
+    IntervalDef { secs: 86_400, period: period::DAY, aligned: false, regular_only: true },
+    IntervalDef { secs: 604_800, period: period::WEEK, aligned: false, regular_only: true },
 ];
 
 /// Longbridge's most candles per request.
@@ -92,7 +52,7 @@ const MAX_PAGE: usize = 1000;
 impl Provider for Longbridge {
     fn validate(&self, instrument: &mut Instrument) -> Result<(), String> {
         instrument.symbol = instrument.symbol.trim().to_uppercase();
-        let invalid = || format!("无效的股票代码：{}", instrument.symbol);
+        let invalid = || t!("error.invalidStock", symbol = instrument.symbol);
         let (code, _) = instrument.symbol.rsplit_once('.').ok_or_else(invalid)?;
         let code_ok = !code.is_empty()
             && code.len() <= 12
@@ -126,29 +86,29 @@ impl Provider for Longbridge {
     fn chart_spec(&self, instrument: &Instrument) -> ChartSpec {
         let market = market_of(&instrument.symbol);
         ChartSpec {
-            source: ProviderId::Longbridge.name(),
+            source: ProviderId::Longbridge,
             intervals: INTERVALS
                 .iter()
                 .map(|i| IntervalSpec {
                     secs: i.secs,
-                    label: i.label,
                     mode: ChartMode::Candle,
                     aligned: i.aligned,
                     regular_only: i.regular_only,
                 })
                 .collect(),
-            stats_span: "今日",
-            volume_unit: "股".to_owned(),
+            stats_span: StatsSpan::Today,
+            volume_unit: None,
             turnover_unit: instrument.quote.clone(),
             // Daily candles open at the exchange's midnight; labels read its date.
             day_offset: market.map_or(0, |m| m.utc_offset(api::now())),
             // Ten levels at most, and tick sizes that change with the price:
             // nothing worth grouping.
             book_steps: Vec::new(),
-            link: Some(Link {
-                label: "在长桥打开",
-                url: format!("https://longbridge.com/zh-CN/quote/{}", instrument.symbol),
-            }),
+            link: Some(format!(
+                "https://longbridge.com/{}/quote/{}",
+                language(),
+                instrument.symbol
+            )),
         }
     }
 
@@ -198,8 +158,9 @@ pub struct Account {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MarketAccess {
+    /// `US`, `HK` or `CN`.
     pub market: &'static str,
-    /// Quote packages, e.g. `LV1 实时行情`.
+    /// Quote packages as Longbridge names them, e.g. `LV1 Real-time Quotes`.
     pub packages: Vec<String>,
     /// Why there are none, as Longbridge puts it.
     pub note: Option<String>,
@@ -207,10 +168,10 @@ pub struct MarketAccess {
 
 impl Account {
     fn from_profile(profile: &proto::QuoteProfileResponse) -> Self {
-        let markets = [("US", "美股"), ("HK", "港股"), ("CN", "A 股")]
+        let markets = ["US", "HK", "CN"]
             .into_iter()
-            .filter_map(|(code, market)| {
-                let detail = profile.quote_level_detail.as_ref()?.by_market_code.get(code)?;
+            .filter_map(|market| {
+                let detail = profile.quote_level_detail.as_ref()?.by_market_code.get(market)?;
                 Some(MarketAccess {
                     market,
                     packages: detail.packages.iter().map(|p| p.name.clone()).collect(),
@@ -235,6 +196,15 @@ pub fn last_account() -> Option<Account> {
 /// New credentials make the last login's account meaningless.
 pub fn forget_account() {
     service::forget_account();
+}
+
+/// What Longbridge calls the app's language, for its site, its names and
+/// its messages: it speaks Simplified Chinese and English.
+fn language() -> &'static str {
+    match i18n::current() {
+        Locale::ZhCn => "zh-CN",
+        Locale::En | Locale::Ja => "en",
+    }
 }
 
 /// The market a symbol trades in, by its suffix.
@@ -296,7 +266,13 @@ fn guesses(query: &str) -> Vec<String> {
 fn candidate(info: proto::StaticInfo) -> Option<Instrument> {
     let market = market_of(&info.symbol)?;
     let (code, _) = info.symbol.rsplit_once('.')?;
-    let name = if info.name_cn.is_empty() { info.name_en } else { info.name_cn };
+    // The name in the app's language; Longbridge has no Japanese, and
+    // English names read better there than Chinese ones.
+    let (preferred, other) = match i18n::current() {
+        Locale::ZhCn => (info.name_cn, info.name_en),
+        Locale::En | Locale::Ja => (info.name_en, info.name_cn),
+    };
+    let name = if preferred.is_empty() { other } else { preferred };
     Some(Instrument {
         provider: ProviderId::Longbridge,
         base: code.to_owned(),
@@ -328,9 +304,9 @@ async fn history(
     let def = INTERVALS
         .iter()
         .find(|i| i.secs == interval)
-        .ok_or_else(|| Error::Message(format!("不支持的周期：{interval} 秒")))?;
-    let market =
-        market_of(&instrument.symbol).ok_or_else(|| Error::Message("无效的股票代码".to_owned()))?;
+        .ok_or_else(|| Error::Message(t!("error.unsupportedInterval", seconds = interval)))?;
+    let market = market_of(&instrument.symbol)
+        .ok_or_else(|| Error::Message(t!("error.invalidStock", symbol = instrument.symbol)))?;
     // US minute candles include the extended sessions, as the menu bar does.
     let sessions = if market == Market::Us && !def.regular_only {
         trade_session::ALL

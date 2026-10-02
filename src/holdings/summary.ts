@@ -2,6 +2,8 @@
 // what moved it, and the figures in the tiles. Pure functions over the
 // app's portfolio, so the page only lays them out.
 
+import type { TFunction } from "i18next";
+
 import type { HeldAsset, HeldPosition, Portfolio } from "@/lib/api";
 import { fmtSigned } from "@/lib/format";
 
@@ -21,8 +23,8 @@ export interface Share {
 /** The largest holdings get a series color each; the rest fold together, cash last. */
 const SERIES = 5;
 
-/** How the total splits: the largest assets, 其他, then 稳定币. */
-export function allocation(assets: HeldAsset[], total: number): Share[] {
+/** How the total splits: the largest assets, the others together, then stablecoins. */
+export function allocation(assets: HeldAsset[], total: number, t: TFunction): Share[] {
   if (!(total > 0)) return [];
   const priced = assets.filter((a): a is HeldAsset & { value: number } => a.value !== null && a.value > 0);
   const risk = priced.filter((a) => !a.stable);
@@ -33,9 +35,13 @@ export function allocation(assets: HeldAsset[], total: number): Share[] {
     color: `var(--series-${i + 1})`,
   }));
   const rest = risk.slice(SERIES).reduce((sum, a) => sum + a.value, 0);
-  if (rest > 0) shares.push({ label: "其他", value: rest, pct: (rest / total) * 100, color: "var(--series-rest)" });
+  if (rest > 0) {
+    shares.push({ label: t("common.holdings.others"), value: rest, pct: (rest / total) * 100, color: "var(--series-rest)" });
+  }
   const cash = priced.filter((a) => a.stable).reduce((sum, a) => sum + a.value, 0);
-  if (cash > 0) shares.push({ label: "稳定币", value: cash, pct: (cash / total) * 100, color: "var(--series-cash)" });
+  if (cash > 0) {
+    shares.push({ label: t("holdings.stablecoins"), value: cash, pct: (cash / total) * 100, color: "var(--series-cash)" });
+  }
   return shares;
 }
 
@@ -73,9 +79,9 @@ export function figures(portfolio: Portfolio): Figures {
 
 /**
  * One line under the total: what moved the money today and how much of it
- * is cash. "BTC +1,320.20 · ETH −210.60 · 合约 +755.10 · 稳定币 26%".
+ * is cash. "BTC +1,320.20 · ETH −210.60 · Positions +755.10 · Stablecoins 26%".
  */
-export function insight(portfolio: Portfolio): string | null {
+export function insight(portfolio: Portfolio, t: TFunction): string | null {
   const { total } = portfolio;
   if (total === null || !(total > 0)) return null;
   const movers = portfolio.assets
@@ -85,8 +91,10 @@ export function insight(portfolio: Portfolio): string | null {
     .map((a) => `${a.asset} ${fmtSigned(a.change ?? 0, 2)}`);
   const { cash, positionsChange } = figures(portfolio);
   const parts = [...movers];
-  if (portfolio.positions.length && Math.abs(positionsChange) >= 0.005) parts.push(`合约 ${fmtSigned(positionsChange, 2)}`);
-  parts.push(`稳定币 ${Math.round((cash / total) * 100)}%`);
+  if (portfolio.positions.length && Math.abs(positionsChange) >= 0.005) {
+    parts.push(t("holdings.positionsMove", { value: fmtSigned(positionsChange, 2) }));
+  }
+  parts.push(t("holdings.stableShare", { pct: Math.round((cash / total) * 100) }));
   return parts.join(" · ");
 }
 

@@ -17,7 +17,7 @@ use crate::{
         },
     },
     net,
-    portfolio::{Balance, Position, Price, Wallet},
+    portfolio::{Balance, Position, PositionKind, Price, Wallet},
     sign,
 };
 
@@ -40,7 +40,7 @@ impl Account for Binance {
         let restrictions: Restrictions =
             get(key, Method::GET, SPOT, "/sapi/v1/account/apiRestrictions", "").await?;
         if !restrictions.enable_reading {
-            return Err(Error::Message("API Key 没有读取权限".to_owned()));
+            return Err(Error::Message(t!("error.noReadPermission").to_owned()));
         }
         Ok(())
     }
@@ -203,10 +203,15 @@ async fn usd_futures(key: &ApiKey) -> Result<(Vec<Balance>, Vec<Position>), Erro
             let amount = crypto::num(&risk.position_amt);
             let settle = risk.margin_asset;
             Position {
-                kind: if risk.symbol.contains('_') { "U 本位交割" } else { "U 本位永续" },
+                kind: match (settle == "USDC", risk.symbol.contains('_')) {
+                    (false, false) => PositionKind::UsdtPerpetual,
+                    (false, true) => PositionKind::UsdtFutures,
+                    (true, false) => PositionKind::UsdcPerpetual,
+                    (true, true) => PositionKind::UsdcFutures,
+                },
                 long: amount > 0.0,
                 size: amount.abs(),
-                size_unit: base(&risk.symbol, &settle),
+                size_unit: Some(base(&risk.symbol, &settle)),
                 entry: crypto::num(&risk.entry_price),
                 mark: crypto::num(&risk.mark_price),
                 liquidation: risk.liquidation_price.parse().ok().filter(|p: &f64| *p > 0.0),
@@ -263,13 +268,13 @@ async fn coin_futures(key: &ApiKey) -> Result<(Vec<Balance>, Vec<Position>), Err
             let face = if coin == "BTC" { 100.0 } else { 10.0 };
             Position {
                 kind: if risk.symbol.ends_with("_PERP") {
-                    "币本位永续"
+                    PositionKind::CoinPerpetual
                 } else {
-                    "币本位交割"
+                    PositionKind::CoinFutures
                 },
                 long: contracts > 0.0,
                 size: contracts.abs(),
-                size_unit: "张".to_owned(),
+                size_unit: None,
                 entry: crypto::num(&risk.entry_price),
                 mark: crypto::num(&risk.mark_price),
                 liquidation: risk.liquidation_price.parse().ok().filter(|p: &f64| *p > 0.0),
@@ -390,13 +395,14 @@ async fn sync_clock() -> Result<(), Error> {
 }
 
 fn refused(code: i64, message: &str) -> String {
-    match code {
-        -1021 => "系统时间不准，请校准后重试".to_owned(),
-        -1022 => "API Secret 不对".to_owned(),
-        -2008 | -2014 => "API Key 不存在".to_owned(),
-        -2015 => "API Key 无效、没有读取权限，或绑定了其他 IP".to_owned(),
-        _ => format!("{message}（{code}）"),
-    }
+    let known = match code {
+        -1021 => t!("error.clockSkew"),
+        -1022 => return t!("error.wrongSecret", field = "API Secret"),
+        -2008 | -2014 => t!("error.keyNotFound"),
+        -2015 => t!("error.keyInvalid"),
+        _ => return t!("error.exchangeReply", message = message, code = code),
+    };
+    known.to_owned()
 }
 
 #[cfg(test)]

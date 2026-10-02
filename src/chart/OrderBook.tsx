@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { cn } from "cn";
 
@@ -38,6 +39,7 @@ export function OrderBook(props: {
   step: number;
   onStep: (step: number) => void;
 }) {
+  const { t, i18n } = useTranslation();
   const { book, decimals } = props;
   // Grouped prices need no more decimals than their step.
   const stepSize = props.steps.at(props.step);
@@ -56,8 +58,8 @@ export function OrderBook(props: {
       {share !== null && (
         <div className="shrink-0 px-3 pb-2">
           <div className="mb-1 flex justify-between text-2xs">
-            <span className="text-up">买 {share.toFixed(0)}%</span>
-            <span className="text-down">{(100 - share).toFixed(0)}% 卖</span>
+            <span className="text-up">{t("chart.bid", { share: share.toFixed(0) })}</span>
+            <span className="text-down">{t("chart.ask", { share: (100 - share).toFixed(0) })}</span>
           </div>
           <div className="flex h-1 gap-0.5 overflow-hidden rounded-full">
             <div className="rounded-full bg-up transition-[width] duration-700 ease-out" style={{ width: `${share}%` }} />
@@ -66,22 +68,29 @@ export function OrderBook(props: {
         </div>
       )}
       <div className="grid h-6 shrink-0 grid-cols-[1.1fr_1fr_1fr] items-center px-3 text-2xs text-muted-foreground">
-        <span>{props.quote ? `价格(${props.quote})` : "价格"}</span>
-        <span className="text-right">{props.quote ? `数量(${props.base})` : "数量"}</span>
-        <span className="text-right">累计</span>
+        <span>{props.quote ? t("chart.priceIn", { unit: props.quote }) : t("chart.price")}</span>
+        <span className="text-right">{props.quote ? t("chart.sizeIn", { unit: props.base }) : t("chart.size")}</span>
+        <span className="text-right">{t("chart.total")}</span>
       </div>
       {book === null ? (
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
-          <Spinner aria-label="加载中" />
+          <Spinner aria-label={t("loading")} />
         </div>
       ) : empty ? (
-        <div className="flex flex-1 items-center justify-center text-muted-foreground">暂无挂单</div>
+        <div className="flex flex-1 items-center justify-center text-muted-foreground">{t("chart.noOrders")}</div>
       ) : (
         <>
           {/* Best ask sits at the bottom, next to the price; far levels clip at the top. */}
           <div className="flex min-h-0 flex-1 flex-col-reverse overflow-hidden [mask-image:linear-gradient(to_bottom,transparent,black_2.5rem)]">
             {asks.map((row) => (
-              <BookRow key={row.price} row={row} side="ask" decimals={rowDecimals} deepest={deepest} />
+              <BookRow
+                key={row.price}
+                row={row}
+                side="ask"
+                decimals={rowDecimals}
+                deepest={deepest}
+                locale={i18n.language}
+              />
             ))}
           </div>
           <div className="flex h-10 shrink-0 items-center gap-1 px-3">
@@ -101,14 +110,21 @@ export function OrderBook(props: {
             ) : (
               spread !== null && (
                 <span className="pill ml-auto px-2 py-0.5 text-2xs text-muted-foreground">
-                  价差 {fmtPrice(spread, decimals)}
+                  {t("chart.spread", { value: fmtPrice(spread, decimals) })}
                 </span>
               )
             )}
           </div>
           <div className="min-h-0 flex-1 overflow-hidden [mask-image:linear-gradient(to_top,transparent,black_2.5rem)]">
             {bids.map((row) => (
-              <BookRow key={row.price} row={row} side="bid" decimals={rowDecimals} deepest={deepest} />
+              <BookRow
+                key={row.price}
+                row={row}
+                side="bid"
+                decimals={rowDecimals}
+                deepest={deepest}
+                locale={i18n.language}
+              />
             ))}
           </div>
         </>
@@ -119,9 +135,10 @@ export function OrderBook(props: {
 
 /** The step the book is grouped by, opening the native pop-up menu of the others. */
 function StepPicker(props: { steps: number[]; step: number; onStep: (step: number) => void }) {
+  const { t } = useTranslation();
   return (
     <Picker
-      label="合并深度"
+      label={t("chart.grouping")}
       value={String(props.step)}
       options={props.steps.map((step, i) => ({ value: String(i), label: fmtStep(step) }))}
       onChange={(value) => props.onStep(Number(value))}
@@ -141,7 +158,7 @@ function fmtStep(step: number): string {
   return fmtPrice(step, stepDecimals(step));
 }
 
-function BookRow(props: { row: Row; side: "bid" | "ask"; decimals: number; deepest: number }) {
+function BookRow(props: { row: Row; side: "bid" | "ask"; decimals: number; deepest: number; locale: string }) {
   const { row, side } = props;
   return (
     <div className="relative grid h-5 shrink-0 grid-cols-[1.1fr_1fr_1fr] items-center px-3">
@@ -155,8 +172,8 @@ function BookRow(props: { row: Row; side: "bid" | "ask"; decimals: number; deepe
       <span className={cn("relative", side === "bid" ? "text-up" : "text-down")}>
         {fmtPrice(row.price, props.decimals)}
       </span>
-      <span className="relative text-right">{fmtQty(row.qty)}</span>
-      <span className="relative text-right text-muted-foreground">{fmtQty(row.total)}</span>
+      <span className="relative text-right">{fmtQty(row.qty, props.locale)}</span>
+      <span className="relative text-right text-muted-foreground">{fmtQty(row.total, props.locale)}</span>
     </div>
   );
 }

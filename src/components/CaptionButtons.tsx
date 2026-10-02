@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { subscribe } from "@/lib/api";
@@ -17,6 +18,7 @@ const GLYPH = {
  * order, as the system's are (Alt+Space and Alt+F4 reach them instead).
  */
 export function CaptionButtons(props: { maximizable: boolean }) {
+  const { t } = useTranslation();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -30,15 +32,24 @@ export function CaptionButtons(props: { maximizable: boolean }) {
   const current = getCurrentWindow();
   return (
     <div className="caption-buttons flex shrink-0 self-stretch">
-      <CaptionButton label="最小化" glyph={GLYPH.minimize} onClick={() => void current.minimize()} />
+      <CaptionButton
+        label={t("windowControls.minimize")}
+        glyph={GLYPH.minimize}
+        onClick={() => void current.minimize()}
+      />
       {props.maximizable && (
         <CaptionButton
-          label={maximized ? "还原" : "最大化"}
+          label={maximized ? t("windowControls.restore") : t("windowControls.maximize")}
           glyph={maximized ? GLYPH.restore : GLYPH.maximize}
           onClick={() => void current.toggleMaximize()}
         />
       )}
-      <CaptionButton label="关闭" glyph={GLYPH.close} close onClick={() => void current.close()} />
+      <CaptionButton
+        label={t("windowControls.close")}
+        glyph={GLYPH.close}
+        close
+        onClick={() => void current.close()}
+      />
     </div>
   );
 }

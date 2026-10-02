@@ -15,7 +15,7 @@
 
 <p align="center"><a href="README.zh-CN.md">简体中文</a></p>
 
-Crypto comes from Binance, Bybit or OKX public market data, no account needed. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI keys. The interface is in Simplified Chinese.
+Crypto comes from Binance, Bybit or OKX public market data, no account needed. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI keys. It speaks English, Simplified Chinese and Japanese.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/chart-dark.png">
@@ -30,6 +30,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed. U
 - A chart that moves with every trade, with the order book and recent trades
 - With an exchange's API key, your total holdings and every account's positions
 - Turn on AI access and Claude Code, Codex and OpenCode can read your quotes and holdings to think them through with you
+- English, 简体中文 or 日本語, following your system or picked in Settings
 - Red-up or green-up colors, launch at login, automatic updates
 
 ## Install
@@ -41,15 +42,15 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed. U
 ## Stocks
 
 1. Copy the App Key, App Secret and Access Token from the user center at [open.longbridge.com](https://open.longbridge.com/).
-2. Paste them into Settings → 长桥 (Longbridge).
+2. Paste them into Settings → Longbridge.
 3. Add stocks by code in the search field, such as AAPL, 700 or 600519.
 
 ## Holdings
 
 1. Create an API key on the exchange; read permission is all it needs. OKX also asks for a passphrase.
-2. Paste it into Settings → 持仓 (Holdings).
-3. The dropdown now leads with 总资产 (Total) and its 24h change. Its submenu sums things up: the day's PnL, each account, the largest holdings and open positions; any row opens the holdings window, where the total moves with the market while it is open.
-4. Settings → 持仓 → 菜单栏显示总资产 puts the total in the menu bar or taskbar instead of a price.
+2. Paste it into Settings → Holdings.
+3. The dropdown now leads with Total and its 24h change. Its submenu sums things up: the day's PnL, each account, the largest holdings and open positions; any row opens the holdings window, where the total moves with the market while it is open.
+4. Settings → Holdings → Show total in menu bar (taskbar on Windows) puts the total there instead of a price.
 
 ## FAQ
 
@@ -59,7 +60,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed. U
 
 **Does it collect any data?** No. It only talks to the exchanges and Longbridge you use, and to GitHub for updates (you can turn that off in the settings). Keys stay on your computer, and Candlewick never trades. With AI access on, AI agents on your computer can read its data; other computers and web pages can't.
 
-**Is there an English interface, or a build for Intel Macs?** Not yet.
+**Is there a build for Intel Macs?** Not yet.
 
 ## Build from source
 
@@ -81,6 +82,7 @@ pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
 - `src-tauri/src/portfolio.rs`: what holdings are worth
 - `src-tauri/src/agent/`: AI access, a local read-only API and its skill; see [docs/agent-access.md](docs/agent-access.md)
 - `src/settings/`, `src/chart/` and `src/holdings/`: the settings, chart and holdings windows, the chart built on [Liveline](https://github.com/benjitaylor/liveline)
+- `src-tauri/locales/` and `src/locales/`: every word in English, Chinese and Japanese, for the app and for its pages; see [docs/i18n.md](docs/i18n.md)
 - `patches/liveline@0.0.7.patch`: dragging, zooming and the color setting for Liveline
 
 Built with [Tauri 2](https://tauri.app), Rust, React 19 and Tailwind CSS.

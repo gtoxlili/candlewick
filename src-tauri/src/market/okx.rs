@@ -9,10 +9,10 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{json, value::RawValue};
 
 use super::{
-    Candle, Error, Link, LiveEvent, ProviderId, Trade,
+    Candle, Error, LiveEvent, ProviderId, Trade,
     crypto::{self, Entry, Exchange, Interval, Ladder, Out, Pair, Session, Tick, Units},
 };
-use crate::{model::Instrument, net};
+use crate::{i18n, model::Instrument, net};
 
 /// OKX's most candles per request.
 const MAX_CANDLES: usize = 300;
@@ -32,13 +32,13 @@ impl Exchange for Okx {
     const PING: Option<&'static str> = Some("ping");
     // `1Dutc`: plain `1D` candles open at 00:00 in Hong Kong.
     const INTERVALS: &'static [Interval] = &[
-        Interval::new(1, "1秒", "1s"),
-        Interval::new(60, "1分", "1m"),
-        Interval::new(300, "5分", "5m"),
-        Interval::new(900, "15分", "15m"),
-        Interval::new(3600, "1小时", "1H"),
-        Interval::new(14_400, "4小时", "4H"),
-        Interval::new(86_400, "1日", "1Dutc"),
+        Interval::new(1, "1s"),
+        Interval::new(60, "1m"),
+        Interval::new(300, "5m"),
+        Interval::new(900, "15m"),
+        Interval::new(3600, "1H"),
+        Interval::new(14_400, "4H"),
+        Interval::new(86_400, "1Dutc"),
     ];
 
     type Live = Live;
@@ -47,14 +47,16 @@ impl Exchange for Okx {
         format!("{base}-{quote}")
     }
 
-    fn link(instrument: &Instrument) -> Link {
-        Link {
-            label: "在 OKX 打开",
-            url: format!(
-                "https://www.okx.com/zh-hans/trade-spot/{}",
-                net::percent_encode(&instrument.symbol.to_lowercase())
-            ),
-        }
+    fn link(instrument: &Instrument) -> String {
+        // The site has Simplified Chinese; otherwise it picks by the browser.
+        let language = match i18n::current() {
+            i18n::Locale::ZhCn => "zh-hans/",
+            i18n::Locale::En | i18n::Locale::Ja => "",
+        };
+        format!(
+            "https://www.okx.com/{language}trade-spot/{}",
+            net::percent_encode(&instrument.symbol.to_lowercase())
+        )
     }
 
     async fn pairs() -> Result<Vec<Pair>, Error> {

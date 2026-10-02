@@ -28,7 +28,7 @@ use tokio::{
     sync::{mpsc, oneshot, watch},
     time::{Instant, sleep, timeout},
 };
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{Message, protocol::CloseFrame};
 
 use super::{
     Account, api,
@@ -44,8 +44,6 @@ use crate::{
 };
 
 const PROVIDER: ProviderId = ProviderId::Longbridge;
-/// Names and error messages come back in this language.
-const LANGUAGE: &str = "zh-CN";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// The server pings the socket; this much silence means a dead link. The
@@ -117,7 +115,7 @@ where
     let (reply, answer) = oneshot::channel();
     send(Command::Call { cmd, body: request.encode_to_vec(), reply })?;
     let body = answer.await.map_err(|_| stopped())??;
-    Resp::decode(body.as_slice()).map_err(|_| Error::Message("长桥返回的数据格式有误".to_owned()))
+    Resp::decode(body.as_slice()).map_err(|_| bad_data())
 }
 
 /// The account's quote permissions, connecting to find out if needed.
@@ -161,11 +159,28 @@ fn send(command: Command) -> Result<(), Error> {
 }
 
 fn stopped() -> Error {
-    Error::Message("长桥连接已停止".to_owned())
+    Error::Message(t!("error.sourceStopped", source = PROVIDER.name()))
 }
 
 fn not_configured() -> Error {
-    Error::Message("请先在设置中填写长桥凭证".to_owned())
+    Error::Message(t!("error.sourceNeedsCredentials", source = PROVIDER.name()))
+}
+
+fn bad_data() -> Error {
+    Error::Message(t!("error.sourceBadData", source = PROVIDER.name()))
+}
+
+fn disconnected() -> String {
+    t!("error.sourceDisconnected", source = PROVIDER.name())
+}
+
+/// The server closed the connection: why in its own words, where its close
+/// frame has any.
+fn closed(frame: Option<CloseFrame>) -> String {
+    match frame.map(|frame| frame.reason.to_string()).filter(|reason| !reason.is_empty()) {
+        Some(reason) => t!("error.sourceSays", source = PROVIDER.name(), message = reason),
+        None => t!("error.sourceClosed", source = PROVIDER.name()),
+    }
 }
 
 type Reply = oneshot::Sender<Result<Vec<u8>, Error>>;
@@ -237,9 +252,10 @@ impl Service {
             let started = Instant::now();
             let end = match self.connect(&keys).await {
                 Ok((connection, account, route)) => {
+                    log::info!("longbridge connected ({route})");
                     failures = 0;
                     self.publish_account(&account);
-                    market::set_status(&self.app, PROVIDER, Status::Live(route));
+                    market::set_status(&self.app, PROVIDER, Status::Live);
                     // A renewed token has reached the control meanwhile.
                     let wanted = Wanted::of(&self.control.borrow_and_update());
                     self.pump(connection, wanted).await
@@ -266,7 +282,7 @@ impl Service {
             market::set_status(
                 &self.app,
                 PROVIDER,
-                Status::Retrying { reason, retry_in_secs: delay.as_secs() },
+                Status::Retrying { retry_in_secs: delay.as_secs() },
             );
             let deadline = Instant::now() + delay;
             loop {
@@ -299,7 +315,7 @@ impl Service {
         let status = if wanted.symbols.is_empty() {
             Status::Idle
         } else if wanted.keys.is_none() {
-            Status::Unavailable("未填写长桥凭证".to_owned())
+            Status::NoCredentials
         } else {
             Status::Paused
         };
@@ -365,7 +381,9 @@ impl Service {
             let keys = self.renew(keys).await;
             let hosts = api::hosts().await;
             let otp = api::one_time_password(&keys).await?;
-            let headers = [("accept-language", LANGUAGE)];
+            // Names and messages come back in this language.
+            let language = super::language();
+            let headers = [("accept-language", language)];
             let (socket, route) = net::connect_with_headers(
                 hosts.quote,
                 443,
@@ -376,7 +394,7 @@ impl Service {
             .map_err(|e| Error::Message(e.to_string()))?;
             let mut connection = Connection::new(socket);
             let mut metadata = HashMap::new();
-            metadata.insert("accept-language".to_owned(), LANGUAGE.to_owned());
+            metadata.insert("accept-language".to_owned(), language.to_owned());
             metadata.insert("need_over_night_quote".to_owned(), "true".to_owned());
             let _session: proto::Session = connection
                 .handshake(cmd::AUTH, &proto::AuthRequest { token: otp, metadata })
@@ -384,7 +402,7 @@ impl Service {
             let profile: proto::QuoteProfileResponse = connection
                 .handshake(
                     cmd::QUOTE_PROFILE,
-                    &proto::QuoteProfileRequest { language: LANGUAGE.to_owned() },
+                    &proto::QuoteProfileRequest { language: language.to_owned() },
                 )
                 .await?;
             Ok::<_, Error>((connection, Account::from_profile(&profile), route))
@@ -393,7 +411,10 @@ impl Service {
             result = timeout(CONNECT_TIMEOUT, login) => match result {
                 Ok(Ok(connected)) => Ok(connected),
                 Ok(Err(e)) => Err(Connect::Failed(e)),
-                Err(_) => Err(Connect::Failed(Error::Message("连接长桥超时".to_owned()))),
+                Err(_) => Err(Connect::Failed(Error::Message(t!(
+                    "error.sourceConnectTimeout",
+                    source = PROVIDER.name()
+                )))),
             },
             // Nothing else is served while logging in, but the app may quit.
             () = self.app_closing() => Err(Connect::Shutdown),
@@ -468,13 +489,10 @@ impl Service {
                             connection.last_ping = Instant::now();
                             continue;
                         }
-                        Some(Ok(Message::Close(frame))) => {
-                            let reason = frame.map(|f| f.reason.to_string()).unwrap_or_default();
-                            return End::Lost(format!("长桥关闭了连接 {reason}").trim_end().to_owned());
-                        }
+                        Some(Ok(Message::Close(frame))) => return End::Lost(closed(frame)),
                         Some(Ok(_)) => continue,
                         Some(Err(e)) => return End::Lost(e.to_string()),
-                        None => return End::Lost("连接已断开".to_owned()),
+                        None => return End::Lost(disconnected()),
                     };
                     match frame {
                         Some(Frame::Response { id, status, body }) => {
@@ -536,7 +554,7 @@ impl Service {
                 }
                 _ = tick.tick() => {
                     if connection.last_ping.elapsed() > HEARTBEAT_TIMEOUT {
-                        return End::Lost("长时间没有收到长桥的心跳".to_owned());
+                        return End::Lost(t!("error.sourceSilent", source = PROVIDER.name()));
                     }
                     connection.expire_requests();
                     if self.needed(&wanted) || !connection.inflight.is_empty() {
@@ -648,8 +666,7 @@ impl Service {
                 }
             }
             Pending::Snapshot => match result.and_then(|body| {
-                proto::QuoteResponse::decode(body.as_slice())
-                    .map_err(|_| Error::Message("长桥报价格式有误".to_owned()))
+                proto::QuoteResponse::decode(body.as_slice()).map_err(|_| bad_data())
             }) {
                 Ok(response) => {
                     for quote in response.secu_quote {
@@ -805,15 +822,10 @@ impl Connection {
         loop {
             let data = match self.socket.next().await {
                 Some(Ok(Message::Binary(data))) => data,
-                Some(Ok(Message::Close(frame))) => {
-                    let reason = frame.map(|f| f.reason.to_string()).unwrap_or_default();
-                    return Err(Error::Message(
-                        format!("长桥拒绝了连接 {reason}").trim_end().to_owned(),
-                    ));
-                }
+                Some(Ok(Message::Close(frame))) => return Err(Error::Message(closed(frame))),
                 Some(Ok(_)) => continue,
                 Some(Err(e)) => return Err(Error::Message(e.to_string())),
-                None => return Err(Error::Message("连接已断开".to_owned())),
+                None => return Err(Error::Message(disconnected())),
             };
             if let Some(Frame::Response { id: answered, status, body }) = parse_frame(&data)
                 && answered == id
@@ -821,8 +833,7 @@ impl Connection {
                 if status != 0 {
                     return Err(response_error(status, &body));
                 }
-                return Resp::decode(body.as_slice())
-                    .map_err(|_| Error::Message("长桥返回的数据格式有误".to_owned()));
+                return Resp::decode(body.as_slice()).map_err(|_| bad_data());
             }
         }
     }
@@ -833,7 +844,8 @@ impl Connection {
             self.inflight.iter().filter(|(_, (at, _))| *at < now).map(|(id, _)| *id).collect();
         for id in expired {
             if let Some((_, Pending::Call(reply))) = self.inflight.remove(&id) {
-                let _ = reply.send(Err(Error::Message("长桥请求超时".to_owned())));
+                let timeout = t!("error.sourceTimeout", source = PROVIDER.name());
+                let _ = reply.send(Err(Error::Message(timeout)));
             }
         }
     }
@@ -843,7 +855,7 @@ impl Drop for Connection {
     fn drop(&mut self) {
         for (_, (_, pending)) in self.inflight.drain() {
             if let Pending::Call(reply) = pending {
-                let _ = reply.send(Err(Error::Message("长桥连接已断开".to_owned())));
+                let _ = reply.send(Err(Error::Message(disconnected())));
             }
         }
     }
@@ -904,9 +916,15 @@ fn parse_frame(data: &[u8]) -> Option<Frame> {
 
 fn response_error(status: u8, body: &[u8]) -> Error {
     match proto::Error::decode(body) {
-        Ok(error) if !error.msg.is_empty() => Error::Message(format!("长桥：{}", error.msg)),
-        Ok(error) => Error::Message(format!("长桥返回错误 {}", error.code)),
-        Err(_) => Error::Message(format!("长桥返回错误（状态 {status}）")),
+        Ok(error) if !error.msg.is_empty() => {
+            Error::Message(t!("error.sourceSays", source = PROVIDER.name(), message = error.msg))
+        }
+        Ok(error) => {
+            Error::Message(t!("error.sourceCode", source = PROVIDER.name(), code = error.code))
+        }
+        Err(_) => {
+            Error::Message(t!("error.sourceStatus", source = PROVIDER.name(), status = status))
+        }
     }
 }
 

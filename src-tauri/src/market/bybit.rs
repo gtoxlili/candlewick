@@ -9,7 +9,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{json, value::RawValue};
 
 use super::{
-    Candle, Error, Link, LiveEvent, ProviderId, Trade,
+    Candle, Error, LiveEvent, ProviderId, Trade,
     crypto::{self, Entry, Exchange, Interval, Ladder, Out, Pair, Session, Tick, Units},
 };
 use crate::{http, model::Instrument, net};
@@ -32,12 +32,12 @@ impl Exchange for Bybit {
     const PING: Option<&'static str> = Some(r#"{"op":"ping"}"#);
     // Bybit has no one-second klines.
     const INTERVALS: &'static [Interval] = &[
-        Interval::new(60, "1分", "1"),
-        Interval::new(300, "5分", "5"),
-        Interval::new(900, "15分", "15"),
-        Interval::new(3600, "1小时", "60"),
-        Interval::new(14_400, "4小时", "240"),
-        Interval::new(86_400, "1日", "D"),
+        Interval::new(60, "1"),
+        Interval::new(300, "5"),
+        Interval::new(900, "15"),
+        Interval::new(3600, "60"),
+        Interval::new(14_400, "240"),
+        Interval::new(86_400, "D"),
     ];
 
     type Live = Live;
@@ -46,15 +46,13 @@ impl Exchange for Bybit {
         format!("{base}{quote}")
     }
 
-    fn link(instrument: &Instrument) -> Link {
-        Link {
-            label: "在 Bybit 打开",
-            url: format!(
-                "https://www.bybit.com/trade/spot/{}/{}",
-                net::percent_encode(&instrument.base),
-                net::percent_encode(&instrument.quote)
-            ),
-        }
+    // The site picks its language from the browser's.
+    fn link(instrument: &Instrument) -> String {
+        format!(
+            "https://www.bybit.com/trade/spot/{}/{}",
+            net::percent_encode(&instrument.base),
+            net::percent_encode(&instrument.quote)
+        )
     }
 
     async fn pairs() -> Result<Vec<Pair>, Error> {

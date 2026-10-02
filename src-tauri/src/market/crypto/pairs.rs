@@ -136,7 +136,7 @@ pub async fn search<E: Exchange>(query: &str) -> Search {
                     .map(|instrument| Candidate { instrument, manual: true })
                     .into_iter()
                     .collect(),
-                notes: vec!["交易对列表加载失败，请输入完整交易对，如 SOL/USDT".to_owned()],
+                notes: vec![t!("error.pairListFailed").to_owned()],
             }
         }
     }
