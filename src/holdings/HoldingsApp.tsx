@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import { CameraOff, KeyRound } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { cn } from "cn";
 
 import { ChangeBadge } from "@/components/ChangeBadge";
@@ -8,7 +8,7 @@ import { PillTabs } from "@/components/PillTabs";
 import { TITLE_INSET, TitleBar } from "@/components/TitleBar";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { api, subscribe, type Portfolio, type Settings } from "@/lib/api";
+import { api, subscribe, type Portfolio } from "@/lib/api";
 import { fmtClock, fmtPrice, fmtSigned } from "@/lib/format";
 import { load, store } from "@/lib/prefs";
 import { Allocation } from "./Allocation";
@@ -33,13 +33,8 @@ export default function HoldingsApp() {
   const [showSmall, setShowSmall] = useState(() => load("holdings.showSmall", (raw) => raw === "true", false));
   const [tab, setTab] = useState<Tab>(() => load("holdings.tab", (raw) => (raw === "positions" ? raw : undefined), "accounts"));
   const [now, setNow] = useState(() => Date.now());
-  const [concealed, setConcealed] = useState(false);
 
   useEffect(() => {
-    const adopt = (settings: Settings) => {
-      document.documentElement.dataset.scheme = settings.colorScheme;
-      setConcealed(settings.concealHoldings);
-    };
     // An event is always newer than the initial fetch below.
     let gotEvent = false;
     const stops = [
@@ -49,11 +44,11 @@ export default function HoldingsApp() {
           setPortfolio(next);
         }),
       ),
-      subscribe(api.onSettings(adopt)),
+      subscribe(api.onSettings((settings) => (document.documentElement.dataset.scheme = settings.colorScheme))),
     ];
     api
       .getSettings()
-      .then(adopt)
+      .then((settings) => (document.documentElement.dataset.scheme = settings.colorScheme))
       .catch(() => {});
     api
       .getPortfolio()
@@ -95,19 +90,6 @@ export default function HoldingsApp() {
         <span className="text-sm font-semibold">{t("holdings.title")}</span>
         <span className="flex-1" />
         {portfolio && portfolio.accounts.length > 0 && <Freshness portfolio={portfolio} live={live} />}
-        {concealed && (
-          // The window is left out of captures; this says why it is missing from one.
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            title={t("holdings.concealed")}
-            aria-label={t("holdings.concealed")}
-            className="text-muted-foreground"
-            onClick={() => void api.openSettings()}
-          >
-            <CameraOff />
-          </Button>
-        )}
         <Button
           variant="ghost"
           size="icon-sm"

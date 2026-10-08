@@ -56,8 +56,6 @@
       "inBar": "Show total in menu bar",
       "inBar_windows": "Show total in taskbar",
       "inBarDetail": "Takes the place of a watchlist price; turn one back on in the watchlist anytime.",
-      "conceal": "Hide holdings from screenshots",
-      "concealDetail": "The holdings window and the menu won't appear in screenshots.",
       "window": "Holdings window",
       "open": "Open"
     },
@@ -161,7 +159,6 @@
   "holdings": {
     "title": "Holdings",
     "manageKeys": "Manage API keys",
-    "concealed": "This window won't appear in screenshots",
     "sort": "Sort",
     "byValue": "By value",
     "byChange": "By 24h P&L",

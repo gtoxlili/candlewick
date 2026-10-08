@@ -68,16 +68,6 @@ pub fn open_holdings(app: &AppHandle) -> tauri::Result<()> {
     )
 }
 
-/// Leaves the open holdings window out of screen captures, or lets it back
-/// in; one opened later follows the settings by itself.
-pub fn conceal_holdings(app: &AppHandle, conceal: bool) {
-    if let Some(window) = app.get_webview_window(HOLDINGS)
-        && let Err(e) = window.set_content_protected(conceal)
-    {
-        log::error!("cannot change the holdings window's capture protection: {e}");
-    }
-}
-
 fn set_holdings_open(app: &AppHandle, open: bool) {
     app.state::<Shared>().control.send_if_modified(|control| {
         let changed = control.holdings_open != open;
@@ -228,15 +218,12 @@ fn raise(window: &WebviewWindow) -> tauri::Result<()> {
 
 fn build(app: &AppHandle, spec: Spec) -> tauri::Result<()> {
     let label = spec.label;
-    // Read now, not when it was asked for: on Windows creation waits a turn.
-    let protected = label == HOLDINGS && app.state::<Shared>().model().settings.conceal_holdings;
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(spec.url.into()))
         .title(spec.title)
         .inner_size(spec.size.0, spec.size.1)
         .min_inner_size(spec.min_size.0, spec.min_size.1)
         .resizable(spec.resizable)
         .maximizable(spec.resizable)
-        .content_protected(protected)
         .center()
         // The webview only ever shows the app's own pages; links out open
         // in the browser.

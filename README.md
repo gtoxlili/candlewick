@@ -51,7 +51,6 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed. U
 2. Paste it into Settings → Holdings.
 3. The dropdown now leads with Total and its 24h change. Its submenu sums things up: the day's PnL, each account, the largest holdings and open positions; any row opens the holdings window, where the total moves with the market while it is open.
 4. Settings → Holdings → Show total in menu bar (taskbar on Windows) puts the total there instead of a price.
-5. Settings → Holdings → Hide holdings from screenshots keeps the holdings window and the dropdown out of screenshots, and shows the total in the menu bar or taskbar as ••••.
 
 ## FAQ
 

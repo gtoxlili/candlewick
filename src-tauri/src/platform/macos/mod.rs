@@ -2,7 +2,6 @@
 
 pub mod bar;
 pub mod proxy;
-mod shield;
 mod ticker;
 pub mod window;
 

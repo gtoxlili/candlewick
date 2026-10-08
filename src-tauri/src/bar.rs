@@ -27,9 +27,6 @@ pub struct View {
     /// The total holdings and what they are made of, above the watchlist;
     /// none without an API key.
     pub holdings: Option<Holdings>,
-    /// The dropdown shows holdings that must stay out of screen captures
-    /// (`Settings::conceal_holdings`).
-    pub conceal: bool,
     pub rows: Vec<Row>,
     pub ticker: Option<Ticker>,
     /// Why a feed is not live; empty while all are.
@@ -293,11 +290,9 @@ pub fn view(app: &AppHandle) -> View {
     shared.render_pending.store(false, Ordering::Release);
     let update = update::ready(app);
     let model = shared.model();
-    let holdings = holdings(&model);
     View {
         watchlist: model.settings.watchlist.clone(),
-        conceal: holdings.is_some() && model.settings.conceal_holdings,
-        holdings,
+        holdings: holdings(&model),
         rows: rows(&model.settings.watchlist, &model.quotes),
         ticker: ticker(&model),
         caption: caption(&model),
@@ -306,12 +301,6 @@ pub fn view(app: &AppHandle) -> View {
         locale: i18n::current(),
     }
 }
-
-/// What the bar shows for the total while holdings stay out of screenshots.
-/// The bar belongs to the system (the menu bar, Explorer's taskbar), so no
-/// app can leave it out of a capture; the same dots for any amount say
-/// nothing of its size.
-const MASK: &str = "••••";
 
 /// What the bar's text shows: the total holdings when the settings ask for
 /// them and an account exists, else the pinned entry; `None` for neither.
@@ -323,13 +312,7 @@ fn ticker(model: &Model) -> Option<Ticker> {
             symbol: settings.show_symbol.then(|| t!("common.holdings.total").to_owned()),
             price: totals.map_or_else(
                 || "—".to_owned(),
-                |t| {
-                    if settings.conceal_holdings {
-                        MASK.to_owned()
-                    } else {
-                        format::price(t.total, format::compact_decimals(t.total, Some(2)))
-                    }
-                },
+                |t| format::price(t.total, format::compact_decimals(t.total, Some(2))),
             ),
             change: totals
                 .filter(|_| settings.show_change)
@@ -503,46 +486,5 @@ mod tests {
         assert_eq!(signed(152.3), ("+152.30".to_owned(), Direction::Up));
         assert_eq!(signed(-0.5), ("\u{2212}0.50".to_owned(), Direction::Down));
         assert_eq!(signed(-0.004), ("0.00".to_owned(), Direction::Flat));
-    }
-
-    // requirement: with holdings concealed, a screenshot must not tell how
-    // much the user holds, and the bar is in every full-screen screenshot.
-    #[test]
-    fn a_concealed_total_in_the_bar_says_nothing_of_its_size() {
-        use crate::{
-            market::{Feeds, ProviderId},
-            model::Settings,
-            portfolio::{self, Account, Balance, Price, Wallet},
-        };
-        use std::collections::BTreeMap;
-
-        let bar = |btc: f64, show_change: bool| {
-            let prices = [("BTC".to_owned(), Price { last: 84_000.0, open: 80_000.0 })].into();
-            let holdings = portfolio::value(
-                ProviderId::Binance,
-                &[Balance::new(Wallet::Spot, "BTC", btc)],
-                &[],
-                &prices,
-            );
-            let account = Account { holdings: Some(holdings), ..Account::new(ProviderId::Binance) };
-            let model = Model {
-                settings: Settings {
-                    holdings_in_bar: true,
-                    conceal_holdings: true,
-                    show_change,
-                    ..Settings::default()
-                },
-                quotes: HashMap::new(),
-                feeds: Feeds::new(),
-                chart: None,
-                accounts: BTreeMap::from([(ProviderId::Binance, account)]),
-            };
-            ticker(&model).expect("the total takes the bar")
-        };
-        for show_change in [false, true] {
-            assert_eq!(bar(0.0002, show_change), bar(120.0, show_change));
-        }
-        let line = bar(120.0, false).line();
-        assert!(!line.contains(|c: char| c.is_ascii_digit()), "{line}");
     }
 }

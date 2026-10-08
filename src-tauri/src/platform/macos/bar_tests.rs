@@ -188,28 +188,4 @@ fn verify_holdings_menu(app: &AppHandle) {
     });
     i18n::set(Locale::En);
     bar::request_render(app);
-
-    verify_concealed_holdings(app);
-}
-
-/// Concealed holdings (requirement: a screenshot must not tell how much the
-/// user holds): the bar, which no app can leave out of a capture, shows no
-/// amount.
-fn verify_concealed_holdings(app: &AppHandle) {
-    use crate::model::Shared;
-    use tauri::Manager;
-
-    let mtm = MainThreadMarker::new().unwrap();
-    let shared = app.state::<Shared>();
-    let button = UI
-        .with_borrow(|ui| ui.as_ref().unwrap().status_item.as_ref().unwrap().button(mtm).unwrap());
-    {
-        let mut model = shared.model();
-        model.settings.conceal_holdings = true;
-        model.settings.show_change = false;
-    }
-    bar::request_render(app);
-    let title = button.title().to_string();
-    assert!(title.starts_with(t!("common.holdings.total")), "{title}");
-    assert!(!title.contains(|c: char| c.is_ascii_digit()), "{title}");
 }
