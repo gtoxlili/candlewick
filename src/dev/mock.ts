@@ -17,6 +17,7 @@ const settings: Settings = {
   showSymbol: true,
   showChange: false,
   holdingsInBar: false,
+  concealHoldings: false,
   colorScheme: "greenUp",
   autoUpdate: true,
   agentAccess: false,

@@ -68,6 +68,9 @@ pub fn save_settings(
     if settings.agent_access != before.agent_access {
         agent::sync(&app);
     }
+    if settings.conceal_holdings != before.conceal_holdings {
+        window::conceal_holdings(&app, settings.conceal_holdings);
+    }
     if settings.language != before.language {
         platform::remember_language(settings.language);
         i18n::set(settings.language.locale());

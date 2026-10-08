@@ -10,12 +10,16 @@ use windows::{
     Win32::{
         Foundation::{HWND, LPARAM},
         Graphics::Gdi::{DeleteObject, HBITMAP, InvalidateRect},
-        System::Threading::GetCurrentThreadId,
-        UI::WindowsAndMessaging::{
-            AppendMenuW, CreatePopupMenu, DestroyMenu, EnumThreadWindows, GetClassNameW, HMENU,
-            InsertMenuItemW, IsWindowVisible, MENUITEMINFOW, MF_GRAYED, MF_SEPARATOR, MF_STRING,
-            MFT_STRING, MIIM_BITMAP, MIIM_FTYPE, MIIM_ID, MIIM_STRING, MIIM_SUBMENU,
-            SetMenuItemInfoW,
+        System::Threading::{GetCurrentProcessId, GetCurrentThreadId},
+        UI::{
+            Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent},
+            WindowsAndMessaging::{
+                AppendMenuW, CreatePopupMenu, DestroyMenu, EVENT_SYSTEM_MENUPOPUPSTART,
+                EnumThreadWindows, GetClassNameW, HMENU, InsertMenuItemW, IsWindowVisible,
+                MENUITEMINFOW, MF_GRAYED, MF_SEPARATOR, MF_STRING, MFT_STRING, MIIM_BITMAP,
+                MIIM_FTYPE, MIIM_ID, MIIM_STRING, MIIM_SUBMENU, SetMenuItemInfoW,
+                SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WINEVENT_OUTOFCONTEXT,
+            },
         },
     },
     core::{BOOL, HSTRING, PCWSTR, PWSTR, Result},
@@ -282,6 +286,65 @@ impl Drop for Open {
         // submenu. Its bitmaps belong to `Marks`.
         unsafe {
             let _ = DestroyMenu(self.menu);
+        }
+    }
+}
+
+/// Keeps the dropdown out of screen captures while it shows concealed
+/// holdings (`View::conceal`). Windows creates a popup menu window (the
+/// dropdown, then the submenu) each time one opens, so nothing can be marked
+/// ahead of time: from `new` until dropped, each one this thread shows is
+/// marked for the monitor only as the accessibility event announcing it
+/// arrives, through the menu's own message loop.
+///
+/// The taskbar ticker can't be marked, being a child of Explorer's taskbar;
+/// the bar masks the total instead (`bar::MASK`).
+pub struct Shield(HWINEVENTHOOK);
+
+impl Shield {
+    pub fn new() -> Self {
+        unsafe extern "system" fn shown(
+            _: HWINEVENTHOOK,
+            _: u32,
+            window: HWND,
+            _: i32,
+            _: i32,
+            _: u32,
+            _: u32,
+        ) {
+            // SAFETY: a popup menu window of this thread, the hook's filter;
+            // one already closed again just fails.
+            if let Err(e) = unsafe { SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE) } {
+                log::debug!("cannot keep a menu window out of captures: {e}");
+            }
+        }
+        // SAFETY: an out-of-context hook on this thread's own events, called
+        // back on this thread; `Drop` removes it.
+        let hook = unsafe {
+            SetWinEventHook(
+                EVENT_SYSTEM_MENUPOPUPSTART,
+                EVENT_SYSTEM_MENUPOPUPSTART,
+                None,
+                Some(shown),
+                GetCurrentProcessId(),
+                GetCurrentThreadId(),
+                WINEVENT_OUTOFCONTEXT,
+            )
+        };
+        if hook.is_invalid() {
+            log::error!("cannot watch the dropdown open; it shows in captures");
+        }
+        Self(hook)
+    }
+}
+
+impl Drop for Shield {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            // SAFETY: our hook, set in `new`.
+            unsafe {
+                let _ = UnhookWinEvent(self.0);
+            }
         }
     }
 }

@@ -414,7 +414,7 @@ fn open_menu(at: POINT, exclude: Option<RECT>, from_ticker: bool) -> bool {
         return false;
     };
     // Already open, or nothing to show.
-    let Some((menu, owner)) = prepared else {
+    let Some((menu, owner, conceal)) = prepared else {
         return true;
     };
     let params = TPMPARAMS {
@@ -427,6 +427,7 @@ fn open_menu(at: POINT, exclude: Option<RECT>, from_ticker: bool) -> bool {
         | TPM_LEFTALIGN
         | TPM_BOTTOMALIGN
         | TPM_VERTICAL;
+    let shield = conceal.then(menu::Shield::new);
     // SAFETY: the menu stays alive (owned by the shell) until `menu_closed`.
     // A popup only closes on an outside click if its owner is in front, and
     // the null message afterwards is the documented companion to that.
@@ -436,6 +437,7 @@ fn open_menu(at: POINT, exclude: Option<RECT>, from_ticker: bool) -> bool {
         let _ = PostMessageW(Some(owner), WM_NULL, WPARAM(0), LPARAM(0));
         command.0 as u32
     };
+    drop(shield);
     let chosen = with_shell(|shell| shell.menu_closed(command)).flatten();
     if let Some((app, action)) = chosen {
         let handle = app.clone();
@@ -597,8 +599,9 @@ impl Shell {
         self.redraw();
     }
 
-    /// Builds the dropdown for the current view; `None` while one is open.
-    fn prepare_menu(&mut self, from_ticker: bool) -> Option<(HMENU, HWND)> {
+    /// Builds the dropdown for the current view, with its owner and whether
+    /// it must stay out of screen captures; `None` while one is open.
+    fn prepare_menu(&mut self, from_ticker: bool) -> Option<(HMENU, HWND, bool)> {
         if self.menu.is_some() {
             return None;
         }
@@ -611,6 +614,7 @@ impl Shell {
         };
         let size = (16 * dpi).div_ceil(96);
         self.marks.prepare(size, self.look.apps, self.look.menu_palette());
+        let conceal = view.conceal;
         let open = menu::Open::build(view, &mut self.marks)
             .map_err(|e| log::error!("cannot build the dropdown: {e}"))
             .ok()?;
@@ -620,7 +624,7 @@ impl Shell {
             self.ticker.set_open(true);
             self.refresh_ticker();
         }
-        Some((handle, self.window))
+        Some((handle, self.window, conceal))
     }
 
     fn menu_closed(&mut self, command: u32) -> Option<(AppHandle, Action)> {

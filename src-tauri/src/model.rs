@@ -127,6 +127,10 @@ pub struct Settings {
     /// The bar shows the total holdings instead of a pinned entry (which is
     /// then unpinned: the bar shows one thing).
     pub holdings_in_bar: bool,
+    /// Holdings stay out of screenshots: the holdings window and the
+    /// dropdown showing them are left out of screen captures, and the bar,
+    /// which belongs to the system and can't be left out, masks the total.
+    pub conceal_holdings: bool,
     pub color_scheme: ColorScheme,
     /// Check for, download and apply updates on its own (`update.rs`).
     pub auto_update: bool,
@@ -148,6 +152,7 @@ impl Default for Settings {
             show_symbol: true,
             show_change: false,
             holdings_in_bar: false,
+            conceal_holdings: false,
             color_scheme: ColorScheme::GreenUp,
             auto_update: true,
             agent_access: false,

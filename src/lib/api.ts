@@ -63,6 +63,8 @@ export interface Settings {
   showChange: boolean;
   /** The bar shows the total holdings instead of a pinned entry (which the app unpins). */
   holdingsInBar: boolean;
+  /** Holdings stay out of screenshots: the holdings window and the bar's menu are left out of captures, the bar masks the total. */
+  concealHoldings: boolean;
   colorScheme: ColorScheme;
   /** Check for, download and apply updates on its own. */
   autoUpdate: boolean;

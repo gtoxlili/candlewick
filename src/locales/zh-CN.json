@@ -56,6 +56,8 @@
       "inBar": "菜单栏显示总资产",
       "inBar_windows": "任务栏显示总资产",
       "inBarDetail": "代替自选的价格；也可在自选里重新置顶一个。",
+      "conceal": "截图时隐藏持仓",
+      "concealDetail": "持仓窗口和菜单不会出现在截图里。",
       "window": "持仓窗口",
       "open": "打开"
     },
@@ -159,6 +161,7 @@
   "holdings": {
     "title": "持仓",
     "manageKeys": "管理 API Key",
+    "concealed": "截图里不会出现这个窗口",
     "sort": "排序",
     "byValue": "按价值",
     "byChange": "按 24h 盈亏",

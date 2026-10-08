@@ -119,7 +119,8 @@ export default function App() {
 
           <ApiKeysSection
             holdingsInBar={settings.holdingsInBar}
-            onHoldingsInBar={(holdingsInBar) => void update({ ...settings, holdingsInBar })}
+            concealHoldings={settings.concealHoldings}
+            onChange={(change) => void update({ ...settings, ...change })}
           />
 
           <LongbridgeSection />
@@ -367,7 +368,11 @@ function keyFields(exchange: Exchange): { field: keyof ApiKey; label: string; se
 }
 
 /** Read-only API keys, for holdings: one per exchange, checked when saved. */
-function ApiKeysSection(props: { holdingsInBar: boolean; onHoldingsInBar: (on: boolean) => void }) {
+function ApiKeysSection(props: {
+  holdingsInBar: boolean;
+  concealHoldings: boolean;
+  onChange: (change: Partial<Pick<Settings, "holdingsInBar" | "concealHoldings">>) => void;
+}) {
   const { t, i18n } = useTranslation();
   const [keys, setKeys] = useState<ExchangeKey[] | null>(null);
   const [editing, setEditing] = useState<Exchange | null>(null);
@@ -478,7 +483,13 @@ function ApiKeysSection(props: { holdingsInBar: boolean; onHoldingsInBar: (on: b
               label={t("settings.holdings.inBar", PLATFORM)}
               detail={<p className="text-xs text-muted-foreground">{t("settings.holdings.inBarDetail")}</p>}
               checked={props.holdingsInBar}
-              onChange={props.onHoldingsInBar}
+              onChange={(holdingsInBar) => props.onChange({ holdingsInBar })}
+            />
+            <SwitchRow
+              label={t("settings.holdings.conceal")}
+              detail={<p className="text-xs text-muted-foreground">{t("settings.holdings.concealDetail")}</p>}
+              checked={props.concealHoldings}
+              onChange={(concealHoldings) => props.onChange({ concealHoldings })}
             />
             <div className="flex min-h-10 items-center justify-between gap-2 px-3.5 py-2">
               <span>{t("settings.holdings.window")}</span>

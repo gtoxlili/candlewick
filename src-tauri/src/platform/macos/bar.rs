@@ -21,7 +21,7 @@ use tauri::{
 };
 use tray_icon::menu::{ContextMenu, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 
-use super::ticker;
+use super::{shield, ticker};
 use crate::{
     bar::{self, Action, Holdings, Row, Shape, Slot, Ticker, View},
     i18n::Locale,
@@ -178,6 +178,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             ticker: None,
         }));
     })?;
+    shield::install();
     render(app);
     Ok(())
 }
@@ -238,6 +239,7 @@ impl Ui {
         }
         let menu = self.menu.clone().expect("the tray menu has been built");
         let layout = self.layout.clone().expect("the tray menu has been built");
+        shield::guard(view.conceal.then_some(&*menu));
 
         let scheme_changed = self.scheme != view.scheme;
         self.scheme = view.scheme;
