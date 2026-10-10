@@ -6,8 +6,15 @@ export type Rgb = [number, number, number];
 export interface ChartColors {
   /** The accent (`--glow`), as "rgb(r, g, b)" (Liveline derives its palette from it). */
   accent: string;
+  glow: Rgb;
   up: Rgb;
   down: Rgb;
+  /** The palette's other hues, for overlays: drawings and indicators. */
+  violet: Rgb;
+  mint: Rgb;
+  amber: Rgb;
+  /** Text and lines (`--ink`), opaque; the overlays apply their own alpha. */
+  ink: Rgb;
   dark: boolean;
 }
 
@@ -38,11 +45,16 @@ export function readChartColors(): ChartColors {
   probe.style.display = "none";
   document.body.append(probe);
   try {
-    const [r, g, b] = channels("var(--primary)", probe);
+    const glow = channels("var(--primary)", probe);
     return {
-      accent: `rgb(${r}, ${g}, ${b})`,
+      accent: `rgb(${glow.join(", ")})`,
+      glow,
       up: channels("var(--up)", probe),
       down: channels("var(--down)", probe),
+      violet: channels("var(--violet)", probe),
+      mint: channels("var(--mint)", probe),
+      amber: channels("var(--amber)", probe),
+      ink: channels("var(--ink)", probe),
       dark: matchMedia("(prefers-color-scheme: dark)").matches,
     };
   } finally {
@@ -51,4 +63,12 @@ export function readChartColors(): ChartColors {
 }
 
 export const sameColors = (a: ChartColors, b: ChartColors) =>
-  a.accent === b.accent && a.dark === b.dark && a.up.join() === b.up.join() && a.down.join() === b.down.join();
+  a.accent === b.accent &&
+  a.dark === b.dark &&
+  a.up.join() === b.up.join() &&
+  a.down.join() === b.down.join() &&
+  a.violet.join() === b.violet.join() &&
+  a.ink.join() === b.ink.join();
+
+/** `rgba(r, g, b, a)` */
+export const rgba = ([r, g, b]: Rgb, a: number): string => `rgba(${r}, ${g}, ${b}, ${a})`;

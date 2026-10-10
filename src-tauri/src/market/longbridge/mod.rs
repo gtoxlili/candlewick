@@ -50,6 +50,10 @@ const INTERVALS: [IntervalDef; 7] = [
 const MAX_PAGE: usize = 1000;
 
 impl Provider for Longbridge {
+    fn id(&self) -> ProviderId {
+        ProviderId::Longbridge
+    }
+
     fn validate(&self, instrument: &mut Instrument) -> Result<(), String> {
         instrument.symbol = instrument.symbol.trim().to_uppercase();
         let invalid = || t!("error.invalidStock", symbol = instrument.symbol);
@@ -104,6 +108,8 @@ impl Provider for Longbridge {
             // Ten levels at most, and tick sizes that change with the price:
             // nothing worth grouping.
             book_steps: Vec::new(),
+            book: true,
+            onchain: false,
             link: Some(format!(
                 "https://longbridge.com/{}/quote/{}",
                 language(),
@@ -229,7 +235,7 @@ async fn search(query: &str) -> Search {
                 .secu_static_info
                 .into_iter()
                 .filter_map(candidate)
-                .map(|instrument| Candidate { instrument, manual: false })
+                .map(|instrument| Candidate { instrument, manual: false, liquidity: None })
                 .collect(),
             notes: Vec::new(),
         },
@@ -280,6 +286,7 @@ fn candidate(info: proto::StaticInfo) -> Option<Instrument> {
         name: Some(name).filter(|n| !n.is_empty()),
         decimals: Some(decimals(market, code)),
         pinned: false,
+        venue: None,
         symbol: info.symbol,
     })
 }
@@ -418,6 +425,7 @@ mod tests {
             name: Some(" 苹果 ".into()),
             decimals: Some(2),
             pinned: false,
+            venue: None,
         };
         assert!(Longbridge.validate(&mut aapl).is_ok());
         assert_eq!((aapl.symbol.as_str(), aapl.name.as_deref()), ("AAPL.US", Some("苹果")));

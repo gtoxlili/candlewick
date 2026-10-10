@@ -4,7 +4,8 @@
       "binance": "币安",
       "bybit": "Bybit",
       "okx": "OKX",
-      "longbridge": "长桥"
+      "longbridge": "长桥",
+      "dexscreener": "DEX Screener"
     },
     "holdings": {
       "total": "总资产",
@@ -80,6 +81,7 @@
     "unreachable": "无法连接服务器",
     "httpStatus": "服务器返回 HTTP %{status}",
     "badFormat": "数据格式有误",
+    "tooManyRequests": "请求过于频繁，服务器要求放慢",
     "network": "网络错误",
     "proxyRefused": "代理拒绝了连接（%{reason}）",
     "proxyClosed": "连接被关闭",
@@ -104,6 +106,8 @@
     "keyRejected": "API Key 或 Secret 不对，或没有读取权限",
     "keyInvalid": "API Key 无效、没有读取权限，或绑定了其他 IP",
     "invalidStock": "无效的股票代码：%{symbol}",
+    "invalidPool": "无效的链上交易池：%{symbol}",
+    "rateLimited": "%{source}限流中 · %{seconds} 秒后重试",
     "noQuote": "%{source}没有这只股票的报价",
     "sourceBadData": "%{source}返回的数据格式有误",
     "sourceStopped": "%{source}连接已停止",

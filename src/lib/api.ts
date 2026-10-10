@@ -8,25 +8,36 @@ export type ColorScheme = "greenUp" | "redUp";
 /** The crypto exchanges; the settings pick one for every pair. */
 export type Exchange = "binance" | "bybit" | "okx";
 
-export type ProviderId = Exchange | "longbridge";
+/** Exchanges, Longbridge for stocks, DEX Screener for on-chain pools. */
+export type ProviderId = Exchange | "longbridge" | "dexscreener";
 
 export const EXCHANGES = ["binance", "bybit", "okx"] as const satisfies readonly Exchange[];
 
 /** A watchlist entry. */
 export interface Instrument {
   provider: ProviderId;
-  /** The provider's symbol, e.g. BTCUSDT, BTC-USDT, AAPL.US. */
+  /** The provider's symbol, e.g. BTCUSDT, BTC-USDT, AAPL.US, solana/EP2ib6…. */
   symbol: string;
-  /** Crypto: the base asset (BTC). Stocks: the code (AAPL, 700). */
+  /** Crypto: the base asset (BTC); a pool: its token ($WIF). Stocks: the code (AAPL, 700). */
   base: string;
-  /** Crypto: the quote asset (USDT). Stocks: the currency. */
+  /** Crypto: the quote asset (USDT); a pool: USD. Stocks: the currency. */
   quote: string;
-  /** A stock's name, e.g. 腾讯控股. */
+  /** A stock's or token's name, e.g. 腾讯控股, dogwifhat. */
   name?: string | null;
   /** Decimals of the tick size; null lets the app pick by magnitude. */
   decimals: number | null;
   /** Shown in the menu bar or taskbar, not only in the dropdown. */
   pinned: boolean;
+  /** Where a pool trades. */
+  venue?: Venue | null;
+}
+
+/** A pool's chain and DEX, by name. */
+export interface Venue {
+  /** "Solana", "BNB Chain" */
+  chain: string;
+  /** "Raydium", "Uniswap" */
+  dex?: string | null;
 }
 
 /** "binance:BTCUSDT": how windows and menus refer to an instrument. */
@@ -34,15 +45,20 @@ export const instrumentId = (instrument: Pick<Instrument, "provider" | "symbol">
   `${instrument.provider}:${instrument.symbol}`;
 
 /**
- * The name and the dimmed part after it, as the dropdown shows them (see
- * `Instrument::row_label` in the app): "BTC" "/USDT", "AAPL" " Apple", "腾讯控股" " 700".
+ * The name, the dimmed part after it (see `Instrument::row_label` in the
+ * app), and for a pool where it trades: "BTC" "/USDT"; "$WIF" " dogwifhat"
+ * "Solana · Raydium"; "AAPL" " Apple"; "腾讯控股" " 700".
  */
-export function instrumentLabel(instrument: Instrument): { name: string; detail: string } {
-  if (instrument.provider !== "longbridge") return { name: instrument.base, detail: `/${instrument.quote}` };
+export function instrumentLabel(instrument: Instrument): { name: string; detail: string; venue: string | null } {
+  if (instrument.provider === "dexscreener") {
+    const venue = [instrument.venue?.chain, instrument.venue?.dex].filter((p): p is string => !!p).join(" · ");
+    return { name: instrument.base, detail: instrument.name ? ` ${instrument.name}` : "", venue: venue || null };
+  }
+  if (instrument.provider !== "longbridge") return { name: instrument.base, detail: `/${instrument.quote}`, venue: null };
   const name = instrument.name ?? "";
   // US tickers read better than their names; other codes are just numbers.
-  if (instrument.symbol.endsWith(".US") || !name) return { name: instrument.base, detail: name && ` ${name}` };
-  return { name, detail: ` ${instrument.base}` };
+  if (instrument.symbol.endsWith(".US") || !name) return { name: instrument.base, detail: name && ` ${name}`, venue: null };
+  return { name, detail: ` ${instrument.base}`, venue: null };
 }
 
 /** Where Longbridge's markets are. */
@@ -101,6 +117,8 @@ export interface Update {
 export interface Candidate extends Instrument {
   /** Taken from the typed text because the instrument list was unavailable. */
   manual: boolean;
+  /** A pool's liquidity in USD, to tell the pools of one token apart. */
+  liquidity: number | null;
 }
 
 export interface Search {
@@ -137,6 +155,10 @@ export interface ChartSpec {
   dayOffset: number;
   /** Price steps the book can be grouped by, finest first. Empty: the book comes as it is. */
   bookSteps: number[];
+  /** The stream carries an order book; without one the window shows the trades alone. */
+  book: boolean;
+  /** The statistics are a pool's: volume in the quote currency only, with liquidity, market cap and swap counts beside. */
+  onchain: boolean;
   /** The instrument's page on the provider's website. */
   link: string | null;
 }
@@ -150,15 +172,30 @@ export interface Candle {
   close: number;
 }
 
-/** Over the provider's span (see ChartSpec.statsSpan). */
+/** Over the provider's span (see ChartSpec.statsSpan); null where the provider gives none. */
 export interface Stats {
   last: number;
-  high: number;
-  low: number;
-  volume: number;
+  high: number | null;
+  low: number | null;
+  /** In the base asset (ChartSpec.volumeUnit). */
+  volume: number | null;
   turnover: number;
   change: number;
   changePct: number;
+  /** What a pool adds; null for exchanges and stocks. */
+  onchain: Onchain | null;
+}
+
+/** A pool's standing over the same span. */
+export interface Onchain {
+  /** USD in the pool. */
+  liquidity: number | null;
+  marketCap: number | null;
+  /** Fully diluted valuation, USD. */
+  fdv: number | null;
+  /** Swaps buying and selling the token. */
+  buys: number;
+  sells: number;
 }
 
 export interface Level {
@@ -193,7 +230,9 @@ export type LiveEvent =
   /** The book grouped by each of ChartSpec.bookSteps in turn, or just the book when there are none. */
   | { kind: "book"; books: Book[] }
   /** New trades, oldest first. */
-  | { kind: "trades"; trades: Trade[] };
+  | { kind: "trades"; trades: Trade[] }
+  /** A price without a trade behind it: moves the forming candle, not the trade list. `time` in epoch ms. */
+  | { kind: "tick"; price: number; time: number };
 
 /** What a Longbridge account may see; packages and notes as Longbridge words them. */
 export interface LongbridgeAccount {

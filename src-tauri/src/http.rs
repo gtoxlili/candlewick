@@ -54,6 +54,9 @@ pub enum Error {
     Connect,
     #[error("{}", status(.0))]
     Status(u16),
+    /// 429, with the seconds the server asked to wait, if it said.
+    #[error("{}", t!("error.tooManyRequests"))]
+    Throttled(Option<u64>),
     #[error("{}", t!("error.badFormat"))]
     Format,
     #[error("{}", t!("error.network"))]
@@ -96,8 +99,27 @@ pub async fn send(build: impl Fn(&Client) -> RequestBuilder) -> Result<Response,
 
 /// GETs `url` and parses its JSON body; other statuses than 2xx fail.
 pub async fn get_json<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
-    let response = send(|client| client.get(url)).await?;
+    get_json_with(url, &[]).await
+}
+
+/// [`get_json`] with request headers.
+pub async fn get_json_with<T: DeserializeOwned>(
+    url: &str,
+    headers: &[(&str, &str)],
+) -> Result<T, Error> {
+    let response = send(|client| {
+        headers.iter().fold(client.get(url), |request, (name, value)| request.header(*name, *value))
+    })
+    .await?;
     let status = response.status();
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse().ok());
+        return Err(Error::Throttled(retry_after));
+    }
     if !status.is_success() {
         return Err(Error::Status(status.as_u16()));
     }

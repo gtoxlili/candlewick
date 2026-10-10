@@ -431,7 +431,7 @@ mod tests {
         let LiveEvent::Stats { stats } = out.take_events().remove(0) else { panic!("no stats") };
         assert_eq!(
             (stats.change, stats.change_pct, stats.volume, stats.turnover),
-            (-10.0, -10.0, 100.0, 9000.0)
+            (-10.0, -10.0, Some(100.0), 9000.0)
         );
         let tick = Okx::quote(ticker).unwrap();
         assert_eq!((&*tick.symbol, tick.last, tick.open), ("BTC-USDT", 90.0, 100.0));

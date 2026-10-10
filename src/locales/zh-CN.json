@@ -36,11 +36,12 @@
       "moveDown": "下移",
       "remove": "删除 %{name}",
       "full": "最多 %{max} 个",
-      "search": "搜索币种或股票代码，如 SOL、AAPL、700",
+      "search": "搜索币种、股票代码或链上代币，如 SOL、AAPL、700、WIF",
       "searching": "正在搜索…",
       "noResults": "没有找到",
       "added": "已添加",
-      "manual": "手动添加"
+      "manual": "手动添加",
+      "liquidity": "流动性 %{value}"
     },
     "crypto": {
       "title": "加密货币",
@@ -154,7 +155,40 @@
     "bid": "买 %{share}%",
     "ask": "%{share}% 卖",
     "spread": "价差 %{value}",
-    "grouping": "合并深度"
+    "grouping": "合并深度",
+    "buyers": "买入 %{share}%",
+    "sellers": "%{share}% 卖出",
+    "buyersLead": "买方偏强 %{share}%",
+    "sellersLead": "卖方偏强 %{share}%",
+    "flowBalanced": "买卖均衡",
+    "liquidity": "流动性",
+    "marketCap": "市值",
+    "fdv": "完全稀释市值",
+    "tools": "画线工具",
+    "tool": {
+      "cursor": "光标",
+      "level": "水平线",
+      "trend": "趋势线",
+      "fib": "斐波那契回撤",
+      "measure": "测量"
+    },
+    "drawingHint": "点击放置另一端 · Esc 取消",
+    "clearDrawings": "清除画线",
+    "undo": "撤销",
+    "indicators": "指标",
+    "indicator": {
+      "sma": "均线",
+      "ema": "指数均线",
+      "boll": "布林带"
+    },
+    "period": "周期",
+    "bars_other": "%{count} 根",
+    "ohlc": {
+      "open": "开盘",
+      "high": "最高",
+      "low": "最低",
+      "close": "收盘"
+    }
   },
   "holdings": {
     "title": "持仓",

@@ -1,6 +1,6 @@
 ---
 name: candlewick
-description: The user's crypto holdings and live market data from Candlewick, a desktop app running on this machine. Holdings across Binance, Bybit and OKX (spot, funding, earn, futures positions with PnL), the user's watchlist with live quotes, and candles, recent trades and order books for any crypto pair or US, Hong Kong and China A-share stock. Use when the user asks about their portfolio, positions, PnL or exposure, or about a market, or wants to weigh a trade with real numbers (持仓、仓位、盈亏、资产、行情、K 线、盘口).
+description: The user's crypto holdings and live market data from Candlewick, a desktop app running on this machine. Holdings across Binance, Bybit and OKX (spot, funding, earn, futures positions with PnL), the user's watchlist with live quotes, and candles, recent trades and order books for any crypto pair, any on-chain DEX pool, or US, Hong Kong and China A-share stock. Use when the user asks about their portfolio, positions, PnL or exposure, or about a market, or wants to weigh a trade with real numbers (持仓、仓位、盈亏、资产、行情、K 线、盘口、链上、池子).
 ---
 
 # Candlewick
@@ -27,7 +27,7 @@ The API only reads: it places no orders, moves no funds and changes no settings.
 | `GET /v1/trades?id=…&limit=100` | Recent trades, oldest first |
 | `GET /v1/market?id=…` | Day statistics and up to 20 order book levels per side |
 
-An instrument id is `source:symbol`: `binance:BTCUSDT`, `bybit:BTCUSDT`, `okx:BTC-USDT`, `longbridge:AAPL.US`, `longbridge:700.HK`, `longbridge:600519.SH`. Candles, trades and market take any symbol the source lists, whether or not it is in the watchlist. Stocks (`longbridge`) need the user's Longbridge credentials in Candlewick.
+An instrument id is `source:symbol`: `binance:BTCUSDT`, `bybit:BTCUSDT`, `okx:BTC-USDT`, `longbridge:AAPL.US`, `longbridge:700.HK`, `longbridge:600519.SH`, and for an on-chain pool `dexscreener:<chain>/<pool address>` as in DEX Screener's URLs, e.g. `dexscreener:solana/EP2ib6dYdEeqD8MfE2ezHCxX3kP3K2eLKkirfPm5eyMx`. Candles, trades and market take any symbol the source lists, whether or not it is in the watchlist. Stocks (`longbridge`) need the user's Longbridge credentials in Candlewick. Pools are priced in USD whatever their quote token; their `quote` is `USD`, `base` the token's symbol, and `venue` names the chain and DEX. `/v1/search` finds pools by token symbol, name or address, with each pool's `liquidity` in USD to tell the pools of one token apart.
 
 ## Portfolio
 
@@ -43,9 +43,9 @@ An instrument id is `source:symbol`: `binance:BTCUSDT`, `bybit:BTCUSDT`, `okx:BT
 
 ## Watchlist
 
-`[{id, symbol, base, quote, name, pinned, last, reference, changePct, session}]`
+`[{id, symbol, base, quote, name, venue, pinned, last, reference, changePct, session}]`
 
-- `reference` is the price 24 hours ago for crypto and the last regular close for stocks; `changePct` is measured against it.
+- `reference` is the price 24 hours ago for crypto and pools, and the last regular close for stocks; `changePct` is measured against it.
 - `session` is `pre`, `post` or `overnight` for US stocks outside regular hours, null otherwise.
 - `last` is null until the first quote arrives. `pinned` marks the one shown in the menu bar.
 
@@ -55,16 +55,17 @@ An instrument id is `source:symbol`: `binance:BTCUSDT`, `bybit:BTCUSDT`, `okx:BT
 
 - `interval` is in seconds and must be one of the source's intervals listed by `GET /v1`.
 - One call returns at most `limit` candles, and fewer where the source pages smaller (OKX: 300; the others: 1000). `end` (epoch seconds) asks for candles that opened before it, so paging back means passing the oldest `time` received. An empty list means nothing older exists.
-- Crypto days open at 00:00 UTC; stock candles follow the exchange's sessions and days.
+- Crypto and pool days open at 00:00 UTC; stock candles follow the exchange's sessions and days.
+- Pool candles come from GeckoTerminal, which allows only a few requests a minute; a request made while it is rate limiting fails at once with a message saying how long to wait.
 
 ## Trades
 
-`[{id, price, qty, time, sell, extended}]`: `time` is epoch milliseconds, `sell` means the taker sold, `extended` marks a US stock trade outside regular hours.
+`[{id, price, qty, time, sell, extended}]`: `time` is epoch milliseconds, `sell` means the taker sold, `extended` marks a US stock trade outside regular hours. A pool's trades are its last 300 swaps of the past 24 hours, `qty` in the token, `sell` meaning the token was sold.
 
 ## Market
 
 `{stats, book}`, each null if it didn't arrive in time.
 
-- `stats`: `{last, high, low, volume, turnover, change, changePct}`; volume in the base asset, turnover in the quote. Crypto stats cover the last 24 hours, stocks the current day.
-- `book`: `{bids, asks}`, best level first, each `{price, qty}`.
+- `stats`: `{last, high, low, volume, turnover, change, changePct, onchain}`; volume in the base asset, turnover in the quote; `high`, `low` and `volume` are null where the source gives none. Crypto and pool stats cover the last 24 hours, stocks the current day. For a pool, `onchain` is `{liquidity, marketCap, fdv, buys, sells}`: USD in the pool, the token's market cap and fully diluted valuation (either may be null), and the day's swap counts; elsewhere it is null.
+- `book`: `{bids, asks}`, best level first, each `{price, qty}`; null for pools, which have no order book.
 - It opens a live connection to the source and waits for its first data, which takes up to a few seconds.

@@ -27,7 +27,7 @@ use tokio::{
 use crate::{
     bar,
     market::{self, Candle, LiveEvent, ProviderId, Trade},
-    model::{Instrument, Session, Shared},
+    model::{Instrument, Session, Shared, Venue},
     portfolio::{self, Portfolio, now_ms},
 };
 
@@ -142,7 +142,7 @@ async fn index(State(api): State<Api>) -> Json<Index> {
     let intervals = ProviderId::ALL
         .into_iter()
         .map(|provider| {
-            let spec = provider.provider().chart_spec(&bare(provider, ""));
+            let spec = provider.provider().chart_spec(&Instrument::bare(provider, ""));
             (provider, spec.intervals.iter().map(|i| i.secs).collect())
         })
         .collect();
@@ -184,6 +184,8 @@ struct WatchlistEntry {
     base: String,
     quote: String,
     name: Option<String>,
+    /// A pool's chain and DEX.
+    venue: Option<Venue>,
     pinned: bool,
     last: Option<f64>,
     /// 24 hours ago for crypto, the last regular close for stocks.
@@ -207,6 +209,7 @@ async fn watchlist(State(api): State<Api>) -> Json<Vec<WatchlistEntry>> {
                 base: instrument.base.clone(),
                 quote: instrument.quote.clone(),
                 name: instrument.name.clone(),
+                venue: instrument.venue.clone(),
                 pinned: instrument.pinned,
                 last: quote.map(|q| q.last),
                 reference: quote.map(|q| q.open),
@@ -230,6 +233,9 @@ struct Found {
     base: String,
     quote: String,
     name: Option<String>,
+    venue: Option<Venue>,
+    /// A pool's liquidity in USD.
+    liquidity: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -254,6 +260,8 @@ async fn search(
             base: c.instrument.base,
             quote: c.instrument.quote,
             name: c.instrument.name,
+            venue: c.instrument.venue,
+            liquidity: c.liquidity,
         })
         .collect();
     Ok(Json(Searched { found, notes: searched.notes }))
@@ -302,13 +310,16 @@ struct MarketQuery {
     id: String,
 }
 
-/// Day statistics and the book, from the first data of a live connection.
+/// Day statistics and the book (where the source has one), from the first
+/// data of a live connection.
 async fn market_now(
     State(api): State<Api>,
     query: Result<Query<MarketQuery>, QueryRejection>,
 ) -> Answer<Value> {
     let Query(MarketQuery { id }) = query.map_err(bad_query)?;
     let instrument = resolve(&api.app, &id)?;
+    let provider = instrument.provider.provider();
+    let wants_book = provider.chart_spec(&instrument).book;
     let (events, mut received) = mpsc::unbounded_channel::<Value>();
     // The live stream speaks to the chart window's channel; here it is a
     // closure that keeps what it says.
@@ -321,7 +332,7 @@ async fn market_now(
         Ok(())
     });
     let (stop, stopped) = oneshot::channel();
-    let stream = instrument.provider.provider().stream(instrument, stopped, channel);
+    let stream = provider.stream(instrument, stopped, channel);
     tauri::async_runtime::spawn(stream);
     let (mut stats, mut book) = (Value::Null, Value::Null);
     let _ = timeout(MARKET_WAIT, async {
@@ -331,7 +342,7 @@ async fn market_now(
                 Some("book") => book = event["books"][0].clone(),
                 _ => {}
             }
-            if !stats.is_null() && !book.is_null() {
+            if !stats.is_null() && (!wants_book || !book.is_null()) {
                 break;
             }
         }
@@ -352,27 +363,12 @@ fn resolve(app: &AppHandle, id: &str) -> Result<Instrument, Failure> {
     };
     let (source, symbol) = id.split_once(':').ok_or_else(invalid)?;
     let provider = ProviderId::ALL.into_iter().find(|p| p.key() == source).ok_or_else(invalid)?;
-    let symbol = symbol.trim().to_uppercase();
-    if symbol.is_empty() {
-        return Err(invalid());
-    }
+    let bare = provider.provider().bare(symbol).ok_or_else(invalid)?;
     let shared = app.state::<Shared>();
     let model = shared.model();
     let known =
-        model.settings.watchlist.iter().find(|i| i.provider == provider && i.symbol == symbol);
-    Ok(known.cloned().unwrap_or_else(|| bare(provider, &symbol)))
-}
-
-fn bare(provider: ProviderId, symbol: &str) -> Instrument {
-    Instrument {
-        provider,
-        symbol: symbol.to_owned(),
-        base: String::new(),
-        quote: String::new(),
-        name: None,
-        decimals: None,
-        pinned: false,
-    }
+        model.settings.watchlist.iter().find(|i| i.provider == provider && i.symbol == bare.symbol);
+    Ok(known.cloned().unwrap_or(bare))
 }
 
 fn bad_query(rejection: QueryRejection) -> Failure {

@@ -7,6 +7,8 @@ import { cn } from "cn";
 
 import { ChangeBadge } from "@/components/ChangeBadge";
 import { Picker } from "@/components/Picker";
+import { Analysis } from "./analysis/analysis";
+import { AnalysisBar } from "./AnalysisBar";
 import { PillTabs } from "@/components/PillTabs";
 import { TITLE_INSET, TitleBar } from "@/components/TitleBar";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,7 @@ import {
   type FeedState,
   type Instrument,
   type Interval,
+  type Onchain,
   type Settings,
   type Stats,
   type StatsSpan,
@@ -98,6 +101,8 @@ export default function ChartApp() {
     return initial;
   });
   const [chartKey, setChartKey] = useState(0);
+  /** Drawings and indicators; one layer for the window, re-pointed at each instrument. */
+  const [analysis] = useState(() => new Analysis());
 
   const currentInterval = useRef(intervalSecs);
   const currentTab = useRef(tab);
@@ -112,6 +117,9 @@ export default function ChartApp() {
   const bookSteps = chartSpec?.bookSteps ?? [];
   const step = Math.min(Math.max(bookStep, 0), Math.max(bookSteps.length - 1, 0));
   const book = books?.[Math.min(step, books.length - 1)] ?? null;
+  /** Pools have no order book: the side panel shows the trades and the day's buy/sell split. */
+  const hasBook = chartSpec?.book ?? true;
+  const pool = chartSpec?.onchain ?? false;
   const scheme = settings?.colorScheme ?? "greenUp";
   const source = chartSpec && t(`common.provider.${chartSpec.source}`);
   const linkLabel = source ? t("chart.openOn", { source }) : undefined;
@@ -164,6 +172,10 @@ export default function ChartApp() {
     store("chart.interval", String(intervalSecs));
   }, [intervalSecs]);
 
+  useEffect(() => {
+    analysis.setInstrument(id || null);
+  }, [analysis, id]);
+
   // What the instrument's provider offers: intervals, units, link.
   useEffect(() => {
     if (!id) return;
@@ -209,8 +221,8 @@ export default function ChartApp() {
   useEffect(() => {
     currentTab.current = tab;
     store("chart.tab", tab);
-    market?.setTrades(tab === "trades");
-  }, [market, tab]);
+    market?.setTrades(tab === "trades" || !hasBook);
+  }, [market, tab, hasBook]);
 
   // Full motion while in front; when another app has focus the chart is only
   // glanced at, so redraw less often (it stops entirely once covered).
@@ -288,7 +300,7 @@ export default function ChartApp() {
             span={chartSpec?.statsSpan ?? "rolling24h"}
             decimals={decimals}
             lastDirection={lastDirection}
-            insight={insight(visible, book, t, i18n.language)}
+            insight={insight(visible, hasBook ? book : null, hasBook ? null : (stats?.onchain ?? null), t, i18n.language)}
           />
 
           <div className="flex h-7 items-center gap-2 px-4">
@@ -301,6 +313,7 @@ export default function ChartApp() {
               />
             )}
             <span className="flex-1" />
+            <AnalysisBar analysis={analysis} colors={colors} />
             <ModeToggle mode={mode} onChange={setMode} />
           </div>
 
@@ -315,6 +328,7 @@ export default function ChartApp() {
               offline={feed === "offline"}
               source={chartSpec.source}
               dayOffset={chartSpec.dayOffset}
+              analysis={analysis}
               onStats={setVisible}
             />
           ) : (
@@ -327,20 +341,25 @@ export default function ChartApp() {
             decimals={decimals}
             volumeUnit={volumeUnit}
             turnoverUnit={priceUnit}
+            pool={pool}
           />
         </section>
 
         <aside className="flex w-70 shrink-0 flex-col border-l pt-2">
-          <div className="px-3 pb-2.5">
-            <PillTabs
-              label={t("chart.bookAndTrades")}
-              value={tab}
-              options={TABS.map((o) => ({ value: o.value, label: t(o.label) }))}
-              onChange={setTab}
-              className="w-full"
-            />
-          </div>
-          {tab === "book" ? (
+          {hasBook ? (
+            <div className="px-3 pb-2.5">
+              <PillTabs
+                label={t("chart.bookAndTrades")}
+                value={tab}
+                options={TABS.map((o) => ({ value: o.value, label: t(o.label) }))}
+                onChange={setTab}
+                className="w-full"
+              />
+            </div>
+          ) : (
+            <FlowHeader onchain={stats?.onchain ?? null} />
+          )}
+          {hasBook && tab === "book" ? (
             <OrderBook
               book={book}
               steps={bookSteps}
@@ -361,24 +380,78 @@ export default function ChartApp() {
   );
 }
 
-/** One readable line about the stretch on screen, plus order book pressure while live. */
-function insight(stats: VisibleStats | null, book: Book | null, t: TFunction, locale: string): string | null {
+/**
+ * One readable line about the stretch on screen, plus, while live, the
+ * order book's pressure, or for a pool which way the day's swaps lean.
+ */
+function insight(
+  stats: VisibleStats | null,
+  book: Book | null,
+  onchain: Onchain | null,
+  t: TFunction,
+  locale: string,
+): string | null {
   if (!stats) return null;
   const stretch = stats.live
     ? t("chart.lastSpan", { span: fmtDuration(stats.span, locale) })
     : fmtRange(stats.from, stats.to, locale);
   const parts = [`${stretch} ${fmtPct(stats.changePct)}`, t("chart.amplitude", { value: stats.amplitudePct.toFixed(2) })];
-  const share = stats.live ? bidShare(book) : null;
-  if (share !== null) {
-    parts.push(
-      share >= 55
-        ? t("chart.bidsLead", { share: share.toFixed(0) })
-        : share <= 45
-          ? t("chart.asksLead", { share: (100 - share).toFixed(0) })
-          : t("chart.balanced"),
-    );
+  if (stats.live) {
+    const share = bidShare(book);
+    if (share !== null) {
+      parts.push(
+        share >= 55
+          ? t("chart.bidsLead", { share: share.toFixed(0) })
+          : share <= 45
+            ? t("chart.asksLead", { share: (100 - share).toFixed(0) })
+            : t("chart.balanced"),
+      );
+    }
+    const buys = buyShare(onchain);
+    if (buys !== null) {
+      parts.push(
+        buys >= 55
+          ? t("chart.buyersLead", { share: buys.toFixed(0) })
+          : buys <= 45
+            ? t("chart.sellersLead", { share: (100 - buys).toFixed(0) })
+            : t("chart.flowBalanced"),
+      );
+    }
   }
   return parts.join(" · ");
+}
+
+/** Share of the day's swaps that bought the token, 0–100. */
+function buyShare(onchain: Onchain | null): number | null {
+  if (!onchain) return null;
+  const total = onchain.buys + onchain.sells;
+  return total > 0 ? (onchain.buys / total) * 100 : null;
+}
+
+/** Above a pool's trades: the day's buys against its sells, as the book panel shows bids against asks. */
+function FlowHeader(props: { onchain: Onchain | null }) {
+  const { t } = useTranslation();
+  const share = buyShare(props.onchain);
+  return (
+    <div className="px-3 pb-2.5">
+      <div className="flex h-6 items-center justify-between">
+        <span className="text-xs font-medium">{t("chart.trades")}</span>
+        <span className="text-2xs text-muted-foreground">{t("chart.span", { context: "rolling24h" })}</span>
+      </div>
+      {share !== null && (
+        <>
+          <div className="mt-1 mb-1 flex justify-between text-2xs">
+            <span className="text-up">{t("chart.buyers", { share: share.toFixed(0) })}</span>
+            <span className="text-down">{t("chart.sellers", { share: (100 - share).toFixed(0) })}</span>
+          </div>
+          <div className="flex h-1 gap-0.5 overflow-hidden rounded-full">
+            <div className="rounded-full bg-up transition-[width] duration-700 ease-out" style={{ width: `${share}%` }} />
+            <div className="flex-1 rounded-full bg-down" />
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function Hero(props: {
@@ -488,6 +561,7 @@ function InstrumentPicker(props: {
     <span className="text-sm">
       <span className="font-semibold">{label?.name}</span>
       {label?.detail && <span className="text-muted-foreground">{label.detail}</span>}
+      {label?.venue && <span className="ml-2 text-xs text-muted-foreground">{label.venue}</span>}
     </span>
   );
   const look = "-ml-1.5 flex h-6 items-center gap-1 rounded-full px-2 hover:bg-accent";
@@ -505,30 +579,45 @@ function InstrumentPicker(props: {
   );
 }
 
+/**
+ * The day's figures. Exchanges and stocks: the range, volume and turnover.
+ * Pools: the range, volume in dollars, and what the pool holds and the
+ * token is worth.
+ */
 function StatsGrid(props: {
   stats: Stats | null;
   span: StatsSpan;
   decimals: number;
   volumeUnit: string;
   turnoverUnit: string;
+  pool: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const { stats, decimals } = props;
   const context = { context: props.span };
-  const items = [
-    { label: t("chart.high", context), value: stats && fmtPrice(stats.high, decimals) },
-    { label: t("chart.low", context), value: stats && fmtPrice(stats.low, decimals) },
-    {
-      label: t("chart.volume", context),
-      value: stats && `${fmtCompact(stats.volume, i18n.language)} ${props.volumeUnit}`,
-    },
-    {
-      label: t("chart.turnover", context),
-      value: stats && `${fmtCompact(stats.turnover, i18n.language)} ${props.turnoverUnit}`,
-    },
-  ];
+  const price = (value: number | null | undefined) => (value == null ? null : fmtPrice(value, decimals));
+  const compact = (value: number | null | undefined, unit: string) =>
+    value == null ? null : `${fmtCompact(value, i18n.language)} ${unit}`;
+  const onchain = stats?.onchain;
+  const items = props.pool
+    ? [
+        { label: t("chart.high", context), value: stats && price(stats.high) },
+        { label: t("chart.low", context), value: stats && price(stats.low) },
+        { label: t("chart.volume", context), value: stats && compact(stats.turnover, props.turnoverUnit) },
+        { label: t("chart.liquidity"), value: stats && compact(onchain?.liquidity, props.turnoverUnit) },
+        // A token without a circulating supply figure shows its fully diluted value instead.
+        onchain && onchain.marketCap == null && onchain.fdv != null
+          ? { label: t("chart.fdv"), value: compact(onchain.fdv, props.turnoverUnit) }
+          : { label: t("chart.marketCap"), value: stats && compact(onchain?.marketCap, props.turnoverUnit) },
+      ]
+    : [
+        { label: t("chart.high", context), value: stats && price(stats.high) },
+        { label: t("chart.low", context), value: stats && price(stats.low) },
+        { label: t("chart.volume", context), value: stats && compact(stats.volume, props.volumeUnit) },
+        { label: t("chart.turnover", context), value: stats && compact(stats.turnover, props.turnoverUnit) },
+      ];
   return (
-    <dl className="grid grid-cols-4 gap-2 px-4">
+    <dl className="grid gap-2 px-4" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
       {items.map((item) => (
         <div key={item.label} className="min-w-0 rounded-xl bg-fill px-3 py-2">
           <dt className="text-2xs text-muted-foreground">{item.label}</dt>

@@ -36,11 +36,12 @@
       "moveDown": "下へ移動",
       "remove": "%{name} を削除",
       "full": "最大 %{max} 件",
-      "search": "通貨や銘柄コードを検索（SOL、AAPL、700 など）",
+      "search": "通貨・銘柄コード・DEX トークンを検索（SOL、AAPL、700、WIF など）",
       "searching": "検索中…",
       "noResults": "見つかりません",
       "added": "追加済み",
-      "manual": "入力どおり追加"
+      "manual": "入力どおり追加",
+      "liquidity": "流動性 %{value}"
     },
     "crypto": {
       "title": "暗号資産",
@@ -154,7 +155,40 @@
     "bid": "買 %{share}%",
     "ask": "%{share}% 売",
     "spread": "スプレッド %{value}",
-    "grouping": "価格のまとめ単位"
+    "grouping": "価格のまとめ単位",
+    "buyers": "買い %{share}%",
+    "sellers": "%{share}% 売り",
+    "buyersLead": "買い優勢 %{share}%",
+    "sellersLead": "売り優勢 %{share}%",
+    "flowBalanced": "売り買い拮抗",
+    "liquidity": "流動性",
+    "marketCap": "時価総額",
+    "fdv": "完全希薄化時価総額",
+    "tools": "描画ツール",
+    "tool": {
+      "cursor": "カーソル",
+      "level": "水平線",
+      "trend": "トレンドライン",
+      "fib": "フィボナッチ・リトレースメント",
+      "measure": "計測"
+    },
+    "drawingHint": "クリックでもう一端を置く · Esc で取り消し",
+    "clearDrawings": "描画を消去",
+    "undo": "元に戻す",
+    "indicators": "インジケーター",
+    "indicator": {
+      "sma": "移動平均",
+      "ema": "指数移動平均",
+      "boll": "ボリンジャーバンド"
+    },
+    "period": "期間",
+    "bars_other": "%{count} 本",
+    "ohlc": {
+      "open": "始値",
+      "high": "高値",
+      "low": "安値",
+      "close": "終値"
+    }
   },
   "holdings": {
     "title": "保有資産",

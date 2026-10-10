@@ -1,12 +1,12 @@
 # 行情数据源：接入说明与调研记录
 
-币安和长桥调研于 2026-09-26，Bybit、OKX 和各家的账户接口于 2026-10-01。结论会随时间变化，接入前请在目标网络（大陆直连或代理）下实测一次。
+币安和长桥调研于 2026-09-26，Bybit、OKX 和各家的账户接口于 2026-10-01，DEX Screener 和 GeckoTerminal 于 2026-10-11。结论会随时间变化，接入前请在目标网络（大陆直连或代理）下实测一次。
 
 ## 怎么接入一个新数据源
 
 所有取数都在 Rust 端，WebView 只通过 IPC 拿数据。
 
-加密货币交易所同一时间只用一家：设置里的 `Settings.exchange` 选定，自选只保留这家的币对（`Settings::validated` 会移除别家的，换交易所就是这样清掉旧币对的），搜索也只搜这家和长桥。
+加密货币交易所同一时间只用一家：设置里的 `Settings.exchange` 选定，自选只保留这家的币对（`Settings::validated` 会移除别家的，换交易所就是这样清掉旧币对的），搜索搜这家、长桥和 DEX Screener。
 
 ### 加一家加密货币交易所
 
@@ -26,15 +26,17 @@
 
 实现 `Provider` trait：
 
+- `id`：自己的 `ProviderId`。
 - `validate`：校验设置页传来的自选项。
-- `search`：返回候选；`notes` 说明搜不全的原因。
+- `bare`：只凭代码造一个自选项（AI 接口按 id 读任意品种时用），默认把代码转成大写；代码区分大小写的数据源（链上池子的 Solana 地址）要自己实现。
+- `search`：返回候选；`notes` 说明搜不全的原因。候选的 `liquidity` 只有池子有，用来区分同一代币的多个池子。
 - `drop_search_cache`：设置窗口关闭时释放搜索缓存。
-- `watch`：菜单栏（Windows 上是任务栏）报价的常驻任务，读取 `FeedControl` 里的 symbols、paused 和 credentials，写 `model.quotes`，用 `market::set_status` 报告状态。
+- `watch`：菜单栏（Windows 上是任务栏）报价的常驻任务，读取 `FeedControl` 里的 symbols、paused 和 credentials，写 `model.quotes`，用 `market::set_status` 报告状态。没有推送的数据源在这里轮询（DEX Screener 每 15 秒一轮）。
 - `chart_spec` / `history` / `recent_trades` / `stream`：行情窗口的能力说明、K 线翻页、最近成交和实时流。
 
-前端 `src/lib/api.ts` 的 `ProviderId`、`instrumentLabel`、`marketOf` 加上对应分支，名字写进 `common.provider`。
+前端 `src/lib/api.ts` 的 `ProviderId`、`instrumentLabel` 加上对应分支，名字写进 `common.provider`。
 
-`chart_spec` 和账户数据里只放代码和数字，不放给人看的文字：数据源给 `ProviderId`，周期给秒数，统计范围给 `StatsSpan`，合约类型给 `PositionKind`，由显示它的一方按界面语言说出来。错误信息例外，用 `t!` 按当时的语言写。
+`chart_spec` 和账户数据里只放代码和数字，不放给人看的文字：数据源给 `ProviderId`，周期给秒数，统计范围给 `StatsSpan`，合约类型给 `PositionKind`，由显示它的一方按界面语言说出来。错误信息例外，用 `t!` 按当时的语言写。链名和 DEX 名是专有名词，不翻译，所以 `Instrument.venue` 直接存显示用的名字（`Solana`、`Raydium`），搜索时由 Rust 填好。
 
 ### 几个容易踩错的约定
 
@@ -42,11 +44,15 @@
 - `history`：数据源每页上限比请求的 `limit` 小时就返回能给的（OKX 一页 300 根）；只有返回空才表示没有更早的了，前端据此停止往前翻。
 - `ChartSpec.day_offset`：日线开盘时刻相对 UTC 的秒数，用于日期标签。
 - `ChartSpec.book_steps`：盘口可选的合并档位，从细到粗；`LiveEvent::Book.books` 按同样顺序各给一份合并好的盘口。留空表示不合并，`books` 只放一份原样的盘口。
+- `ChartSpec.book` 为 false 表示这个数据源没有盘口（链上池子），行情窗口侧栏只放成交，AI 接口的 `/v1/market` 也不等盘口；`ChartSpec.onchain` 为 true 表示统计是池子的：`Stats.volume` 为空（只有美元成交额），`Stats.onchain` 带流动性、市值、FDV 和 24 小时买卖笔数。`Stats.high` / `low` / `volume` 都是 `Option`，数据源给不出的填 `None`，页面显示「—」。
+- `LiveEvent::Tick`：没有成交记录的价格（轮询到的报价），只推动正在形成的 K 线，不进成交列表。
+- `ChartSpec.volume_unit` 是成交数量的单位（池子是代币符号），与 `Stats.volume` 是否有值无关。
 - 本地盘口的价格存成 10^-18 为单位的 `u128` 整数（Bybit 的 tick 细到 10^-13，币安 BTC/IDR 价格到 15 亿），同一价格总能落到同一档；转回 `f64` 时与直接解析原字符串的结果一致。
 - `Trade.id` 必须随时间递增、对同一笔成交稳定（查询和推送会各来一次，前端按 id 去重），而且小于 2^53，否则 WebView 里的数字会把相邻的 id 并成一个。
 - 需要账户的数据源：凭证放在 `credentials.rs` 管理的 `credentials.json`（0600），缺凭证时用 `Status::NoCredentials` 提示，不要重试空转。
 - `Quote.open` 是涨跌幅的参考价：币是 24 小时前的价格，股票是最近一次收盘价；`Quote.session` 标注盘前、盘后、夜盘。
 - 菜单栏每秒最多重绘一次：OKX 每个币对每秒最多推 10 次，币安是每秒一批。
+- 返回 429 的数据源：`http::get_json` 把它映射成 `http::Error::Throttled(Retry-After)`，调用方自己决定退避。GeckoTerminal 的客户端据此关一道闸（见下文）。
 
 ## 已接入
 
@@ -162,6 +168,32 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 - 仓位 `GET /api/v5/account/positions`：`pos` 的单位是张（杠杆是币）；`posSide` 为 `net` 时正负号表示方向；`notionalUsd` 是美元名义价值；`upl` 以 `ccy` 计。
 - 错误多数是 HTTP 401 加 `{code, msg}`，`code` 是字符串，但路径不存在时是数字，解析要两者都接受：`50102` 时间、`50105` passphrase、`50110` IP、`50111`/`50119` Key、`50113` 签名、`50120`/`50030` 无权限、`50101` 模拟盘 Key。
 
+### DEX Screener + GeckoTerminal（链上池子，`src-tauri/src/market/dexscreener/`）
+
+只在 DEX 池子里交易的代币，和交易所的币对一样加进自选。品种代码是 `<链>/<池子地址>`（`solana/EP2ib6…`，和 DEX Screener 网址一致），`base` 是代币符号（`$WIF`），`quote` 固定 `USD`，`name` 是代币名，`venue` 是链和 DEX 的显示名。价格一律按美元，和 DEX Screener 页面默认一样；池子自己的计价币（SOL、WETH）不出现在界面上。两个服务都不要 key。
+
+分工，按各自给得出什么：
+
+| 数据 | 来源 | 接口 |
+|---|---|---|
+| 搜索 | DEX Screener | `GET /latest/dex/search?q=`，30 条，不按流动性排序（搜 `WIF` 第一条是 robinhood 链上的仿盘），所以本地按「代币符号完全匹配 > 前缀 > 其余」再按流动性排，去掉流动性低于 5,000 美元的，取 6 条。粘贴代币或池子地址也能搜到 |
+| 菜单栏报价、行情窗口统计 | DEX Screener | `GET /latest/dex/pairs/{chain}/{addr1,addr2,…}`，一次最多 30 个池子，按链分组请求；返回 `priceUsd`、`priceChange.h24`、`volume.h24`、`liquidity.usd`、`fdv`、`marketCap`、`txns.h24.{buys,sells}`。24 小时前的价格由 `priceUsd / (1 + h24/100)` 倒推；刚建的池子没有 `h24`，涨跌按 0 |
+| K 线 | GeckoTerminal | `GET /networks/{network}/pools/{addr}/ohlcv/{minute\|hour\|day}?aggregate=&limit=1000&currency=usd&include_empty_intervals=true&before_timestamp=`，倒序返回，日线从 UTC 0 点开始（实测），`include_empty_intervals` 把没有成交的区间补成平盘 K 线，和交易所一样。周期只有分钟 1/5/15、小时 1/4/12、日 1，行情窗口给 1m 5m 15m 1h 4h 1d |
+| 成交 | GeckoTerminal | `GET /networks/{network}/pools/{addr}/trades`，过去 24 小时最后 300 笔，秒级时间戳（`block_timestamp`），`kind` 是对基础代币的 buy/sell：buy 时代币在 `to` 一侧，sell 时在 `from` 一侧，价格和数量取相应一侧。id 用「秒 << 20 \| 成交 id 的 FNV 哈希低 20 位」，和长桥一样稳定且按时间递增 |
+| 24 小时最高最低 | GeckoTerminal | 两家都不直接给，用最近 25 根小时 K 线算，每 10 分钟刷一次，中间再并入看到的每个价格 |
+
+实时流（`stream.rs`）全靠轮询：DEX Screener 每 10 秒一次（它的边缘缓存 30 秒更新一次），价格变了就发一个 `Tick` 推动当前 K 线；GeckoTerminal 成交每 20 秒一次，连续没有新成交就翻倍拉长到 60 秒；连着两次 DEX Screener 失败才算离线。所以链上的「实时」是 30 秒左右一跳，不是交易所那种逐笔。没有盘口，侧栏放成交和 24 小时买卖比例条。
+
+限频，实测：
+
+- DEX Screener：文档说这几个端点 300 次/分，没碰到过。响应头 `cache-control: public, max-age=30`（搜索 60），`cf-cache-status: HIT`，也就是价格最快 30 秒一变，轮询再快也只是读缓存。
+- GeckoTerminal：文档说 30 次/分，从本机（香港出口，不经代理）实测连发 5 次后就开始 429，之后一分钟里大多是 429，偶尔放行一次；也就是实际上每分钟 5 次左右，而且可能和同一出口的其他用户共用。429 不带 `Retry-After`。所以 `gecko.rs` 收到 429 就关一道闸 30 秒（有 `Retry-After` 按它的，最长 120 秒），闸关着时请求直接本地失败、不上网，前端 5 秒一次的历史重试就不会把配额耗在被拒绝上；成交轮询碰到闸就等闸开再问。打开行情窗口的首批请求是 3 次（当前周期的 K 线、小时 K 线、成交），切周期和往前翻页各加 1 次，紧贴这个预算；预算用光时 K 线晚几十秒出现，报价和统计不受影响（走 DEX Screener）。
+- 两家都需要 `Accept: application/json;version=20230302`？只有 GeckoTerminal 要（锁定响应格式版本），DEX Screener 不需要头。
+
+链 id 两家不一样（`ethereum` 对 `eth`，`polygon` 对 `polygon_pos`，`avalanche` 对 `avax`，`sui` 对 `sui-network`……），`chains.rs` 存了 70 来条对照表和显示名，来自 GeckoTerminal `/networks`（2026-10-11 共 226 条，3 页）和 DEX Screener 网址里的链 slug；表里没有的链按同名传给 GeckoTerminal，显示名首字母大写。地址：EVM 的 42 位十六进制统一小写（DEX Screener 返回校验和大小写混合），其他（Solana base58 区分大小写）原样保留。
+
+条款：两家的公开 API 都没有附加条款页，也没要求署名；行情窗口的外链指向 dexscreener.com 的池子页。没有接 CoinGecko 的 Demo key（同样的链上端点，30 次/分，要注册），要是以后 GeckoTerminal 的限频更紧，这是最近的替代。
+
 ## 候选数据源（未接入）
 
 结论先说：没有一个股票数据源能同时做到免费、实时、条款允许、大陆可直连。非官方接口都在网页抓取的灰色地带，放进公开仓库有条款风险，而且随时可能被封。
@@ -196,8 +228,20 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 - **富途 OpenAPI**：用户本机要运行 OpenD 网关，走 TCP 和 protobuf 真推送；注册牛牛号并完成问卷即可登录（不强制入金，生效时间未确认）；快照接口每 30 秒 60 次；港股 LV2 自 2023-12 起免费，美股深度盘口处于促销期免费，大陆认证用户有 A 股 LV1；2025-09 起大陆新开户基本关闭；条款禁止转发行情。接入成本高（要装网关）。
 - **老虎 OpenAPI**：需要开户并入金；美股未订阅时晚 15 分钟；大陆 IP 的港股赠送 L2；基础档可订阅 20 个标的；2022-12 起停止大陆身份证新开户，2025-09 起变通方式也关闭；数据条款原文未查到。
 
+### 链上数据的其他来源
+
+调研于 2026-10-11，为接入 DEX Screener 时比较过：
+
+| 来源 | 能给什么 | 为什么没用 |
+|---|---|---|
+| DEX Screener 网站的 WebSocket（`io.dexscreener.com`） | 逐笔推送 | 非公开，在 Cloudflare 人机验证后面，随时会断 |
+| Birdeye、Moralis、Codex.io、Bitquery | K 线、成交、持币人 | 都要 key，免费档很小 |
+| CoinGecko Demo key 的 `/onchain/*` | 和 GeckoTerminal 同一份数据 | 要注册；限频同样 30 次/分，缓存 60 秒 |
+| Jupiter、Raydium 自己的接口 | 价格、池子 | 只有 Solana |
+
 ### 如果还要再加
 
 - 想要不需要账户的 A 股：腾讯（轮询，最稳）。东方财富覆盖面最广，但风险最高。
 - 想要官方的实时美股：Alpaca（用户自带 key，数据只来自 IEX）。
 - 想要券商级的全市场推送：富途 OpenD（前提是用户愿意在本机运行网关）。
+- 想要链上逐笔：没有免费又公开的；GeckoTerminal 付费档（CoinGecko Analyst）成交接口不缓存、可按时间段翻页。

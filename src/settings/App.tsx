@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { fmtCompact } from "@/lib/format";
 import { LOCALES, PLATFORM, type Language, type Locale } from "@/lib/i18n";
 import {
   api,
@@ -727,17 +728,21 @@ function updateNote(state: UpdateState, t: TFunction): string | null {
   }
 }
 
-/** "BTC/USDT", "AAPL Apple US", "腾讯控股 700 港股": the name, then dimmed details. */
+/**
+ * "BTC/USDT", "AAPL Apple US", "腾讯控股 700 港股", "$WIF dogwifhat Solana · Raydium":
+ * the name, then dimmed details, then where it trades.
+ */
 function InstrumentName(props: { instrument: Instrument; className?: string; dim?: string }) {
   const { t } = useTranslation();
-  const { name, detail } = instrumentLabel(props.instrument);
+  const { name, detail, venue } = instrumentLabel(props.instrument);
   const market = marketOf(props.instrument);
+  const where = venue ?? (market && t(`market.${market}`));
   const dim = props.dim ?? "text-muted-foreground";
   return (
     <span className={props.className}>
       <span className="font-medium">{name}</span>
       {detail && <span className={dim}>{detail}</span>}
-      {market && <span className={cn("ml-1.5 text-xs", dim)}>{t(`market.${market}`)}</span>}
+      {where && <span className={cn("ml-1.5 text-xs", dim)}>{where}</span>}
     </span>
   );
 }
@@ -746,7 +751,7 @@ function InstrumentName(props: { instrument: Instrument; className?: string; dim
 const SEARCH_DELAY_MS = 200;
 
 function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd: (instrument: Instrument) => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults | null>(null);
   const [loading, setLoading] = useState(false);
@@ -779,7 +784,7 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
 
   const add = (candidate: Candidate | undefined) => {
     if (!candidate || taken.has(instrumentId(candidate)) || props.full) return;
-    const { manual: _, ...instrument } = candidate;
+    const { manual: _, liquidity: __, ...instrument } = candidate;
     props.onAdd(instrument);
     setQuery("");
     setActive(-1);
@@ -858,8 +863,14 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
                     className="min-w-0 truncate"
                     dim={highlighted ? "opacity-80" : "text-muted-foreground"}
                   />
-                  <span className="shrink-0 text-xs opacity-70">
-                    {added ? t("settings.watchlist.added") : candidate.manual ? t("settings.watchlist.manual") : ""}
+                  <span className="shrink-0 text-xs opacity-70 tabular">
+                    {added
+                      ? t("settings.watchlist.added")
+                      : candidate.manual
+                        ? t("settings.watchlist.manual")
+                        : candidate.liquidity != null
+                          ? t("settings.watchlist.liquidity", { value: fmtCompact(candidate.liquidity, i18n.language) })
+                          : ""}
                   </span>
                 </button>
               );

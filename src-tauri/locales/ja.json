@@ -4,7 +4,8 @@
       "binance": "Binance",
       "bybit": "Bybit",
       "okx": "OKX",
-      "longbridge": "Longbridge"
+      "longbridge": "Longbridge",
+      "dexscreener": "DEX Screener"
     },
     "holdings": {
       "total": "総資産",
@@ -80,6 +81,7 @@
     "unreachable": "サーバーに接続できません",
     "httpStatus": "サーバーが HTTP %{status} を返しました",
     "badFormat": "データの形式が正しくありません",
+    "tooManyRequests": "リクエストが多すぎます。サーバーから間隔を空けるよう求められました",
     "network": "ネットワークエラー",
     "proxyRefused": "プロキシが接続を拒否しました（%{reason}）",
     "proxyClosed": "接続が閉じられました",
@@ -104,6 +106,8 @@
     "keyRejected": "API キーかシークレットが正しくないか、読み取り権限がありません",
     "keyInvalid": "API キーが無効か、読み取り権限がないか、別の IP に紐付けられています",
     "invalidStock": "無効な銘柄コードです：%{symbol}",
+    "invalidPool": "無効な DEX プールです：%{symbol}",
+    "rateLimited": "%{source} のレート制限中 · %{seconds} 秒後に再試行",
     "noQuote": "%{source} にこの銘柄の気配がありません",
     "sourceBadData": "%{source} から想定外のデータが返されました",
     "sourceStopped": "%{source} との接続は停止しています",

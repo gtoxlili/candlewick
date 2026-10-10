@@ -3,16 +3,29 @@
 // iterated on without the app. Only the development build imports this, and
 // only when Tauri's IPC is absent (see each page's main.tsx).
 
+import type { Channel } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
-import type { Portfolio, Settings } from "@/lib/api";
+import type { Candle, ChartSpec, Instrument, LiveEvent, Portfolio, Search, Settings, Trade } from "@/lib/api";
 import { LOCALES, type Locale } from "@/lib/i18n";
+
+const pool: Instrument = {
+  provider: "dexscreener",
+  symbol: "solana/EP2ib6dYdEeqD8MfE2ezHCxX3kP3K2eLKkirfPm5eyMx",
+  base: "$WIF",
+  quote: "USD",
+  name: "dogwifhat",
+  decimals: null,
+  pinned: false,
+  venue: { chain: "Solana", dex: "Raydium" },
+};
 
 const settings: Settings = {
   exchange: "binance",
   watchlist: [
     { provider: "binance", symbol: "BTCUSDT", base: "BTC", quote: "USDT", decimals: 2, pinned: true },
     { provider: "binance", symbol: "ETHUSDT", base: "ETH", quote: "USDT", decimals: 2, pinned: false },
+    pool,
   ],
   showSymbol: true,
   showChange: false,
@@ -247,10 +260,149 @@ const loading: Portfolio = {
   positions: [],
 };
 
+// --- The chart window: a deterministic random walk, streamed a tick a second. ---
+
+const INTERVALS = [60, 300, 900, 3600, 14_400, 86_400];
+/** Candles before this many intervals ago don't exist, so paging back ends. */
+const HISTORY = 1500;
+
+const isPool = (id: string) => id.startsWith("dexscreener:");
+
+function spec(id: string): ChartSpec {
+  const onchain = isPool(id);
+  return {
+    source: onchain ? "dexscreener" : "binance",
+    intervals: INTERVALS.map((secs) => ({ secs, mode: "candle", aligned: true, regularOnly: false })),
+    statsSpan: "rolling24h",
+    volumeUnit: onchain ? "$WIF" : "BTC",
+    turnoverUnit: onchain ? "USD" : "USDT",
+    dayOffset: 0,
+    bookSteps: [],
+    book: !onchain,
+    onchain,
+    link: null,
+  };
+}
+
+/** A hash in [-0.5, 0.5) of an integer, the same every time. */
+function noise(k: number): number {
+  let x = Math.imul(k, 2_654_435_761) >>> 0;
+  x ^= x >>> 15;
+  x = Math.imul(x, 2_246_822_519) >>> 0;
+  x ^= x >>> 13;
+  return x / 4_294_967_296 - 0.5;
+}
+
+/** The walk from its origin to `to`, so any page agrees with any other. */
+function walk(id: string, interval: number, to: number, from: number): Candle[] {
+  const base = isPool(id) ? 0.00001234 : 84_000;
+  const origin = to - HISTORY * interval;
+  let price = base;
+  const out: Candle[] = [];
+  for (let t = origin; t <= to; t += interval) {
+    const k = t / interval;
+    const open = price;
+    // A step of noise, pulled gently back toward the base so the walk never wanders off.
+    const close = open * Math.exp(noise(k) * 0.012 + 0.01 * Math.log(base / open));
+    const high = Math.max(open, close) * (1 + Math.abs(noise(k + 7)) * 0.006);
+    const low = Math.min(open, close) * (1 - Math.abs(noise(k + 13)) * 0.006);
+    if (t >= from) out.push({ time: t, open, high, low, close });
+    price = close;
+  }
+  return out;
+}
+
+const lastBucket = (interval: number) => Math.floor(Date.now() / 1000 / interval) * interval;
+
+function candles(id: string, interval: number, end: number | null, limit: number): Candle[] {
+  const last = lastBucket(interval);
+  const to = end === null ? last : Math.floor((end - 1) / interval) * interval;
+  if (to < last - HISTORY * interval) return [];
+  const from = Math.max(last - HISTORY * interval, to - (limit - 1) * interval);
+  // The walk runs from the live edge's origin so the latest page and older pages share one history.
+  return walk(id, interval, last, from).filter((c) => c.time <= to);
+}
+
+let nextTrade = 1;
+
+function trade(id: string, price: number, time: number): Trade {
+  return {
+    id: nextTrade++,
+    price,
+    qty: isPool(id) ? 50 + Math.random() * 2000 : Math.random() * 0.5,
+    time,
+    sell: Math.random() < 0.5,
+    extended: false,
+  };
+}
+
+const streams = new Map<number, number>();
+let nextStream = 1;
+
+function stream(id: string, events: Channel<LiveEvent>): number {
+  const handle = nextStream++;
+  const onchain = isPool(id);
+  let price = candles(id, 60, null, 1)[0]?.close ?? 1;
+  const send = (event: LiveEvent) => events.onmessage(event);
+  const stats = () =>
+    send({
+      kind: "stats",
+      stats: {
+        last: price,
+        high: price * 1.031,
+        low: price * 0.974,
+        volume: onchain ? null : 12_345.6,
+        turnover: onchain ? 289_043.58 : 1.04e9,
+        change: price - price / 1.0288,
+        changePct: 2.88,
+        onchain: onchain
+          ? { liquidity: 6_141_965.07, marketCap: 217_289_257, fdv: 217_289_257, buys: 743, sells: 684 }
+          : null,
+      },
+    });
+  send({ kind: "state", state: "live" });
+  stats();
+  const timer = window.setInterval(() => {
+    price *= Math.exp((Math.random() - 0.5) * 0.002);
+    send({ kind: "trades", trades: [trade(id, price, Date.now())] });
+    stats();
+    if (!onchain) {
+      const level = (i: number, side: 1 | -1) => ({ price: price * (1 + side * 0.0001 * (i + 1)), qty: Math.random() * 3 });
+      send({
+        kind: "book",
+        books: [{ bids: Array.from({ length: 20 }, (_, i) => level(i, -1)), asks: Array.from({ length: 20 }, (_, i) => level(i, 1)) }],
+      });
+    }
+  }, 700);
+  streams.set(handle, timer);
+  return handle;
+}
+
+function search(query: string): Search {
+  const q = query.trim().toUpperCase();
+  if (!q) return { candidates: [], notes: [] };
+  const candidates: Search["candidates"] = [];
+  if ("SOL".startsWith(q)) {
+    candidates.push({ provider: "binance", symbol: "SOLUSDT", base: "SOL", quote: "USDT", decimals: 2, pinned: false, manual: false, liquidity: null });
+  }
+  if ("WIF".startsWith(q) || "$WIF".startsWith(q)) {
+    candidates.push({ ...pool, manual: false, liquidity: 6_141_965.07 });
+    candidates.push({
+      ...pool,
+      symbol: "solana/8sLbNZoA1cfnvMJLPfp98ZLAnFSYCFApfJKMbiXNLwxj",
+      venue: { chain: "Solana", dex: "Orca" },
+      manual: false,
+      liquidity: 158_988.96,
+    });
+  }
+  return { candidates, notes: [] };
+}
+
 /**
  * Answers the app's commands for `label`'s page. `?state=empty|loading` picks
  * a portfolio; `?lang=en|zh-CN|ja` the language the app speaks (default: the
- * first of the browser's that it has).
+ * first of the browser's that it has). The chart page draws a synthetic
+ * market for whichever id its URL names.
  */
 export function installMocks(label: string): void {
   mockWindows(label);
@@ -259,7 +411,8 @@ export function installMocks(label: string): void {
   const locales = Object.keys(LOCALES) as Locale[];
   const speaks = (tag: string) => locales.find((l) => l === tag) ?? locales.find((l) => l.split("-")[0] === tag.split("-")[0]);
   const locale = [params.get("lang") ?? "", ...navigator.languages].map(speaks).find((l) => l !== undefined) ?? "en";
-  mockIPC((cmd) => {
+  mockIPC((cmd, payload) => {
+    const args = (payload ?? {}) as Record<string, unknown>;
     switch (cmd) {
       case "get_settings":
         return settings;
@@ -267,6 +420,25 @@ export function installMocks(label: string): void {
         return locale;
       case "get_portfolio":
         return state === "empty" ? { ...loading, accounts: [] } : state === "loading" ? loading : portfolio;
+      case "search_instruments":
+        return search(String(args.query ?? ""));
+      case "chart_spec":
+        return spec(String(args.id));
+      case "chart_history":
+        return candles(String(args.id), Number(args.interval), args.end === null ? null : Number(args.end), Number(args.limit));
+      case "chart_trades": {
+        const id = String(args.id);
+        const price = candles(id, 60, null, 1)[0]?.close ?? 1;
+        return Array.from({ length: Number(args.limit) }, (_, i) =>
+          trade(id, price * (1 + (Math.random() - 0.5) * 0.001), Date.now() - (Number(args.limit) - i) * 1500),
+        );
+      }
+      case "chart_stream":
+        return stream(String(args.id), args.events as Channel<LiveEvent>);
+      case "chart_stream_stop":
+        window.clearInterval(streams.get(Number(args.handle)));
+        streams.delete(Number(args.handle));
+        return null;
       case "plugin:event|listen":
         return 1;
       default:

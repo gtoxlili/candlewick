@@ -36,11 +36,12 @@
       "moveDown": "Move down",
       "remove": "Remove %{name}",
       "full": "Up to %{max}",
-      "search": "Search coins or stock codes, like SOL, AAPL, 700",
+      "search": "Search coins, stocks or DEX tokens: SOL, AAPL, 700, WIF",
       "searching": "Searching…",
       "noResults": "No results",
       "added": "Added",
-      "manual": "Add as typed"
+      "manual": "Add as typed",
+      "liquidity": "%{value} liquidity"
     },
     "crypto": {
       "title": "Crypto",
@@ -154,7 +155,41 @@
     "bid": "Bid %{share}%",
     "ask": "%{share}% Ask",
     "spread": "Spread %{value}",
-    "grouping": "Price grouping"
+    "grouping": "Price grouping",
+    "buyers": "Buys %{share}%",
+    "sellers": "%{share}% Sells",
+    "buyersLead": "Buyers lead %{share}%",
+    "sellersLead": "Sellers lead %{share}%",
+    "flowBalanced": "Buys and sells even",
+    "liquidity": "Liquidity",
+    "marketCap": "Market cap",
+    "fdv": "FDV",
+    "tools": "Drawing tools",
+    "tool": {
+      "cursor": "Cursor",
+      "level": "Horizontal line",
+      "trend": "Trend line",
+      "fib": "Fibonacci retracement",
+      "measure": "Measure"
+    },
+    "drawingHint": "Click to place the other end · Esc to cancel",
+    "clearDrawings": "Clear drawings",
+    "undo": "Undo",
+    "indicators": "Indicators",
+    "indicator": {
+      "sma": "Moving average",
+      "ema": "Exponential MA",
+      "boll": "Bollinger Bands"
+    },
+    "period": "Period",
+    "bars_one": "%{count} bar",
+    "bars_other": "%{count} bars",
+    "ohlc": {
+      "open": "Open",
+      "high": "High",
+      "low": "Low",
+      "close": "Close"
+    }
   },
   "holdings": {
     "title": "Holdings",

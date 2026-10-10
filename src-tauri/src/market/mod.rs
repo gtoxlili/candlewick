@@ -11,6 +11,7 @@
 mod binance;
 mod bybit;
 mod crypto;
+mod dexscreener;
 pub mod longbridge;
 mod okx;
 
@@ -37,10 +38,13 @@ pub enum ProviderId {
     Bybit,
     Okx,
     Longbridge,
+    /// On-chain pools on decentralized exchanges.
+    DexScreener,
 }
 
 impl ProviderId {
-    pub const ALL: [Self; 4] = [Self::Binance, Self::Bybit, Self::Okx, Self::Longbridge];
+    pub const ALL: [Self; 5] =
+        [Self::Binance, Self::Bybit, Self::Okx, Self::Longbridge, Self::DexScreener];
 
     /// The crypto exchanges, one of which the settings pick for every pair
     /// (`Settings::exchange`).
@@ -57,6 +61,7 @@ impl ProviderId {
             Self::Bybit => "bybit",
             Self::Okx => "okx",
             Self::Longbridge => "longbridge",
+            Self::DexScreener => "dexscreener",
         }
     }
 
@@ -67,6 +72,7 @@ impl ProviderId {
             Self::Bybit => t!("common.provider.bybit"),
             Self::Okx => t!("common.provider.okx"),
             Self::Longbridge => t!("common.provider.longbridge"),
+            Self::DexScreener => t!("common.provider.dexscreener"),
         }
     }
 
@@ -76,14 +82,15 @@ impl ProviderId {
             Self::Bybit => &bybit::Bybit,
             Self::Okx => &okx::Okx,
             Self::Longbridge => &longbridge::Longbridge,
+            Self::DexScreener => &dexscreener::DexScreener,
         }
     }
 }
 
-/// Instruments matching `query`: pairs on `exchange`, and stocks.
+/// Instruments matching `query`: pairs on `exchange`, stocks, and pools.
 pub async fn search(exchange: ProviderId, query: &str) -> Search {
-    let searches =
-        [exchange, ProviderId::Longbridge].map(|provider| provider.provider().search(query));
+    let searches = [exchange, ProviderId::Longbridge, ProviderId::DexScreener]
+        .map(|provider| provider.provider().search(query));
     let mut all = Search::default();
     for found in futures_util::future::join_all(searches).await {
         all.candidates.extend(found.candidates);
@@ -110,7 +117,7 @@ pub async fn check_key(exchange: ProviderId, key: &ApiKey) -> Result<(), Error> 
         ProviderId::Binance => binance::Binance::check(key).await,
         ProviderId::Bybit => bybit::Bybit::check(key).await,
         ProviderId::Okx => okx::Okx::check(key).await,
-        ProviderId::Longbridge => {
+        ProviderId::Longbridge | ProviderId::DexScreener => {
             Err(Error::Message(t!("error.noApiKey", source = exchange.name())))
         }
     }
@@ -122,8 +129,18 @@ pub fn instrument_id(provider: ProviderId, symbol: &str) -> String {
 }
 
 pub trait Provider: Send + Sync {
+    fn id(&self) -> ProviderId;
+
     /// Normalizes an entry coming from the settings window and checks it.
     fn validate(&self, instrument: &mut Instrument) -> Result<(), String>;
+
+    /// The instrument a symbol alone names, written as the provider writes
+    /// it and known by nothing else: all reading market data takes
+    /// (`agent::api`). `None` for a symbol that can't be one of its.
+    fn bare(&self, symbol: &str) -> Option<Instrument> {
+        let symbol = symbol.trim().to_uppercase();
+        (!symbol.is_empty()).then(|| Instrument::bare(self.id(), &symbol))
+    }
 
     /// Instruments matching what someone typed, best first, ready to be added
     /// to the watchlist. An empty query may start loading whatever searching
@@ -197,6 +214,8 @@ pub struct Candidate {
     pub instrument: Instrument,
     /// Taken from the typed text because the instrument list was unavailable.
     pub manual: bool,
+    /// What a pool holds, in USD: tells the pools of one token apart.
+    pub liquidity: Option<f64>,
 }
 
 /// What the chart window offers for an instrument: data, not text; the page
@@ -216,6 +235,12 @@ pub struct ChartSpec {
     /// Price steps the order book can be grouped by, finest first; book events
     /// carry it grouped by each. Empty: the book comes as it is.
     pub book_steps: Vec<f64>,
+    /// The stream carries an order book; without one the window shows the
+    /// trades alone.
+    pub book: bool,
+    /// The statistics are a pool's: volume in the quote currency only, with
+    /// liquidity, market cap and swap counts beside (`Stats::onchain`).
+    pub onchain: bool,
     /// The instrument's page on the provider's website.
     pub link: Option<String>,
 }
@@ -259,17 +284,35 @@ pub struct Candle {
     pub close: f64,
 }
 
-/// Statistics over the provider's span (see [`ChartSpec::stats_span`]).
+/// Statistics over the provider's span (see [`ChartSpec::stats_span`]);
+/// `None` where the provider gives none.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Stats {
     pub last: f64,
-    pub high: f64,
-    pub low: f64,
-    pub volume: f64,
+    pub high: Option<f64>,
+    pub low: Option<f64>,
+    /// In the base asset (see [`ChartSpec::volume_unit`]).
+    pub volume: Option<f64>,
     pub turnover: f64,
     pub change: f64,
     pub change_pct: f64,
+    /// What a pool adds to the picture; none for exchanges and stocks.
+    pub onchain: Option<Onchain>,
+}
+
+/// A pool's standing, over the same span as the rest of the statistics.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Onchain {
+    /// USD in the pool.
+    pub liquidity: Option<f64>,
+    pub market_cap: Option<f64>,
+    /// Fully diluted valuation, USD.
+    pub fdv: Option<f64>,
+    /// Swaps buying and selling the token.
+    pub buys: u32,
+    pub sells: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -325,6 +368,12 @@ pub enum LiveEvent {
     /// New trades, oldest first.
     Trades {
         trades: Vec<Trade>,
+    },
+    /// A price without a trade behind it (a polled quote): moves the
+    /// forming candle, not the trade list. `time` in epoch milliseconds.
+    Tick {
+        price: f64,
+        time: f64,
     },
 }
 

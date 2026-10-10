@@ -357,32 +357,41 @@ export class Market {
       case "trades":
         this.trades(event.trades);
         break;
+      case "tick":
+        this.apply(event.price, event.time / 1000, false);
+        this.scheduleChart();
+        break;
     }
   }
 
   /** New trades, oldest first. */
   private trades(list: Trade[]): void {
-    for (const trade of list) {
-      const time = trade.time / 1000;
-      this.price = trade.price;
-      // Every cached interval stays live, not only the one on screen.
-      for (const s of this.series.values()) {
-        if (trade.extended && s.interval.regularOnly) continue;
-        if (s.ready) {
-          if (s.add(trade.price, time)) this.refresh(s);
-        } else if (s.load) {
-          s.pending.push({ price: trade.price, time });
-          if (s.pending.length > MAX_PENDING) s.pending = s.pending.slice(-MAX_PENDING / 2);
-        }
+    for (const trade of list) this.apply(trade.price, trade.time / 1000, trade.extended);
+    this.pushTrades(list);
+    this.scheduleChart();
+  }
+
+  /** One price at `time` (epoch seconds): the latest, and part of every cached interval's forming candle. */
+  private apply(price: number, time: number, extended: boolean): void {
+    this.price = price;
+    // Every cached interval stays live, not only the one on screen.
+    for (const s of this.series.values()) {
+      if (extended && s.interval.regularOnly) continue;
+      if (s.ready) {
+        if (s.add(price, time)) this.refresh(s);
+      } else if (s.load) {
+        s.pending.push({ price, time });
+        if (s.pending.length > MAX_PENDING) s.pending = s.pending.slice(-MAX_PENDING / 2);
       }
     }
-    this.pushTrades(list);
-    if (this.chartTimer === undefined) {
-      this.chartTimer = window.setTimeout(() => {
-        this.chartTimer = undefined;
-        this.publish();
-      }, CHART_FLUSH_MS);
-    }
+  }
+
+  private scheduleChart(): void {
+    if (this.chartTimer !== undefined) return;
+    this.chartTimer = window.setTimeout(() => {
+      this.chartTimer = undefined;
+      this.publish();
+    }, CHART_FLUSH_MS);
   }
 
   private publish(): void {

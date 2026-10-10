@@ -43,6 +43,7 @@ impl Pair {
             name: None,
             decimals: Some(self.decimals),
             pinned: false,
+            venue: None,
         }
     }
 }
@@ -125,7 +126,11 @@ pub async fn search<E: Exchange>(query: &str) -> Search {
         Ok(list) => Search {
             candidates: rank(&list, &normalize(query))
                 .into_iter()
-                .map(|pair| Candidate { instrument: pair.instrument(E::ID), manual: false })
+                .map(|pair| Candidate {
+                    instrument: pair.instrument(E::ID),
+                    manual: false,
+                    liquidity: None,
+                })
                 .collect(),
             notes: Vec::new(),
         },
@@ -133,7 +138,7 @@ pub async fn search<E: Exchange>(query: &str) -> Search {
             log::warn!("cannot load {} pairs: {e}", E::ID.key());
             Search {
                 candidates: parse_pair::<E>(query)
-                    .map(|instrument| Candidate { instrument, manual: true })
+                    .map(|instrument| Candidate { instrument, manual: true, liquidity: None })
                     .into_iter()
                     .collect(),
                 notes: vec![t!("error.pairListFailed").to_owned()],
@@ -193,6 +198,7 @@ fn parse_pair<E: Exchange>(input: &str) -> Option<Instrument> {
         name: None,
         decimals: None,
         pinned: false,
+        venue: None,
     })
 }
 

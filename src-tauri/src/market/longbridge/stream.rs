@@ -186,12 +186,13 @@ impl Day {
         let change_pct = if self.reference > 0.0 { change / self.reference * 100.0 } else { 0.0 };
         Stats {
             last: self.last,
-            high: self.high,
-            low: self.low,
-            volume: self.volume,
+            high: Some(self.high),
+            low: Some(self.low),
+            volume: Some(self.volume),
             turnover: self.turnover,
             change,
             change_pct,
+            onchain: None,
         }
     }
 }

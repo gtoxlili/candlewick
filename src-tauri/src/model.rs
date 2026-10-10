@@ -44,6 +44,20 @@ pub struct Instrument {
     /// dropdown. At most one entry is.
     #[serde(default)]
     pub pinned: bool,
+    /// Where a pool trades: its chain and DEX, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub venue: Option<Venue>,
+}
+
+/// Where an on-chain pool trades.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Venue {
+    /// `Solana`, `BNB Chain`
+    pub chain: String,
+    /// `Raydium`, `Uniswap`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dex: Option<String>,
 }
 
 impl Instrument {
@@ -56,6 +70,21 @@ impl Instrument {
             name: None,
             decimals: Some(2),
             pinned,
+            venue: None,
+        }
+    }
+
+    /// An instrument known by its symbol alone (see `Provider::bare`).
+    pub fn bare(provider: ProviderId, symbol: &str) -> Self {
+        Self {
+            provider,
+            symbol: symbol.to_owned(),
+            base: String::new(),
+            quote: String::new(),
+            name: None,
+            decimals: None,
+            pinned: false,
+            venue: None,
         }
     }
 
@@ -65,10 +94,14 @@ impl Instrument {
     }
 
     /// The bar's name for it: `BTC` for USD-like quotes, `ETH/BTC`
-    /// otherwise; US tickers as they are, other stocks by name.
+    /// otherwise; a pool's token; US tickers as they are, other stocks by
+    /// name.
     pub fn short_label(&self) -> String {
         if self.provider.is_exchange() {
             return if is_usd_like(&self.quote) { self.base.clone() } else { self.pair_label() };
+        }
+        if self.provider == ProviderId::DexScreener {
+            return self.base.clone();
         }
         match &self.name {
             Some(name) if !self.symbol.ends_with(".US") => name.clone(),
@@ -76,10 +109,17 @@ impl Instrument {
         }
     }
 
-    /// `BTC/USDT`, or a stock's name and code: `苹果 AAPL`, `腾讯控股 700`.
+    /// `BTC/USDT`; a pool's token and chain: `$WIF · Solana`; a stock's
+    /// name and code: `苹果 AAPL`, `腾讯控股 700`.
     pub fn pair_label(&self) -> String {
         if self.provider.is_exchange() {
             return format!("{}/{}", self.base, self.quote);
+        }
+        if self.provider == ProviderId::DexScreener {
+            return match &self.venue {
+                Some(venue) => format!("{} · {}", self.base, venue.chain),
+                None => self.base.clone(),
+            };
         }
         match &self.name {
             Some(name) => format!("{name} {}", self.base),
@@ -88,10 +128,14 @@ impl Instrument {
     }
 
     /// The dropdown row's name and the dimmed part after it: `BTC` `/USDT`,
-    /// `AAPL` ` 苹果`, `腾讯控股` ` 700`.
+    /// `$WIF` ` Solana`, `AAPL` ` 苹果`, `腾讯控股` ` 700`.
     pub fn row_label(&self) -> (String, String) {
         if self.provider.is_exchange() {
             return (self.base.clone(), format!("/{}", self.quote));
+        }
+        if self.provider == ProviderId::DexScreener {
+            let chain = self.venue.as_ref().map(|v| format!(" {}", v.chain)).unwrap_or_default();
+            return (self.base.clone(), chain);
         }
         let short = self.short_label();
         let other = if short == self.base { self.name.clone() } else { Some(self.base.clone()) };
@@ -406,12 +450,27 @@ mod tests {
             name: Some("苹果".into()),
             decimals: None,
             pinned: false,
+            venue: None,
+        });
+        settings.watchlist.push(Instrument {
+            provider: ProviderId::DexScreener,
+            symbol: "solana/EP2ib6dYdEeqD8MfE2ezHCxX3kP3K2eLKkirfPm5eyMx".into(),
+            base: "$WIF".into(),
+            quote: "USD".into(),
+            name: Some("dogwifhat".into()),
+            decimals: None,
+            pinned: false,
+            venue: Some(Venue { chain: "Solana".into(), dex: Some("Raydium".into()) }),
         });
         settings.exchange = ProviderId::Okx;
         let settings = settings.validated().unwrap();
         let symbols: Vec<&str> = settings.watchlist.iter().map(|i| i.symbol.as_str()).collect();
-        assert_eq!(symbols, ["AAPL.US"]);
+        assert_eq!(symbols, ["AAPL.US", "solana/EP2ib6dYdEeqD8MfE2ezHCxX3kP3K2eLKkirfPm5eyMx"]);
         assert!(settings.pinned().is_none());
+        let pool = &settings.watchlist[1];
+        assert_eq!(pool.short_label(), "$WIF");
+        assert_eq!(pool.pair_label(), "$WIF · Solana");
+        assert_eq!(pool.row_label(), ("$WIF".to_owned(), " Solana".to_owned()));
 
         let mut stocks = settings.clone();
         stocks.exchange = ProviderId::Longbridge;

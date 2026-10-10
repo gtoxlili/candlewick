@@ -113,6 +113,10 @@ pub struct Tick<'a> {
 }
 
 impl<E: Exchange> Provider for E {
+    fn id(&self) -> ProviderId {
+        E::ID
+    }
+
     fn validate(&self, instrument: &mut Instrument) -> Result<(), String> {
         for field in [&mut instrument.symbol, &mut instrument.base, &mut instrument.quote] {
             *field = field.trim().to_uppercase();
@@ -159,6 +163,8 @@ impl<E: Exchange> Provider for E {
             turnover_unit: instrument.quote.clone(),
             day_offset: 0,
             book_steps: book::steps(instrument.decimals).into_iter().map(book::price).collect(),
+            book: true,
+            onchain: false,
             link: Some(E::link(instrument)),
         }
     }
@@ -230,7 +236,16 @@ pub fn candle(row: &[String]) -> Option<Candle> {
 pub fn stats(last: f64, open: f64, high: f64, low: f64, volume: f64, turnover: f64) -> Stats {
     let change = last - open;
     let change_pct = if open > 0.0 { change / open * 100.0 } else { 0.0 };
-    Stats { last, high, low, volume, turnover, change, change_pct }
+    Stats {
+        last,
+        high: Some(high),
+        low: Some(low),
+        volume: Some(volume),
+        turnover,
+        change,
+        change_pct,
+        onchain: None,
+    }
 }
 
 /// The book grouped by `steps`, for the chart.
