@@ -1,10 +1,11 @@
 //! The chart's live feed for a pool, by polling. DEX Screener's statistics
 //! every [`STATS`] carry the price, the 24-hour change and volume,
 //! liquidity, market cap and the buy and sell counts; a changed price is
-//! a tick that moves the forming candle. GeckoTerminal's trades come every
-//! [`TRADES`] (less often while the pool is quiet), and its hourly candles
-//! every [`RANGE`] give the 24-hour high and low, which neither service
-//! states. Pools have no order book.
+//! a tick that moves the forming candle. Trades and the hourly candles that
+//! give the 24-hour high and low (which neither service states) come from
+//! GeckoTerminal or CoinGecko at the pace the way in allows
+//! (`gecko::pace`): trades less often while the pool is quiet. Pools have
+//! no order book.
 
 use std::{
     collections::{HashSet, VecDeque},
@@ -24,10 +25,6 @@ use crate::{
 };
 
 const STATS: Duration = Duration::from_secs(10);
-const TRADES: Duration = Duration::from_secs(20);
-/// A quiet pool is asked less and less often, up to this.
-const TRADES_MAX: Duration = Duration::from_secs(60);
-const RANGE: Duration = Duration::from_secs(600);
 /// DEX Screener failures in a row before the feed reads as offline.
 const OFFLINE_AFTER: u32 = 2;
 /// Trade ids remembered, to send each trade once; a poll brings 300.
@@ -50,11 +47,10 @@ pub(super) async fn run(
     let mut failures: u32 = 0;
     let mut stats = interval(STATS);
     stats.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    let mut range = interval(RANGE);
-    range.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    // After the statistics and the range, so their requests go first.
+    // The range first, then the trades, so the statistics' request goes before both.
+    let range = sleep(Duration::ZERO);
     let trades = sleep(Duration::from_secs(1));
-    tokio::pin!(trades);
+    tokio::pin!(range, trades);
 
     loop {
         tokio::select! {
@@ -92,6 +88,7 @@ pub(super) async fn run(
                 }
             }
             () = &mut trades => {
+                let pace = gecko::pace();
                 match gecko::trades(&network, &address).await {
                     Ok(list) => {
                         let fresh = feed.fresh(list);
@@ -99,19 +96,26 @@ pub(super) async fn run(
                         for trade in &fresh {
                             feed.range.add(trade.price, trade.time / 1000.0);
                         }
-                        feed.trade_wait = if fresh.is_empty() { (feed.trade_wait * 2).min(TRADES_MAX) } else { TRADES };
+                        feed.trade_wait = if fresh.is_empty() {
+                            (feed.trade_wait * 2).clamp(pace.trades, pace.trades_max)
+                        } else {
+                            pace.trades
+                        };
                         if !fresh.is_empty() && !send(&events, LiveEvent::Trades { trades: fresh }) {
                             return;
                         }
                         feed.range.expire(now);
                     }
-                    Err(e) => log::debug!("pool trades for {}: {e}", instrument.symbol),
+                    Err(e) => {
+                        log::debug!("pool trades for {}: {e}", instrument.symbol);
+                        feed.trade_wait = feed.trade_wait.clamp(pace.trades, pace.trades_max);
+                    }
                 }
                 // A closed gate is waited out rather than knocked on.
                 let wait = gecko::blocked().map_or(feed.trade_wait, |left| left.max(feed.trade_wait));
                 trades.as_mut().reset(Instant::now() + wait);
             }
-            _ = range.tick() => {
+            () = &mut range => {
                 match gecko::candles(&network, &address, "hour", 1, None, 25).await {
                     Ok(candles) => {
                         feed.range.replace(&candles, now_secs());
@@ -121,6 +125,7 @@ pub(super) async fn run(
                     }
                     Err(e) => log::debug!("pool range for {}: {e}", instrument.symbol),
                 }
+                range.as_mut().reset(Instant::now() + gecko::pace().range);
             }
         }
     }
@@ -146,7 +151,7 @@ impl Default for Feed {
             range: Range::default(),
             seen: HashSet::new(),
             order: VecDeque::new(),
-            trade_wait: TRADES,
+            trade_wait: gecko::pace().trades,
         }
     }
 }

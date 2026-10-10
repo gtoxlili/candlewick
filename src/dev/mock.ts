@@ -422,6 +422,15 @@ export function installMocks(label: string): void {
         return state === "empty" ? { ...loading, accounts: [] } : state === "loading" ? loading : portfolio;
       case "search_instruments":
         return search(String(args.query ?? ""));
+      case "get_coingecko":
+        return { key: null, access: null };
+      // Any key saved reads as an Analyst plan, to see the configured state.
+      case "set_coingecko":
+        return args.key === null
+          ? { key: null, access: null }
+          : { key: "CG-abc…wxyz", access: { tier: "paid", name: "Analyst", perMinute: 500, monthly: 500_000, remaining: 499_998 } };
+      case "check_coingecko":
+        return { tier: "paid", name: "Analyst", perMinute: 500, monthly: 500_000, remaining: 499_998 };
       case "chart_spec":
         return spec(String(args.id));
       case "chart_history":

@@ -67,6 +67,19 @@
       "checkAccess": "Check quote access",
       "getKeys": "Get them from the %{source} developer center"
     },
+    "onchain": {
+      "title": "On-chain data",
+      "footnote": "Optional. With a CoinGecko API key, pool candles and trades use your own quota; paid plans refresh faster.",
+      "getKey": "Get a key from the CoinGecko developer dashboard",
+      "checking": "Checking the key…",
+      "check": "Check again",
+      "demo": "Demo plan",
+      "demoLimits": "100 calls a minute · 10,000 a month",
+      "paid": "%{plan} plan",
+      "paidLimits": "%{per_minute} calls a minute · %{remaining} of %{monthly} left this month",
+      "paceDemo": "Candles load reliably; trades refresh as without a key.",
+      "pacePaid": "Trades refresh every 10 s, the day's range every 5 min."
+    },
     "display": {
       "title": "Display",
       "showSymbol": "Show name in menu bar",

@@ -9,9 +9,11 @@ use tokio::sync::oneshot;
 use crate::{
     agent::{self, Agent, AgentStatus},
     bar,
-    credentials::{self, ApiKey, LongbridgeKeys},
+    credentials::{self, ApiKey, CoinGeckoKey, LongbridgeKeys},
     i18n::{self, Locale},
-    market::{self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, longbridge},
+    market::{
+        self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, dexscreener, longbridge,
+    },
     model::{self, Instrument, Settings, Shared},
     platform,
     portfolio::Portfolio,
@@ -198,6 +200,57 @@ pub fn set_longbridge(
 #[tauri::command]
 pub async fn check_longbridge() -> CmdResult<longbridge::Account> {
     Ok(longbridge::account().await?)
+}
+
+/// The CoinGecko key as the settings window shows it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoinGeckoView {
+    /// The key's ends, enough to recognize it; the key never leaves.
+    key: Option<String>,
+    /// What the key is, once probed.
+    access: Option<dexscreener::Access>,
+}
+
+#[tauri::command]
+pub fn get_coingecko(shared: State<'_, Shared>) -> CoinGeckoView {
+    let key = shared.credentials().coingecko.clone();
+    CoinGeckoView {
+        access: key.as_ref().and_then(|_| dexscreener::coingecko_access()),
+        key: key.map(|k| masked(&k.key)),
+    }
+}
+
+/// Saves (or with `None`, removes) the CoinGecko key, once CoinGecko says
+/// what it is.
+#[tauri::command]
+pub async fn set_coingecko(app: AppHandle, key: Option<String>) -> CmdResult<CoinGeckoView> {
+    let key = key
+        .map(|key| key.chars().filter(|c| !c.is_whitespace()).collect::<String>())
+        .filter(|key| !key.is_empty());
+    let access = match &key {
+        Some(key) => Some(dexscreener::coingecko_check(key).await?),
+        None => None,
+    };
+    let shared = app.state::<Shared>();
+    {
+        let mut stored = shared.credentials();
+        stored.coingecko = key.clone().map(|key| CoinGeckoKey { key });
+        credentials::save(&shared.credentials_path, &stored)?;
+        let credentials = stored.clone();
+        shared.control.send_modify(|control| control.credentials = credentials);
+    }
+    dexscreener::configure_coingecko(key.clone());
+    Ok(CoinGeckoView { key: key.map(|k| masked(&k)), access })
+}
+
+/// Asks CoinGecko again what the saved key is (its plan's usage moves).
+#[tauri::command]
+pub async fn check_coingecko(shared: State<'_, Shared>) -> CmdResult<dexscreener::Access> {
+    let key = shared.credentials().coingecko.clone();
+    let key =
+        key.ok_or_else(|| CommandError::Invalid(t!("error.coingeckoKeyMissing").to_owned()))?;
+    Ok(dexscreener::coingecko_check(&key.key).await?)
 }
 
 /// An exchange's API key as the settings window shows it.

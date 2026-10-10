@@ -170,7 +170,7 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 
 ### DEX Screener + GeckoTerminal（链上池子，`src-tauri/src/market/dexscreener/`）
 
-只在 DEX 池子里交易的代币，和交易所的币对一样加进自选。品种代码是 `<链>/<池子地址>`（`solana/EP2ib6…`，和 DEX Screener 网址一致），`base` 是代币符号（`$WIF`），`quote` 固定 `USD`，`name` 是代币名，`venue` 是链和 DEX 的显示名。价格一律按美元，和 DEX Screener 页面默认一样；池子自己的计价币（SOL、WETH）不出现在界面上。两个服务都不要 key。
+只在 DEX 池子里交易的代币，和交易所的币对一样加进自选。品种代码是 `<链>/<池子地址>`（`solana/EP2ib6…`，和 DEX Screener 网址一致），`base` 是代币符号（`$WIF`），`quote` 固定 `USD`，`name` 是代币名，`venue` 是链和 DEX 的显示名。价格一律按美元，和 DEX Screener 页面默认一样；池子自己的计价币（SOL、WETH）不出现在界面上。两个服务都不要 key；用户可以另外填一个 CoinGecko 的 key，让 K 线和成交走自己的额度（见下文「CoinGecko key」）。
 
 分工，按各自给得出什么：
 
@@ -192,7 +192,17 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 
 链 id 两家不一样（`ethereum` 对 `eth`，`polygon` 对 `polygon_pos`，`avalanche` 对 `avax`，`sui` 对 `sui-network`……），`chains.rs` 存了 70 来条对照表和显示名，来自 GeckoTerminal `/networks`（2026-10-11 共 226 条，3 页）和 DEX Screener 网址里的链 slug；表里没有的链按同名传给 GeckoTerminal，显示名首字母大写。地址：EVM 的 42 位十六进制统一小写（DEX Screener 返回校验和大小写混合），其他（Solana base58 区分大小写）原样保留。
 
-条款：两家的公开 API 都没有附加条款页，也没要求署名；行情窗口的外链指向 dexscreener.com 的池子页。没有接 CoinGecko 的 Demo key（同样的链上端点，30 次/分，要注册），要是以后 GeckoTerminal 的限频更紧，这是最近的替代。
+条款：两家的公开 API 都没有附加条款页，也没要求署名；行情窗口的外链指向 dexscreener.com 的池子页。
+
+#### CoinGecko key（可选，`gecko.rs`）
+
+GeckoTerminal 的数据和 CoinGecko API 的 `/onchain/*` 是同一份：路径一样（`/networks/{network}/pools/{addr}/ohlcv/…`），只是前缀和域名不同。设置 → 链上数据 可以填一个 CoinGecko 的 API key（Demo 免费，付费从 Basic 起），存在 `credentials.json` 的 `coingecko`。有 key 时 K 线、成交和 24 小时区间都走 CoinGecko，不再和同一出口的其他人共用 GeckoTerminal 的限额；DEX Screener 那边不变。调研于 2026-10-11（docs.coingecko.com，价目页）：
+
+- 域名和头：Demo key 用 `https://api.coingecko.com/api/v3` 加 `x-cg-demo-api-key`；付费 key 用 `https://pro-api.coingecko.com/api/v3` 加 `x-cg-pro-api-key`。用错域名会被拒绝：10010 是付费 key 用在 Demo 域名，10011 反之。错误体是 `{"status":{"error_code":…,"error_message":"…"}}`。
+- 等级：`GET /key` 返回套餐名、每分钟限额、每月额度和本月剩余，但只对付费档开放。所以探测顺序是：先在 Demo 域名调 `/key`，返回 10005（套餐不支持）就说明这是一把有效的 Demo key；返回 10010 就到付费域名再调一次，拿到套餐；其余错误视为 key 无效。Demo 的额度（每分钟 100 次、每月 10,000 次）来自价目页，接口本身报不出来。
+- 配速按探测结果来，`gecko::pace()`：没 key 和 Demo 一样，成交每 20 秒、安静时放慢到 60 秒、区间每 10 分钟（Demo 的数据 60 秒才刷新一次，拉得再快也是读缓存；它的好处是不再被共用的限流拦住，K 线每次都能立刻加载）；付费档数据 10 秒一刷，成交每 10 秒、最慢 30 秒、区间每 5 分钟。每次成功请求扣 1 个月度额度（4xx/5xx 不扣，但计入每分钟限额）。
+- 兜底：带 key 的请求碰到 429，关 keyed 闸（`Retry-After`，默认 30 秒，最长 120 秒），期间走公共路线；被拒绝（额度用完、key 失效）关 120 秒并作废探测结果，之后重新探测。付费档本月剩余不足 200 次时轮询改走公共路线，把额度留给翻历史；每 6 小时重读一次 `/key`，中间自己按请求递减。探测失败（网络）60 秒后再试，期间走公共路线，所以 key 坏了也只是退回到没 key 的样子。
+- 没有真实的 key 做过实测，上面的错误码和 `/key` 的字段来自文档，解析按文档的例子写了单测。
 
 ## 候选数据源（未接入）
 

@@ -67,6 +67,19 @@
       "checkAccess": "查看行情权限",
       "getKeys": "在%{source}开发者中心获取"
     },
+    "onchain": {
+      "title": "链上数据",
+      "footnote": "可选。填上 CoinGecko API Key 后，链上 K 线和成交走你自己的额度；付费套餐刷新更快。",
+      "getKey": "到 CoinGecko 开发者后台获取 Key",
+      "checking": "正在验证 Key…",
+      "check": "重新验证",
+      "demo": "Demo 套餐",
+      "demoLimits": "每分钟 100 次 · 每月 10,000 次",
+      "paid": "%{plan} 套餐",
+      "paidLimits": "每分钟 %{per_minute} 次 · 本月剩余 %{remaining} / %{monthly}",
+      "paceDemo": "K 线能稳定加载；成交刷新频率和不填 Key 时相同。",
+      "pacePaid": "成交每 10 秒刷新，24 小时区间每 5 分钟。"
+    },
     "display": {
       "title": "显示",
       "showSymbol": "菜单栏显示名称",

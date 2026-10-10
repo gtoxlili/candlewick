@@ -108,6 +108,8 @@
     "invalidStock": "無効な銘柄コードです：%{symbol}",
     "invalidPool": "無効な DEX プールです：%{symbol}",
     "rateLimited": "%{source} のレート制限中 · %{seconds} 秒後に再試行",
+    "coingeckoKey": "CoinGecko がこの API キーを認識しません",
+    "coingeckoKeyMissing": "CoinGecko の API キーが保存されていません",
     "noQuote": "%{source} にこの銘柄の気配がありません",
     "sourceBadData": "%{source} から想定外のデータが返されました",
     "sourceStopped": "%{source} との接続は停止しています",

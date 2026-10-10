@@ -11,7 +11,7 @@
 mod binance;
 mod bybit;
 mod crypto;
-mod dexscreener;
+pub mod dexscreener;
 pub mod longbridge;
 mod okx;
 

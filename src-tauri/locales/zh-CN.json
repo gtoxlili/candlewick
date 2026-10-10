@@ -108,6 +108,8 @@
     "invalidStock": "无效的股票代码：%{symbol}",
     "invalidPool": "无效的链上交易池：%{symbol}",
     "rateLimited": "%{source}限流中 · %{seconds} 秒后重试",
+    "coingeckoKey": "CoinGecko 不认识这个 API Key",
+    "coingeckoKeyMissing": "还没有保存 CoinGecko API Key",
     "noQuote": "%{source}没有这只股票的报价",
     "sourceBadData": "%{source}返回的数据格式有误",
     "sourceStopped": "%{source}连接已停止",

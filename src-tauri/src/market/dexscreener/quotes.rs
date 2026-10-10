@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, time::Duration};
 use tauri::{AppHandle, Manager};
 use tokio::{sync::watch, time::sleep};
 
-use super::{ID, parse, screener};
+use super::{ID, gecko, parse, screener};
 use crate::{
     bar, market,
     model::{FeedControl, Quote, Shared, Status},
@@ -19,6 +19,8 @@ const POLL: Duration = Duration::from_secs(15);
 const MAX_BACKOFF_SECS: u64 = 60;
 
 pub async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
+    // The key as saved; the settings command hands over changes directly.
+    gecko::configure(control.borrow().credentials.coingecko.clone().map(|k| k.key));
     let mut failures: u32 = 0;
     let mut live = false;
     loop {

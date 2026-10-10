@@ -252,6 +252,21 @@ export interface LongbridgeKeys {
   accessToken: string;
 }
 
+/** What a CoinGecko key is, once CoinGecko has been asked. */
+export type CoinGeckoAccess =
+  /** A Demo key: 100 calls a minute and 10,000 a month, which it can't report. */
+  | { tier: "demo" }
+  /** A paid plan and its usage. */
+  | { tier: "paid"; name: string; perMinute: number; monthly: number; remaining: number };
+
+/** The CoinGecko key as the settings window shows it. */
+export interface CoinGecko {
+  /** The key's ends, when one is saved. */
+  key: string | null;
+  /** What the key is, once probed. */
+  access: CoinGeckoAccess | null;
+}
+
 /** An exchange API key, as the user enters it; the app only ever reads with it. */
 export interface ApiKey {
   key: string;
@@ -402,6 +417,11 @@ export const api = {
   setLongbridge: (keys: LongbridgeKeys | null) => invoke<Longbridge>("set_longbridge", { keys }),
   /** Logs in with the saved credentials and reports what the account may see. */
   checkLongbridge: () => invoke<LongbridgeAccount>("check_longbridge"),
+  getCoinGecko: () => invoke<CoinGecko>("get_coingecko"),
+  /** Checks with CoinGecko what the key is and saves it; null removes it. */
+  setCoinGecko: (key: string | null) => invoke<CoinGecko>("set_coingecko", { key }),
+  /** Asks CoinGecko again what the saved key is; a paid plan's usage moves. */
+  checkCoinGecko: () => invoke<CoinGeckoAccess>("check_coingecko"),
   getAgent: () => invoke<AgentStatus>("get_agent"),
   onAgent: (handler: (status: AgentStatus) => void): Promise<UnlistenFn> =>
     listen<AgentStatus>("agent", (event) => handler(event.payload)),

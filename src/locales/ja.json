@@ -67,6 +67,19 @@
       "checkAccess": "相場の閲覧権限を確認",
       "getKeys": "%{source} の開発者センターで取得"
     },
+    "onchain": {
+      "title": "オンチェーンデータ",
+      "footnote": "任意。CoinGecko API キーを入れると、プールのローソク足と約定が自分の枠で取得されます。有料プランは更新が速くなります。",
+      "getKey": "CoinGecko の開発者ダッシュボードでキーを取得",
+      "checking": "キーを確認中…",
+      "check": "再確認",
+      "demo": "Demo プラン",
+      "demoLimits": "毎分 100 回 · 毎月 10,000 回",
+      "paid": "%{plan} プラン",
+      "paidLimits": "毎分 %{per_minute} 回 · 今月の残り %{remaining} / %{monthly}",
+      "paceDemo": "ローソク足が安定して読み込めます。約定の更新はキーなしと同じ間隔です。",
+      "pacePaid": "約定は 10 秒ごと、24 時間レンジは 5 分ごとに更新されます。"
+    },
     "display": {
       "title": "表示",
       "showSymbol": "メニューバーに名前を表示",

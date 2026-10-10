@@ -9,6 +9,11 @@
 //! `solana/EP2ib6…`. The instrument's `base` is the token's symbol, its
 //! `quote` always `USD`, its `name` the token's name, and its `venue` the
 //! chain and DEX by name.
+//!
+//! With a CoinGecko API key of the user's own (`credentials.rs`), candles
+//! and trades go through CoinGecko on that key's quota instead of the
+//! shared public limit, paced by the plan the key turns out to have
+//! ([`coingecko_check`], `gecko.rs`).
 
 mod chains;
 mod gecko;
@@ -19,6 +24,7 @@ mod stream;
 use tauri::{AppHandle, ipc::Channel};
 use tokio::sync::{oneshot, watch};
 
+pub use self::gecko::Access;
 use super::{
     BoxFuture, Candidate, Candle, ChartMode, ChartSpec, Error, IntervalSpec, LiveEvent, Provider,
     ProviderId, Search, StatsSpan, Trade,
@@ -26,6 +32,21 @@ use super::{
 use crate::model::{FeedControl, Instrument, Venue};
 
 pub struct DexScreener;
+
+/// The CoinGecko key to use from now on, as the settings keep it.
+pub fn configure_coingecko(key: Option<String>) {
+    gecko::configure(key);
+}
+
+/// What the configured CoinGecko key was last found to be, if probed.
+pub fn coingecko_access() -> Option<Access> {
+    gecko::access()
+}
+
+/// Asks CoinGecko what `key` is: a Demo key, or a paid plan with its limits.
+pub async fn coingecko_check(key: &str) -> Result<Access, Error> {
+    gecko::check(key).await
+}
 
 const ID: ProviderId = ProviderId::DexScreener;
 /// Prices are in US dollars whatever the pool's quote token.

@@ -1,17 +1,28 @@
-//! GeckoTerminal's public API (`api.geckoterminal.com/api/v2`): a pool's
-//! candles and trades, which DEX Screener doesn't publish. Keyless, and
-//! strictly rate limited: the docs say 30 calls a minute, from here about
-//! five before it answers 429 for most of the minute. A 429 closes a gate
-//! for as long as it asks (`Retry-After`, else [`DEFAULT_WAIT`]); requests
-//! meanwhile fail at once, without reaching it, so a chart retrying its
-//! history doesn't spend the budget on refusals.
+//! A pool's candles and trades, which DEX Screener doesn't publish. Two ways
+//! in to the same data:
+//!
+//! - GeckoTerminal's public API, keyless. Its docs say 30 calls a minute;
+//!   from here about five before it answers 429 for most of the minute, a
+//!   limit shared by everyone behind one IP.
+//! - CoinGecko's API with the user's own key: the same `/networks/…` paths
+//!   under `/api/v3/onchain`, on the host the key's plan uses. A Demo key
+//!   (100 calls a minute, 10,000 a month) goes to `api.coingecko.com`, a
+//!   paid one to `pro-api.coingecko.com`. Which it is, and a paid plan's
+//!   limits, come from probing the key once ([`probe`]); a Demo key can't
+//!   read its plan (`/key` is paid-only), so it is paced as a Demo key.
+//!
+//! A 429 closes the route that got it for as long as it asks
+//! (`Retry-After`, else [`DEFAULT_WAIT`]); requests meanwhile take the
+//! other route or fail at once without reaching the network, so a chart
+//! retrying its history doesn't spend the budget on refusals. A paid plan
+//! keeps a reserve of its monthly credit for history, out of polling's reach.
 
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
 
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     calendar, http,
@@ -19,44 +30,411 @@ use crate::{
     net,
 };
 
-const HOST: &str = "https://api.geckoterminal.com/api/v2";
-/// Pins the response format to the version this code reads.
+const PUBLIC_HOST: &str = "https://api.geckoterminal.com/api/v2";
+const DEMO_HOST: &str = "https://api.coingecko.com/api/v3";
+const PRO_HOST: &str = "https://pro-api.coingecko.com/api/v3";
+const ONCHAIN: &str = "/onchain";
+const DEMO_HEADER: &str = "x-cg-demo-api-key";
+const PRO_HEADER: &str = "x-cg-pro-api-key";
+/// Pins GeckoTerminal's response format to the version this code reads.
 const ACCEPT: &str = "application/json;version=20230302";
-/// Candles per request, the most it gives.
+/// Candles per request, the most either gives.
 pub const MAX_PAGE: usize = 1000;
 const DEFAULT_WAIT: Duration = Duration::from_secs(30);
 const MAX_WAIT: Duration = Duration::from_secs(120);
+/// A key that couldn't be probed (network, a refusal) is tried again after this.
+const PROBE_RETRY: Duration = Duration::from_secs(60);
+/// How often a paid plan's usage is read again, so the reserve holds.
+const RECHECK: Duration = Duration::from_secs(6 * 3600);
+/// Monthly credit a paid plan keeps for history and searches; below it,
+/// polling goes the public way.
+const RESERVE: u32 = 200;
+/// CoinGecko's error codes (docs.coingecko.com/docs/errors-and-rate-limits).
+const PLAN_RESTRICTED: u32 = 10005;
+const PRO_KEY_ON_DEMO_HOST: u32 = 10010;
 
-/// Closed until this instant after a 429.
-static GATE: Mutex<Option<Instant>> = Mutex::new(None);
+/// What a CoinGecko key turned out to be.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "tier")]
+pub enum Access {
+    /// A Demo key: 100 calls a minute and 10,000 a month, which it can't report.
+    Demo,
+    /// A paid plan, as `/key` describes it.
+    Paid(Plan),
+}
 
-/// How much longer the gate stays closed, if it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Plan {
+    /// `Basic`, `Analyst`, `Lite`, `Pro`…
+    #[serde(rename = "plan")]
+    pub name: String,
+    #[serde(rename = "rate_limit_request_per_minute")]
+    pub per_minute: u32,
+    #[serde(rename = "monthly_call_credit")]
+    pub monthly: u32,
+    #[serde(rename = "current_remaining_monthly_calls")]
+    pub remaining: u32,
+}
+
+/// How often the chart's stream may ask, by the way in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pace {
+    /// Between trade polls while trades keep coming…
+    pub trades: Duration,
+    /// …and at most while the pool is quiet.
+    pub trades_max: Duration,
+    /// Between reads of the hourly candles for the day's range.
+    pub range: Duration,
+}
+
+/// Keyless, and a Demo key: data turns over every 30 to 60 seconds.
+const PUBLIC_PACE: Pace = Pace {
+    trades: Duration::from_secs(20),
+    trades_max: Duration::from_secs(60),
+    range: Duration::from_secs(600),
+};
+/// Paid plans refresh every 10 seconds.
+const PAID_PACE: Pace = Pace {
+    trades: Duration::from_secs(10),
+    trades_max: Duration::from_secs(30),
+    range: Duration::from_secs(300),
+};
+
+struct State {
+    key: Option<String>,
+    /// What the key was found to be; `None` until probed.
+    access: Option<Access>,
+    /// Not before this: the last probe failed.
+    probe_after: Option<Instant>,
+    /// When a paid plan's usage was read.
+    checked: Option<Instant>,
+    /// Closed until then after a 429.
+    public_gate: Option<Instant>,
+    keyed_gate: Option<Instant>,
+}
+
+static STATE: Mutex<State> = Mutex::new(State {
+    key: None,
+    access: None,
+    probe_after: None,
+    checked: None,
+    public_gate: None,
+    keyed_gate: None,
+});
+/// One probe at a time: requests arriving meanwhile wait for its answer.
+static PROBING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn state() -> std::sync::MutexGuard<'static, State> {
+    STATE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The key to use from now on (`None` for none): probed on first use.
+pub fn configure(key: Option<String>) {
+    let mut s = state();
+    if s.key != key {
+        s.access = None;
+        s.checked = None;
+        s.probe_after = None;
+        s.keyed_gate = None;
+    }
+    s.key = key;
+}
+
+/// What the configured key was last found to be, if it has been probed.
+pub fn access() -> Option<Access> {
+    state().access.clone()
+}
+
+/// Probes a key as the settings page asks, and remembers the answer if it
+/// is the configured key's.
+pub async fn check(key: &str) -> Result<Access, Error> {
+    let found = probe(key).await?;
+    let mut s = state();
+    if s.key.as_deref() == Some(key) {
+        s.access = Some(found.clone());
+        s.checked = Some(Instant::now());
+        s.probe_after = None;
+    }
+    Ok(found)
+}
+
+/// How often the stream may poll with the way in it has now.
+pub fn pace() -> Pace {
+    match route(&state()) {
+        Route::Keyed { access: Access::Paid(_), .. } => PAID_PACE,
+        _ => PUBLIC_PACE,
+    }
+}
+
+/// How much longer the way in that would be used next stays closed, if it is.
 pub fn blocked() -> Option<Duration> {
-    let gate = GATE.lock().unwrap_or_else(|e| e.into_inner());
+    let s = state();
+    let gate = match route(&s) {
+        Route::Keyed { .. } => s.keyed_gate,
+        Route::Public | Route::Unknown => s.public_gate,
+    };
     gate.and_then(|until| until.checked_duration_since(Instant::now())).filter(|d| !d.is_zero())
 }
 
-fn throttled(wait: Duration) -> Error {
-    Error::Message(t!(
-        "error.rateLimited",
-        source = "GeckoTerminal",
-        seconds = wait.as_secs().max(1)
-    ))
+/// The way in a request takes.
+enum Route {
+    Public,
+    Keyed {
+        host: &'static str,
+        header: &'static str,
+        key: String,
+        access: Access,
+    },
+    /// A key is configured but not yet probed.
+    Unknown,
 }
 
-async fn get<T: DeserializeOwned>(path: &str) -> Result<T, Error> {
-    if let Some(left) = blocked() {
-        return Err(throttled(left));
+fn route(s: &State) -> Route {
+    let Some(key) = &s.key else { return Route::Public };
+    let now = Instant::now();
+    if s.keyed_gate.is_some_and(|until| until > now) {
+        return Route::Public;
     }
-    match http::get_json_with(&format!("{HOST}{path}"), &[("Accept", ACCEPT)]).await {
-        Ok(value) => Ok(value),
-        Err(http::Error::Throttled(retry_after)) => {
-            let wait = retry_after.map_or(DEFAULT_WAIT, Duration::from_secs).min(MAX_WAIT);
-            *GATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now() + wait);
-            log::info!("geckoterminal rate limited, pausing for {}s", wait.as_secs());
-            Err(throttled(wait))
+    match &s.access {
+        None => {
+            if s.probe_after.is_some_and(|after| after > now) {
+                Route::Public
+            } else {
+                Route::Unknown
+            }
         }
-        Err(e) => Err(e.into()),
+        Some(Access::Paid(plan)) if plan.remaining <= RESERVE => Route::Public,
+        Some(Access::Paid(plan)) if s.checked.is_some_and(|at| now - at > RECHECK) => {
+            let _ = plan;
+            Route::Unknown
+        }
+        Some(access) => {
+            let (host, header) = match access {
+                Access::Demo => (DEMO_HOST, DEMO_HEADER),
+                Access::Paid(_) => (PRO_HOST, PRO_HEADER),
+            };
+            Route::Keyed { host, header, key: key.clone(), access: access.clone() }
+        }
+    }
+}
+
+/// The route to use now, probing the key first if it hasn't been.
+async fn resolve() -> Route {
+    loop {
+        let (key, known) = {
+            let s = state();
+            match route(&s) {
+                Route::Unknown => (s.key.clone(), false),
+                other => return other,
+            }
+        };
+        let Some(key) = key else { return Route::Public };
+        let _probing = PROBING.lock().await;
+        // Another request may have probed while this one waited.
+        {
+            let s = state();
+            if !matches!(route(&s), Route::Unknown) {
+                continue;
+            }
+        }
+        let _ = known;
+        let result = probe(&key).await;
+        let mut s = state();
+        if s.key.as_deref() != Some(key.as_str()) {
+            continue;
+        }
+        match result {
+            Ok(access) => {
+                log::info!("coingecko key: {}", describe(&access));
+                s.access = Some(access);
+                s.checked = Some(Instant::now());
+                s.probe_after = None;
+            }
+            Err(e) => {
+                log::warn!("coingecko key could not be checked: {e}");
+                // A paid plan's stale figures still beat none.
+                if s.access.is_none() {
+                    s.probe_after = Some(Instant::now() + PROBE_RETRY);
+                } else {
+                    s.checked = Some(Instant::now());
+                }
+            }
+        }
+    }
+}
+
+fn describe(access: &Access) -> String {
+    match access {
+        Access::Demo => "Demo plan".to_owned(),
+        Access::Paid(plan) => format!(
+            "{} plan, {}/min, {} of {} calls left this month",
+            plan.name, plan.per_minute, plan.remaining, plan.monthly
+        ),
+    }
+}
+
+/// What a key is: the Demo host first, where most keys belong. `/key` is
+/// paid-only, so a Demo key is refused as plan-restricted, which still says
+/// it is a key; a paid key is refused as being on the wrong host, and asked
+/// again on its own.
+async fn probe(key: &str) -> Result<Access, Error> {
+    match request::<Plan>(DEMO_HOST, "/key", &[(DEMO_HEADER, key)]).await {
+        Reply::Ok(plan) => Ok(classify(plan)),
+        Reply::Refused { code: PLAN_RESTRICTED, .. } => Ok(Access::Demo),
+        Reply::Refused { code: PRO_KEY_ON_DEMO_HOST, .. } => {
+            match request::<Plan>(PRO_HOST, "/key", &[(PRO_HEADER, key)]).await {
+                Reply::Ok(plan) => Ok(classify(plan)),
+                Reply::Refused { message, .. } => Err(rejected(message)),
+                Reply::Failed(e) => Err(e.into()),
+            }
+        }
+        Reply::Refused { message, .. } => Err(rejected(message)),
+        Reply::Failed(e) => Err(e.into()),
+    }
+}
+
+/// `/key` answering on the Demo host would name the Demo plan itself.
+fn classify(plan: Plan) -> Access {
+    if plan.name.eq_ignore_ascii_case("demo") { Access::Demo } else { Access::Paid(plan) }
+}
+
+fn rejected(message: String) -> Error {
+    if message.is_empty() {
+        Error::Message(t!("error.coingeckoKey").to_owned())
+    } else {
+        Error::Message(t!("error.sourceSays", source = "CoinGecko", message = message))
+    }
+}
+
+/// What a request came back with.
+enum Reply<T> {
+    Ok(T),
+    /// CoinGecko said no, with its code (0 when the body had none).
+    Refused {
+        code: u32,
+        message: String,
+    },
+    Failed(http::Error),
+}
+
+/// `{"status": {"error_code": 10011, "error_message": "…"}}`
+#[derive(Deserialize)]
+struct Refusal {
+    status: RefusalStatus,
+}
+
+#[derive(Deserialize)]
+struct RefusalStatus {
+    #[serde(default)]
+    error_code: u32,
+    #[serde(default)]
+    error_message: String,
+}
+
+async fn request<T: DeserializeOwned>(
+    host: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> Reply<T> {
+    let url = format!("{host}{path}");
+    let response = match http::send(|client| {
+        headers
+            .iter()
+            .fold(client.get(&url), |request, (name, value)| request.header(*name, *value))
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(e) => return Reply::Failed(e),
+    };
+    let status = response.status();
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse().ok());
+        return Reply::Failed(http::Error::Throttled(retry_after));
+    }
+    let body = match response.bytes().await {
+        Ok(body) => body,
+        Err(e) => return Reply::Failed(e.into()),
+    };
+    if status.is_success() {
+        return match serde_json::from_slice(&body) {
+            Ok(value) => Reply::Ok(value),
+            Err(_) => Reply::Failed(http::Error::Format),
+        };
+    }
+    match serde_json::from_slice::<Refusal>(&body) {
+        Ok(refusal) => Reply::Refused {
+            code: refusal.status.error_code,
+            message: refusal.status.error_message,
+        },
+        Err(_) => Reply::Failed(http::Error::Status(status.as_u16())),
+    }
+}
+
+fn throttled(source: &str, wait: Duration) -> Error {
+    Error::Message(t!("error.rateLimited", source = source, seconds = wait.as_secs().max(1)))
+}
+
+/// GETs a `/networks/…` path the way in that is open now.
+async fn get<T: DeserializeOwned>(path: &str) -> Result<T, Error> {
+    match resolve().await {
+        Route::Keyed { host, header, key, access } => {
+            let reply = request(host, &format!("{ONCHAIN}{path}"), &[(header, &key)]).await;
+            match reply {
+                Reply::Ok(value) => {
+                    if let Access::Paid(_) = access
+                        && let Some(Access::Paid(plan)) = &mut state().access
+                    {
+                        plan.remaining = plan.remaining.saturating_sub(1);
+                    }
+                    Ok(value)
+                }
+                Reply::Failed(http::Error::Throttled(retry_after)) => {
+                    let wait = retry_after.map_or(DEFAULT_WAIT, Duration::from_secs).min(MAX_WAIT);
+                    state().keyed_gate = Some(Instant::now() + wait);
+                    log::info!("coingecko rate limited, public route for {}s", wait.as_secs());
+                    Err(throttled("CoinGecko", wait))
+                }
+                Reply::Refused { message, .. } => {
+                    // Out of credit, or the key stopped working: the public
+                    // route for a while, and a fresh look at the key after.
+                    let mut s = state();
+                    s.keyed_gate = Some(Instant::now() + MAX_WAIT);
+                    s.access = None;
+                    Err(rejected(message))
+                }
+                Reply::Failed(e) => Err(e.into()),
+            }
+        }
+        Route::Public | Route::Unknown => {
+            if let Some(left) = state()
+                .public_gate
+                .and_then(|until| until.checked_duration_since(Instant::now()))
+                .filter(|d| !d.is_zero())
+            {
+                return Err(throttled("GeckoTerminal", left));
+            }
+            match request(PUBLIC_HOST, path, &[("Accept", ACCEPT)]).await {
+                Reply::Ok(value) => Ok(value),
+                Reply::Failed(http::Error::Throttled(retry_after)) => {
+                    let wait = retry_after.map_or(DEFAULT_WAIT, Duration::from_secs).min(MAX_WAIT);
+                    state().public_gate = Some(Instant::now() + wait);
+                    log::info!("geckoterminal rate limited, pausing for {}s", wait.as_secs());
+                    Err(throttled("GeckoTerminal", wait))
+                }
+                Reply::Refused { message, .. } => Err(Error::Message(t!(
+                    "error.sourceSays",
+                    source = "GeckoTerminal",
+                    message = message
+                ))),
+                Reply::Failed(e) => Err(e.into()),
+            }
+        }
     }
 }
 
@@ -246,5 +624,58 @@ mod tests {
         let rows = parsed.data.attributes.ohlcv_list;
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[1][0], 1_791_653_880.0);
+    }
+
+    // `/key` as CoinGecko answers it, and its refusals.
+    #[test]
+    fn plans_and_refusals_parse() {
+        let json = r#"{"plan":"Analyst","rate_limit_request_per_minute":500,"monthly_call_credit":500000,"current_total_monthly_calls":2,"current_remaining_monthly_calls":499998,"api_key_rate_limit_request_per_minute":500,"api_key_monthly_call_credit":500000,"api_key_current_total_monthly_calls":2}"#;
+        let plan: Plan = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            (plan.name.as_str(), plan.per_minute, plan.monthly, plan.remaining),
+            ("Analyst", 500, 500_000, 499_998)
+        );
+        assert_eq!(classify(plan.clone()), Access::Paid(plan));
+        let demo: Plan = serde_json::from_str(r#"{"plan":"Demo","rate_limit_request_per_minute":100,"monthly_call_credit":10000,"current_remaining_monthly_calls":9000}"#).unwrap();
+        assert_eq!(classify(demo), Access::Demo);
+        let refusal: Refusal =
+            serde_json::from_str(r#"{"status":{"error_code":10011,"error_message":"wrong host"}}"#)
+                .unwrap();
+        assert_eq!(
+            (refusal.status.error_code, refusal.status.error_message.as_str()),
+            (10011, "wrong host")
+        );
+        assert_eq!(serde_json::to_string(&Access::Demo).unwrap(), r#"{"tier":"demo"}"#);
+    }
+
+    // A key goes its way once known; a paid plan near its credit's end polls the public way.
+    #[test]
+    fn routes_follow_the_key_and_its_credit() {
+        let plan =
+            |remaining| Plan { name: "Basic".into(), per_minute: 300, monthly: 100_000, remaining };
+        let mut s = State {
+            key: None,
+            access: None,
+            probe_after: None,
+            checked: None,
+            public_gate: None,
+            keyed_gate: None,
+        };
+        assert!(matches!(route(&s), Route::Public));
+        s.key = Some("k".into());
+        assert!(matches!(route(&s), Route::Unknown));
+        s.probe_after = Some(Instant::now() + Duration::from_secs(60));
+        assert!(matches!(route(&s), Route::Public));
+        s.probe_after = None;
+        s.access = Some(Access::Demo);
+        assert!(matches!(route(&s), Route::Keyed { host: DEMO_HOST, header: DEMO_HEADER, .. }));
+        s.access = Some(Access::Paid(plan(5000)));
+        s.checked = Some(Instant::now());
+        assert!(matches!(route(&s), Route::Keyed { host: PRO_HOST, header: PRO_HEADER, .. }));
+        s.access = Some(Access::Paid(plan(RESERVE)));
+        assert!(matches!(route(&s), Route::Public));
+        s.access = Some(Access::Paid(plan(5000)));
+        s.keyed_gate = Some(Instant::now() + Duration::from_secs(30));
+        assert!(matches!(route(&s), Route::Public));
     }
 }

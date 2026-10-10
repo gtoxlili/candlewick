@@ -26,6 +26,8 @@ import {
   type AgentStatus,
   type ApiKey,
   type Candidate,
+  type CoinGecko,
+  type CoinGeckoAccess,
   type Exchange,
   type ExchangeKey,
   type Instrument,
@@ -124,6 +126,8 @@ export default function App() {
           />
 
           <LongbridgeSection />
+
+          <CoinGeckoSection />
 
           <Section title={t("settings.display.title")}>
             <Group>
@@ -879,6 +883,154 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * What a CoinGecko key is, in three short lines: the plan, its limits, and
+ * what that means for the chart. Short so none of them wraps.
+ */
+function accessLines(access: CoinGeckoAccess, t: TFunction, locale: string): [string, string, string] {
+  if (access.tier === "demo") {
+    return [t("settings.onchain.demo"), t("settings.onchain.demoLimits"), t("settings.onchain.paceDemo")];
+  }
+  const n = (value: number) => new Intl.NumberFormat(locale).format(value);
+  return [
+    t("settings.onchain.paid", { plan: access.name }),
+    t("settings.onchain.paidLimits", {
+      per_minute: n(access.perMinute),
+      remaining: n(access.remaining),
+      monthly: n(access.monthly),
+    }),
+    t("settings.onchain.pacePaid"),
+  ];
+}
+
+/**
+ * An optional CoinGecko API key for pool candles and trades: checked with
+ * CoinGecko when saved, which also says which plan it is, and paced by that.
+ */
+function CoinGeckoSection() {
+  const { t, i18n } = useTranslation();
+  const [state, setState] = useState<CoinGecko | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const check = () => {
+    setBusy(true);
+    setProblem(null);
+    api
+      .checkCoinGecko()
+      .then((access) => setState((s) => s && { ...s, access }))
+      .catch((e: unknown) => setProblem(String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  useEffect(() => {
+    api
+      .getCoinGecko()
+      .then((found) => {
+        setState(found);
+        if (found.key && !found.access) check();
+      })
+      .catch((e: unknown) => setProblem(String(e)));
+  }, []);
+
+  const save = (next: string | null) => {
+    setBusy(true);
+    setProblem(null);
+    api
+      .setCoinGecko(next)
+      .then((saved) => {
+        setState(saved);
+        setEditing(false);
+        setKey("");
+      })
+      .catch((e: unknown) => setProblem(String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  if (!state) return null;
+  const configured = state.key !== null && !editing;
+
+  return (
+    <Section title={t("settings.onchain.title")} footnote={configured ? undefined : t("settings.onchain.footnote")}>
+      <Group>
+        {configured ? (
+          <>
+            <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
+              <p className="min-w-0 flex-1">
+                CoinGecko API Key <span className="font-mono text-xs text-muted-foreground">{state.key}</span>
+              </p>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditing(true)}>
+                {t("settings.replace")}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="hover:text-destructive"
+                disabled={busy}
+                onClick={() => save(null)}
+              >
+                {t("settings.remove")}
+              </Button>
+            </div>
+            <div className="px-3.5 py-2 text-xs">
+              {busy ? (
+                <p className="flex items-center gap-2 text-muted-foreground">
+                  <Spinner className="size-3.5" aria-hidden /> {t("settings.onchain.checking")}
+                </p>
+              ) : state.access ? (
+                (([plan, limits, pace]) => (
+                  <>
+                    <p className="flex items-center justify-between gap-3">
+                      <span>{plan}</span>
+                      <button type="button" className="shrink-0 text-muted-foreground underline" onClick={check}>
+                        {t("settings.onchain.check")}
+                      </button>
+                    </p>
+                    <p className="mt-0.5 text-muted-foreground tabular">{limits}</p>
+                    <p className="text-muted-foreground">{pace}</p>
+                  </>
+                ))(accessLines(state.access, t, i18n.language))
+              ) : (
+                <button type="button" className="text-muted-foreground underline" onClick={check}>
+                  {t("settings.onchain.check")}
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="space-y-3 px-3.5 py-3">
+            <FieldGroup className="gap-2.5">
+              <CredentialField label="API Key" secret value={key} disabled={busy} onChange={setKey} />
+            </FieldGroup>
+            <div className="flex items-center justify-end gap-2">
+              <a
+                href="https://www.coingecko.com/en/developers/dashboard"
+                target="_blank"
+                rel="noreferrer"
+                className="mr-auto text-xs text-muted-foreground underline"
+              >
+                {t("settings.onchain.getKey")}
+              </a>
+              {state.key !== null && (
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditing(false)}>
+                  {t("settings.cancel")}
+                </Button>
+              )}
+              <Button size="sm" disabled={!key.trim() || busy} onClick={() => save(key)}>
+                {busy && <Spinner aria-label={t("settings.onchain.checking")} />}
+                {t("settings.save")}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Group>
+      {problem && <Problem>{problem}</Problem>}
+    </Section>
   );
 }
 

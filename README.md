@@ -26,7 +26,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed; t
 
 - One instrument always in the menu bar or taskbar, and up to 30 in the dropdown
 - Crypto: Binance, Bybit or OKX, any spot pair
-- On-chain: any pool DEX Screener lists, on Solana, Ethereum, Base, BNB Chain and the rest, priced in USD
+- On-chain: any pool DEX Screener lists, on Solana, Ethereum, Base, BNB Chain and the rest, priced in USD; add your own CoinGecko API key and candles come on your quota, faster on a paid plan
 - Stocks: US (including pre-market, after-hours and overnight), Hong Kong and China A-shares, by code
 - A chart that moves with every trade, with the order book and recent trades
 - Chart analysis: a hover card with each candle's figures, moving averages and Bollinger Bands, and trend lines, levels, Fibonacci retracements and measurements that stay with the instrument

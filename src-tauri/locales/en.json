@@ -108,6 +108,8 @@
     "invalidStock": "Invalid stock code: %{symbol}",
     "invalidPool": "Invalid DEX pool: %{symbol}",
     "rateLimited": "%{source} is rate limiting · retry in %{seconds}s",
+    "coingeckoKey": "CoinGecko doesn't recognize this API key",
+    "coingeckoKeyMissing": "No CoinGecko API key is saved",
     "noQuote": "%{source} has no quote for this stock",
     "sourceBadData": "Unexpected data from %{source}",
     "sourceStopped": "The %{source} connection has stopped",

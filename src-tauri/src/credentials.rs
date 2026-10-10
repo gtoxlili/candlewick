@@ -1,6 +1,7 @@
 //! Account credentials, in `credentials.json` next to the settings, readable
-//! by the user only: Longbridge's for stock quotes, and exchange API keys for
-//! holdings, which the app only ever reads with.
+//! by the user only: Longbridge's for stock quotes, exchange API keys for
+//! holdings, which the app only ever reads with, and a CoinGecko key for
+//! pool candles and trades on the user's own quota.
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -23,6 +24,22 @@ pub struct Credentials {
     /// By crypto exchange.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exchanges: BTreeMap<ProviderId, ApiKey>,
+    /// Optional: pool data on the user's own CoinGecko quota.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coingecko: Option<CoinGeckoKey>,
+}
+
+/// A CoinGecko API key (Demo or paid), from its developer dashboard.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoinGeckoKey {
+    pub key: String,
+}
+
+// Keeps the secret out of logs.
+impl fmt::Debug for CoinGeckoKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("CoinGeckoKey { .. }")
+    }
 }
 
 /// An API key from an exchange's API management page.
@@ -122,6 +139,7 @@ mod tests {
                 ApiKey { key: "key".into(), secret: "secret".into(), passphrase: Some("p".into()) },
             )]
             .into(),
+            coingecko: Some(CoinGeckoKey { key: "CG-abc".into() }),
         };
         save(&path, &credentials).unwrap();
         // Replacing an existing file goes through the same temp file.
