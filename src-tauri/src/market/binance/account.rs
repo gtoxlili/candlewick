@@ -89,10 +89,12 @@ impl Account for Binance {
                 Balance::new(Wallet::Funding, f.asset, amount)
             })
             .collect();
-        // Earn reads may be refused on their own; the rest still shows.
+        // Earn reads may be refused on their own; the rest still shows. One
+        // that failed fails the lot, so the last whole read stays.
         for earned in [flexible, locked] {
             match earned {
                 Ok(earned) => balances.extend(earned),
+                Err(e) if e.transient() => return Err(e),
                 Err(e) => log::info!("binance earn: {e}"),
             }
         }

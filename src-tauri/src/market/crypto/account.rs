@@ -58,9 +58,13 @@ const WINDOW_OPEN: Duration = Duration::from_secs(10);
 /// Holdings older than this refresh when the dropdown opens.
 const FRESH: Duration = Duration::from_secs(15);
 const SAVINGS: Duration = Duration::from_secs(300);
-/// A pair that didn't answer a price snapshot isn't asked about again for
-/// this long: the exchange probably doesn't list it.
-const UNLISTED: Duration = Duration::from_secs(6 * 3600);
+/// A pair that kept quiet through this many price snapshots in a row, each
+/// on a socket that held to the end while other pairs answered, is taken as
+/// one the exchange doesn't list. One quiet snapshot proves little: a quiet
+/// pair's ticker can lag, and a slow link drops frames.
+const QUIET_STRIKES: u8 = 2;
+/// An unlisted pair isn't asked about again for this long.
+const UNLISTED: Duration = Duration::from_secs(3600);
 /// Live ticks reach the window in batches no closer than this.
 const LIVE_FLUSH: Duration = Duration::from_secs(1);
 /// This long without a frame means the live socket is dead.
@@ -89,6 +93,9 @@ impl Wanted {
 struct Kept {
     savings: Option<(Instant, Vec<Balance>)>,
     unlisted: HashMap<String, Instant>,
+    /// Snapshots in a row each pair has kept quiet through, counting toward
+    /// [`QUIET_STRIKES`].
+    quiet: HashMap<String, u8>,
     balances: Vec<Balance>,
     positions: Vec<Position>,
     /// By asset, as last seen.
@@ -114,6 +121,41 @@ impl Kept {
             .filter(|symbol| !self.unlisted.contains_key(symbol))
             .collect();
         (assets.into_iter().map(str::to_owned).collect(), symbols)
+    }
+
+    /// Takes in a snapshot of `symbols`, the pairs [`Kept::needed`] gave for
+    /// `assets`. New prices replace old ones, and a pair that kept quiet
+    /// keeps its last price, unless its silence now marks it unlisted.
+    /// Silence counts against a pair only in a whole snapshot in which
+    /// another pair answered; otherwise it was the network.
+    fn take<E: Exchange>(
+        &mut self,
+        assets: &[String],
+        symbols: &[String],
+        snapshot: &quotes::Snapshot,
+    ) {
+        let telling = snapshot.whole && !snapshot.prices.is_empty();
+        self.quiet.retain(|symbol, _| symbols.contains(symbol));
+        for symbol in symbols {
+            if snapshot.prices.contains_key(symbol) {
+                self.quiet.remove(symbol);
+            } else if telling {
+                let strikes = self.quiet.entry(symbol.clone()).or_default();
+                *strikes += 1;
+                if *strikes >= QUIET_STRIKES {
+                    self.quiet.remove(symbol);
+                    self.unlisted.insert(symbol.clone(), Instant::now());
+                }
+            }
+        }
+        self.prices.retain(|asset, _| {
+            assets.contains(asset) && !self.unlisted.contains_key(&E::symbol(asset, "USDT"))
+        });
+        for asset in assets {
+            if let Some(&(last, open)) = snapshot.prices.get(&E::symbol(asset, "USDT")) {
+                self.prices.insert(asset.clone(), Price { last, open });
+            }
+        }
     }
 }
 
@@ -207,9 +249,18 @@ async fn refresh<E: Account>(app: &AppHandle, key: &ApiKey, kept: &mut Kept, liv
     let savings_due = kept.savings.as_ref().is_none_or(|(at, _)| at.elapsed() >= SAVINGS);
     let savings = async { if savings_due { Some(E::savings(key).await) } else { None } };
     let (trading, savings) = tokio::join!(E::trading(key), savings);
+    // Why the total misses the funding and earn balances, when it does.
+    let mut partial = None;
     match savings {
         Some(Ok(balances)) => kept.savings = Some((Instant::now(), balances)),
-        Some(Err(e)) => log::warn!("{} savings: {e}", E::ID.key()),
+        Some(Err(e)) => {
+            log::warn!("{} savings: {e}", E::ID.key());
+            // The last read stands in while there is one; a refusal (a key
+            // without the permission) leaves them out without a word.
+            if kept.savings.is_none() && e.transient() {
+                partial = Some(e.to_string());
+            }
+        }
         None => {}
     }
     let (mut balances, positions) = match trading {
@@ -240,20 +291,7 @@ async fn refresh<E: Account>(app: &AppHandle, key: &ApiKey, kept: &mut Kept, liv
     let covered = live.is_some_and(|l| symbols.iter().all(|s| l.symbols.contains(s)));
     if !covered {
         match quotes::snapshot::<E>(&symbols).await {
-            Ok(found) => {
-                for symbol in &symbols {
-                    if !found.contains_key(symbol) {
-                        kept.unlisted.insert(symbol.clone(), Instant::now());
-                    }
-                }
-                kept.prices = assets
-                    .iter()
-                    .filter_map(|asset| {
-                        let &(last, open) = found.get(&E::symbol(asset, "USDT"))?;
-                        Some((asset.clone(), Price { last, open }))
-                    })
-                    .collect();
-            }
+            Ok(snapshot) => kept.take::<E>(&assets, &symbols, &snapshot),
             Err(e) => log::warn!("{} prices: {e}", E::ID.key()),
         }
     }
@@ -264,7 +302,7 @@ async fn refresh<E: Account>(app: &AppHandle, key: &ApiKey, kept: &mut Kept, liv
         account.holdings = Some(holdings);
         account.updated = Some(updated);
         account.checked = Some(updated);
-        account.error = None;
+        account.error = partial;
         true
     });
 }
@@ -411,4 +449,50 @@ pub async fn send(
         }
     }
     Err(failure.expect("at least one host").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::market::binance::Binance;
+
+    fn snapshot(prices: &[(&str, f64)], whole: bool) -> quotes::Snapshot {
+        let prices = prices.iter().map(|&(s, p)| (s.to_owned(), (p, p))).collect();
+        quotes::Snapshot { prices, whole }
+    }
+
+    // repro: on a flaky link the pairs of OKX's earn balances (BTC, ETH) went
+    // unanswered, were taken as unlisted for hours and lost their prices, so
+    // the total dropped those balances.
+    #[test]
+    fn a_failed_snapshot_keeps_the_prices_it_missed() {
+        let assets = ["BTC".to_owned(), "ETH".to_owned()];
+        let symbols = ["BTCUSDT".to_owned(), "ETHUSDT".to_owned()];
+        let mut kept = Kept::default();
+        kept.take::<Binance>(
+            &assets,
+            &symbols,
+            &snapshot(&[("BTCUSDT", 80_000.0), ("ETHUSDT", 2_300.0)], true),
+        );
+        // Nothing answered, or the socket dropped halfway: the network, not the pairs.
+        kept.take::<Binance>(&assets, &symbols, &snapshot(&[], true));
+        kept.take::<Binance>(&assets, &symbols, &snapshot(&[("BTCUSDT", 81_000.0)], false));
+        kept.take::<Binance>(&assets, &symbols, &snapshot(&[("BTCUSDT", 81_500.0)], false));
+        assert!(kept.unlisted.is_empty());
+        assert_eq!(kept.prices["ETH"].last, 2_300.0);
+        assert_eq!(kept.prices["BTC"].last, 81_500.0);
+    }
+
+    #[test]
+    fn a_pair_quiet_through_whole_snapshots_in_a_row_is_unlisted() {
+        let assets = ["BTC".to_owned(), "NOPE".to_owned()];
+        let symbols = ["BTCUSDT".to_owned(), "NOPEUSDT".to_owned()];
+        let mut kept = Kept::default();
+        kept.prices.insert("NOPE".to_owned(), Price { last: 1.0, open: 1.0 });
+        kept.take::<Binance>(&assets, &symbols, &snapshot(&[("BTCUSDT", 80_000.0)], true));
+        assert!(kept.unlisted.is_empty() && kept.prices.contains_key("NOPE"));
+        kept.take::<Binance>(&assets, &symbols, &snapshot(&[("BTCUSDT", 80_000.0)], true));
+        assert!(kept.unlisted.contains_key("NOPEUSDT"));
+        assert!(!kept.prices.contains_key("NOPE"));
+    }
 }

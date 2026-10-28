@@ -198,6 +198,15 @@ fn apply<E: Exchange>(app: &AppHandle, text: &str) -> bool {
 /// the exchange doesn't list never does.
 const SNAPSHOT_WAIT: Duration = Duration::from_secs(3);
 
+/// What a price snapshot heard.
+pub struct Snapshot {
+    /// The last price and the one 24 hours before, by symbol.
+    pub prices: HashMap<String, (f64, f64)>,
+    /// The socket stayed up until every pair answered or the wait was over,
+    /// so a pair missing from `prices` had its whole chance to answer.
+    pub whole: bool,
+}
+
 /// A socket subscribed to the tickers of `symbols`, on the first of the
 /// exchange's servers that answers.
 pub async fn subscribe<E: Exchange>(symbols: &[String]) -> Result<net::Socket, String> {
@@ -221,18 +230,16 @@ pub async fn subscribe<E: Exchange>(symbols: &[String]) -> Result<net::Socket, S
     Ok(socket)
 }
 
-/// The last price and the one 24 hours before of each of `symbols` that
-/// answers within [`SNAPSHOT_WAIT`], by symbol, from a short-lived socket:
-/// each pair's first frame is all it needs.
-pub async fn snapshot<E: Exchange>(
-    symbols: &[String],
-) -> Result<HashMap<String, (f64, f64)>, String> {
+/// The prices of each of `symbols` that answers within [`SNAPSHOT_WAIT`],
+/// from a short-lived socket: each pair's first frame is all it needs.
+pub async fn snapshot<E: Exchange>(symbols: &[String]) -> Result<Snapshot, String> {
     let mut prices = HashMap::new();
     if symbols.is_empty() {
-        return Ok(prices);
+        return Ok(Snapshot { prices, whole: true });
     }
     let mut socket = subscribe::<E>(symbols).await?;
     let deadline = Instant::now() + SNAPSHOT_WAIT;
+    let mut whole = true;
     while prices.len() < symbols.len() {
         let Ok(message) = timeout_at(deadline, socket.next()).await else { break };
         match message {
@@ -244,9 +251,12 @@ pub async fn snapshot<E: Exchange>(
                 }
             }
             Some(Ok(_)) => {}
-            Some(Err(_)) | None => break,
+            Some(Err(_)) | None => {
+                whole = false;
+                break;
+            }
         }
     }
     let _ = socket.close(None).await;
-    Ok(prices)
+    Ok(Snapshot { prices, whole })
 }

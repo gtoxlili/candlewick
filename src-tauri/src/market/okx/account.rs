@@ -106,10 +106,16 @@ impl Account for Okx {
             .map(|f| Balance::new(Wallet::Funding, f.ccy, crypto::num(&f.bal)))
             .collect();
         // ETH and SOL staking (BETH, OKSOL) sit in the trading and funding
-        // accounts already, so only these are added. Without them the rest
-        // still shows.
-        let savings = savings.inspect_err(|e| log::info!("okx savings: {e}")).unwrap_or_default();
-        let staking = staking.inspect_err(|e| log::info!("okx staking: {e}")).unwrap_or_default();
+        // accounts already, so only these are added. Refused, they leave the
+        // rest showing; failed, they fail the lot, so the last whole read stays.
+        let savings = match savings {
+            Err(e) if e.transient() => return Err(e),
+            savings => savings.inspect_err(|e| log::info!("okx savings: {e}")).unwrap_or_default(),
+        };
+        let staking = match staking {
+            Err(e) if e.transient() => return Err(e),
+            staking => staking.inspect_err(|e| log::info!("okx staking: {e}")).unwrap_or_default(),
+        };
         let earned =
             savings.into_iter().chain(staking.into_iter().flat_map(|order| order.invest_data));
         balances.extend(earned.map(|s| Balance::new(Wallet::Earn, s.ccy, crypto::num(&s.amt))));

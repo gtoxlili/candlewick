@@ -85,10 +85,12 @@ impl Account for Bybit {
             .into_iter()
             .map(|c| Balance::new(Wallet::Funding, c.coin, crypto::num(&c.wallet_balance)))
             .collect();
-        // Earn needs a permission of its own; a key without it still shows the rest.
+        // Earn needs a permission of its own; a key without it still shows the
+        // rest. A read that failed fails the lot, so the last whole one stays.
         for earned in [flexible, on_chain] {
             match earned {
                 Ok(earned) => balances.extend(earned),
+                Err(e) if e.transient() => return Err(e),
                 Err(e) => log::info!("bybit earn: {e}"),
             }
         }

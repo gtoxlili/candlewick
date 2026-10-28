@@ -205,6 +205,21 @@ pub enum Error {
     Message(String),
 }
 
+impl Error {
+    /// The read may well work if asked again: the network or the service
+    /// failed, rather than the service answering no (a refused key, a
+    /// missing permission), which asking again won't change.
+    pub fn transient(&self) -> bool {
+        match self {
+            Self::Message(_) => false,
+            Self::Http(http::Error::Status(status)) => {
+                matches!(status, 408 | 429) || *status >= 500 || *status < 400
+            }
+            Self::Http(_) => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Search {
