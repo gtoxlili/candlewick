@@ -75,18 +75,18 @@ struct Entry {
     market: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct List {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "or_empty")]
     securities: Vec<Entry>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct Groups {
     /// The groups' order in the user's apps; ids can repeat.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "or_empty")]
     group_order: Vec<i64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "or_empty")]
     groups: HashMap<String, Group>,
 }
 
@@ -95,8 +95,18 @@ struct Group {
     id: i64,
     #[serde(default)]
     name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "or_empty")]
     securities: Vec<Entry>,
+}
+
+/// The library is Go, which writes a list or map it never filled (an empty
+/// watchlist, an empty group) as `null`.
+fn or_empty<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 impl Groups {
@@ -145,9 +155,12 @@ async fn read(app: &AppHandle) -> Result<(Vec<Entry>, Vec<Group>), Read> {
     Ok((list.securities, groups.ordered()))
 }
 
-fn parse<T: DeserializeOwned>(value: Value) -> Result<T, Read> {
-    serde_json::from_value(value)
-        .map_err(|_| Read::Failed(Error::Message(t!("error.sourceBadData", source = ID.name()))))
+/// An answer's data as `T`; no data at all, as Go writes a nil answer, is empty.
+fn parse<T: DeserializeOwned + Default>(value: Value) -> Result<T, Read> {
+    serde_json::from_value::<Option<T>>(value).map(Option::unwrap_or_default).map_err(|e| {
+        log::warn!("tonghuashun watchlist: {e}");
+        Read::Failed(Error::Message(t!("error.sourceBadData", source = ID.name())))
+    })
 }
 
 /// What the data API calls an entry, resolved once each: the code table is
@@ -702,6 +715,27 @@ mod tests {
         .unwrap();
         let names: Vec<String> = groups.ordered().into_iter().map(|g| g.name).collect();
         assert_eq!(names, ["科技ETF", "算力芯片", "其他"]);
+    }
+
+    // upstream: `get_account_watchlist_groups` on 2026-10-28 for an account
+    // with empty groups, each `"securities": null`; hq 2.0.2 tags
+    // `securities`, `group_order` and `groups` without `omitempty`, and Go
+    // writes a nil slice, map or answer as null.
+    #[test]
+    fn go_nulls_read_as_empty() {
+        let list: Option<List> = parse(json!({ "securities": null, "version": 0 })).ok();
+        assert!(list.is_some_and(|list| list.securities.is_empty()));
+        let nothing: Option<List> = parse(Value::Null).ok();
+        assert!(nothing.is_some_and(|list| list.securities.is_empty()));
+        let groups: Option<Groups> = parse(json!({
+            "group_order": [35],
+            "groups": { "35": { "id": 35, "name": "空的", "securities": null } }
+        }))
+        .ok();
+        let groups = groups.map(Groups::ordered).unwrap_or_default();
+        assert!(groups.len() == 1 && groups[0].securities.is_empty());
+        let none: Option<Groups> = parse(json!({ "group_order": null, "groups": null })).ok();
+        assert!(none.is_some_and(|groups| groups.ordered().is_empty()));
     }
 
     // upstream: `auth_qrcode` while waiting, and `auth` without a session,
