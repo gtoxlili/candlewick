@@ -50,8 +50,7 @@
   "window": {
     "settings": "Candlewick Settings",
     "holdings": "Candlewick Holdings",
-    "chart": "%{pair} Chart",
-    "thsSignIn": "Sign in to Tonghuashun"
+    "chart": "%{pair} Chart"
   },
   "appMenu": {
     "about": "About Candlewick",
@@ -117,6 +116,7 @@
     "coingeckoKey": "CoinGecko doesn't recognize this API key",
     "coingeckoKeyMissing": "No CoinGecko API key is saved",
     "thsKey": "Tonghuashun doesn't accept this API key",
+    "thsdkMissing": "Tonghuashun account support is missing from this copy of Candlewick",
     "noQuote": "%{source} has no quote for this stock",
     "unknownSymbol": "%{source} doesn't list %{symbol}",
     "sourceBadData": "Unexpected data from %{source}",

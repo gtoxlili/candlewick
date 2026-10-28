@@ -49,7 +49,7 @@
 2. 粘贴到「设置 → 长桥」或「设置 → 同花顺」。
 3. 在搜索框里输入代码添加，比如 AAPL、700、600519；用同花顺还可以输入中文名，比如茅台。
 
-同花顺的报价在交易时段每几秒刷新一次，行情图只有日线和周线。再在「设置 → 同花顺」用同花顺 App 扫码登录，你在同花顺里的自选也会出现在下拉菜单里（只读）。
+同花顺的报价在交易时段每几秒刷新一次，行情图只有日线和周线。再在「设置 → 同花顺」用同花顺 App 扫码登录，你在同花顺里的自选和分组也会出现在下拉菜单里（只读）。
 
 ## 看持仓
 
@@ -73,7 +73,7 @@
 需要 Rust 1.98+、Node.js 和 pnpm。在 Mac 上还需要 macOS 15 或更高，在 Windows 上还需要 Visual Studio 的 C++ 生成工具。
 
 ```sh
-pnpm install
+pnpm install       # 同时下载同花顺账号登录用的 thsdk 运行组件
 pnpm tauri dev     # 开发
 pnpm tauri build   # 安装包在 src-tauri/target/release/bundle/
 ```
@@ -95,4 +95,4 @@ Windows 版是怎么实现的，见 [docs/windows.md](docs/windows.md)。main �
 
 ## 许可
 
-[GPL-3.0](LICENSE)。本项目与币安、Bybit、OKX、DEX Screener、CoinGecko、长桥、同花顺均无关联，价格仅供参考，不构成投资建议。
+[GPL-3.0](LICENSE)。本项目与币安、Bybit、OKX、DEX Screener、CoinGecko、长桥、同花顺均无关联，价格仅供参考，不构成投资建议。同花顺账号登录使用 [thsdk](https://pypi.org/project/thsdk/)（MIT）的运行组件，应用附带它的许可证。

@@ -27,7 +27,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 thiserror = "2"
 log = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros"] }
+# `process`: thsdk's helper (market/ths/thsdk.rs).
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "io-util", "macros", "process"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -49,7 +50,7 @@ sys-locale = "0.3"
 
 # The status item is Tauri's tray icon; Windows draws its own (platform/windows).
 [target.'cfg(target_os = "macos")'.dependencies]
-tauri = { version = "2.12", features = ["tray-icon"] }
+tauri = { version = "2.12", features = ["macos-private-api", "tray-icon"] }
 # Match Tauri's tray backend so the native menu can be owned independently
 # of NSStatusItem.menu, which is only attached while the dropdown is open.
 tray-icon = { version = "0.25", default-features = false }

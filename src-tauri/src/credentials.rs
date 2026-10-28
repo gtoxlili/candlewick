@@ -1,8 +1,9 @@
 //! Account credentials, in `credentials.json` next to the settings, readable
-//! by the user only: Longbridge's and a Tonghuashun key for stock quotes, a
-//! Tonghuashun web login for the user's watchlist there, exchange API keys
-//! for holdings (the app only ever reads with all of these), and a CoinGecko
-//! key for pool candles and trades on the user's own quota.
+//! by the user only: Longbridge's and a Tonghuashun key for stock quotes,
+//! exchange API keys for holdings (the app only ever reads with these), and
+//! a CoinGecko key for pool candles and trades on the user's own quota. A
+//! Tonghuashun account's session is thsdk's own file beside them
+//! (`market::ths`); this only records that there is one.
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -24,9 +25,9 @@ pub struct Credentials {
     pub longbridge: Option<LongbridgeKeys>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ths: Option<ThsKey>,
-    /// Signed in to the Tonghuashun site: the user's watchlist there.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ths_account: Option<ThsAccount>,
+    /// Signed in to a Tonghuashun account: the user's watchlist there.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ths_signed_in: bool,
     /// By crypto exchange.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exchanges: BTreeMap<ProviderId, ApiKey>,
@@ -45,27 +46,6 @@ pub struct ThsKey {
 impl fmt::Debug for ThsKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("ThsKey { .. }")
-    }
-}
-
-/// A Tonghuashun web login, as its sign-in page left it: the site's cookies,
-/// which its own pages send with every request.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThsAccount {
-    /// `(name, value)`, as a `Cookie` header joins them.
-    pub cookies: Vec<(String, String)>,
-    /// The account's name, to show.
-    pub user: String,
-    /// When the login runs out, epoch seconds, where the cookies say.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires: Option<i64>,
-}
-
-// Keeps the cookies out of logs.
-impl fmt::Debug for ThsAccount {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("ThsAccount { .. }")
     }
 }
 
@@ -175,11 +155,7 @@ mod tests {
                 access_token: "token".into(),
             }),
             ths: Some(ThsKey { key: "ths-key".into() }),
-            ths_account: Some(ThsAccount {
-                cookies: vec![("userid".into(), "1".into())],
-                user: "user".into(),
-                expires: Some(1_800_000_000),
-            }),
+            ths_signed_in: true,
             exchanges: [(
                 ProviderId::Okx,
                 ApiKey { key: "key".into(), secret: "secret".into(), passphrase: Some("p".into()) },
@@ -198,5 +174,16 @@ mod tests {
         }
         fs::remove_dir_all(&dir).unwrap();
         assert_eq!(load(&path), Credentials::default());
+    }
+
+    // repro: 0.8.10 kept a Tonghuashun web login as `thsAccount: {cookies,
+    // user}`; a file with one must still load, exchange keys and all.
+    #[test]
+    fn an_earlier_tonghuashun_login_is_dropped_not_fatal() {
+        let file = r#"{"thsAccount":{"cookies":[["userid","1"]],"user":"u"},
+            "exchanges":{"okx":{"key":"k","secret":"s","passphrase":"p"}}}"#;
+        let credentials: Credentials = serde_json::from_str(file).unwrap();
+        assert!(!credentials.ths_signed_in);
+        assert_eq!(credentials.exchanges[&ProviderId::Okx].key, "k");
     }
 }

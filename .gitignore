@@ -3,6 +3,8 @@ node_modules
 dist
 src-tauri/target
 src-tauri/gen/schemas
+# thsdk's runtime, fetched by scripts/fetch-thsdk.mjs
+src-tauri/thsdk
 
 # Local-only settings
 *.local

@@ -23,7 +23,7 @@ use tray_icon::menu::{ContextMenu, IsMenuItem, Menu, MenuItem, PredefinedMenuIte
 
 use super::ticker;
 use crate::{
-    bar::{self, Action, Holdings, Row, Shape, Slot, SyncedMenu, Ticker, View},
+    bar::{self, Action, Holdings, Row, Shape, Slot, SyncedMenu, SyncedShape, Ticker, View},
     i18n::Locale,
     model::{ColorScheme, Instrument},
 };
@@ -54,8 +54,10 @@ struct Ui {
     menu: Option<Retained<NSMenu>>,
     /// The holdings submenu, while the layout has one.
     submenu: Option<Retained<NSMenu>>,
-    /// The synced watchlist's submenu, while the layout has one.
+    /// The synced watchlist's submenu and its groups', while the layout has
+    /// them.
     synced_menu: Option<Retained<NSMenu>>,
+    synced_groups: Vec<Retained<NSMenu>>,
     status_item: Option<Retained<NSStatusItem>>,
     fonts: Fonts,
     /// What the current menu was built for; a change rebuilds it. `None`
@@ -94,9 +96,9 @@ struct Layout {
     /// A holdings row with this submenu leads the menu, with a separator
     /// after it.
     holdings: Option<Shape>,
-    /// A row whose submenu has a row for each of these instruments follows
-    /// the watchlist.
-    synced: Option<Vec<String>>,
+    /// A row whose submenu has a row for each of these instruments, then a
+    /// submenu for each of these groups, follows the watchlist.
+    synced: Option<SyncedShape>,
     /// What the fixed items say.
     locale: Locale,
 }
@@ -113,6 +115,14 @@ impl Layout {
     fn synced_row(&self) -> isize {
         self.row(self.watchlist.len().max(1)) + isize::from(!self.watchlist.is_empty())
     }
+}
+
+/// Where the synced watchlist's submenu puts its first group and its
+/// caption: after its rows (and a separator when groups follow them), and
+/// after the groups (and a separator when anything is above it).
+fn synced_slots(rows: usize, groups: usize) -> (usize, usize) {
+    let first_group = rows + usize::from(rows > 0 && groups > 0);
+    (first_group, first_group + groups + usize::from(rows + groups > 0))
 }
 
 /// Column widths and the tab stops that right-align them.
@@ -180,6 +190,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             menu: None,
             submenu: None,
             synced_menu: None,
+            synced_groups: Vec::new(),
             status_item: inner.ns_status_item().inspect(|item| use_tabular_digits(item)),
             fonts: Fonts {
                 row: NSFont::monospacedDigitSystemFontOfSize_weight(menu_font_size, regular),
@@ -228,7 +239,7 @@ impl Ui {
             watchlist: view.watchlist,
             update: view.update,
             holdings: view.holdings.as_ref().map(Holdings::shape),
-            synced: view.synced.as_ref().map(|synced| synced.ids.clone()),
+            synced: view.synced.as_ref().map(SyncedMenu::shape),
             locale: view.locale,
         };
         if self.layout.as_ref() != Some(&layout) {
@@ -255,6 +266,15 @@ impl Ui {
                     .and_then(|m| m.itemAtIndex(layout.synced_row()))
                     .and_then(|i| i.submenu()),
                 None => None,
+            };
+            self.synced_groups = match (&layout.synced, &self.synced_menu) {
+                (Some((rows, groups)), Some(submenu)) => {
+                    let (first, _) = synced_slots(rows.len(), groups.len());
+                    (first..first + groups.len())
+                        .filter_map(|index| submenu.itemAtIndex(index as isize)?.submenu())
+                        .collect()
+                }
+                _ => Vec::new(),
             };
             self.native_tray.set_menu(Some(Box::new(menu)));
             self.layout = Some(layout);
@@ -356,24 +376,34 @@ impl Ui {
         }
         self.holdings = view.holdings;
 
-        // The synced watchlist's submenu: its rows, then its caption. The
-        // layout matched, so the applied rows (if any) are the same ones.
+        // The synced watchlist's submenu: its rows and its groups', one
+        // table for all, then its caption. The layout matched, so the applied
+        // rows (if any) are the same ones.
         if let (Some(synced), Some(submenu)) = (&view.synced, &self.synced_menu) {
             let applied = self.synced.as_ref();
-            let changed: Vec<bool> = synced
+            // Each row with its menu, its index there, and as last applied.
+            let mut slots: Vec<(&NSMenu, usize, &Row, Option<&Row>)> = synced
                 .rows
                 .iter()
                 .enumerate()
-                .map(|(index, row)| applied.and_then(|a| a.rows.get(index)) != Some(row))
+                .map(|(index, row)| {
+                    (&**submenu, index, row, applied.and_then(|a| a.rows.get(index)))
+                })
                 .collect();
+            for ((group, menu), number) in synced.groups.iter().zip(&self.synced_groups).zip(0..) {
+                let before = applied.and_then(|a| a.groups.get(number));
+                slots.extend(group.rows.iter().enumerate().map(|(index, row)| {
+                    (&**menu, index, row, before.and_then(|b| b.rows.get(index)))
+                }));
+            }
             let widened = self.synced_columns.fit(
-                synced.rows.iter().zip(&changed).filter(|(_, c)| **c).map(|(row, _)| row),
+                slots.iter().filter(|(.., row, before)| Some(*row) != *before).map(|s| s.2),
                 &self.fonts.row,
             );
             let restyle = scheme_changed || widened;
-            for (index, (row, changed)) in synced.rows.iter().zip(changed).enumerate() {
-                if (restyle || changed)
-                    && let Some(item) = submenu.itemAtIndex(index as isize)
+            for (menu, index, row, before) in slots {
+                if (restyle || Some(row) != before)
+                    && let Some(item) = menu.itemAtIndex(index as isize)
                 {
                     item.setAttributedTitle(Some(&styled_row(
                         row,
@@ -384,7 +414,7 @@ impl Ui {
                 }
             }
             if applied.map(|a| &a.caption) != Some(&synced.caption) {
-                let at = synced.rows.len() + usize::from(!synced.rows.is_empty());
+                let (_, at) = synced_slots(synced.rows.len(), synced.groups.len());
                 set_caption(submenu, at as isize, &synced.caption, &self.fonts.caption);
             }
         }
@@ -628,15 +658,21 @@ fn build_menu(layout: &Layout, holdings: Option<&Holdings>) -> tauri::Result<Men
         // Status caption, styled and shown/hidden natively by `set_caption`.
         menu.append(&MenuItem::with_id("status", "", false, None))?;
     }
-    if let Some(ids) = synced {
-        // Rows and caption styled by `apply`.
-        let mut items: Vec<Box<dyn IsMenuItem>> = ids
-            .iter()
-            .map(|id| -> Box<dyn IsMenuItem> {
-                Box::new(MenuItem::with_id(format!("{SYNCED_PREFIX}{id}"), "", true, None))
-            })
-            .collect();
-        if !ids.is_empty() {
+    if let Some((ids, groups)) = synced {
+        // Rows and caption styled by `apply`, laid out as `synced_slots` says.
+        let row = |id: &String| -> Box<dyn IsMenuItem> {
+            Box::new(MenuItem::with_id(format!("{SYNCED_PREFIX}{id}"), "", true, None))
+        };
+        let mut items: Vec<Box<dyn IsMenuItem>> = ids.iter().map(row).collect();
+        if !ids.is_empty() && !groups.is_empty() {
+            items.push(Box::new(PredefinedMenuItem::separator()));
+        }
+        for (name, ids) in groups {
+            let rows: Vec<Box<dyn IsMenuItem>> = ids.iter().map(row).collect();
+            let refs: Vec<&dyn IsMenuItem> = rows.iter().map(|item| item.as_ref()).collect();
+            items.push(Box::new(Submenu::with_items(name, true, &refs)?));
+        }
+        if !ids.is_empty() || !groups.is_empty() {
             items.push(Box::new(PredefinedMenuItem::separator()));
         }
         items.push(Box::new(MenuItem::with_id("synced-caption", "", false, None)));

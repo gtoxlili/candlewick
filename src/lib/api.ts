@@ -262,23 +262,32 @@ export interface LongbridgeKeys {
 export interface Ths {
   /** The key's ends, when one is saved. */
   key: string | null;
-  /** Signed in on Tonghuashun's site: the dropdown shows the watchlist there. */
+  /** Signed in to a Tonghuashun account: the dropdown shows the watchlist there. */
   account: ThsAccount | null;
+  /** A QR sign-in under way, or how the last one ended. */
+  signIn: ThsSignIn | null;
 }
 
-/** A Tonghuashun login and the watchlist read with it. */
+/** What was read with a Tonghuashun account. */
 export interface ThsAccount {
-  user: string;
-  /** Epoch seconds the login runs out at, where known. */
-  expires: number | null;
-  /** Entries in the dropdown, and those nothing here quotes (Hong Kong, US, futures). */
+  /** Entries in the watchlist, the user's groups shown, and entries nothing here quotes (Hong Kong, US, futures). */
   count: number;
+  groups: number;
   skipped: number;
   /** Epoch ms of the last good read. */
   updated: number | null;
-  /** `signedOut`: the login ran out; only signing in again helps. */
+  /** `signedOut`: the session ran out; only signing in again helps. */
   state: "reading" | "read" | "signedOut" | "failed";
   /** Why the last read failed. */
+  error: string | null;
+}
+
+/** A QR sign-in to a Tonghuashun account. */
+export interface ThsSignIn {
+  /** The code to scan in the Tonghuashun app, as a PNG data URL; null until it arrives. */
+  qr: string | null;
+  /** `expired`: unscanned in time; another code takes signing in again. */
+  state: "waiting" | "expired" | "failed";
   error: string | null;
 }
 
@@ -452,10 +461,11 @@ export const api = {
   getThs: () => invoke<Ths>("get_ths"),
   /** Checks with Tonghuashun that the key works and saves it; null removes it. */
   setThs: (key: string | null) => invoke<Ths>("set_ths", { key }),
-  /** Opens Tonghuashun's sign-in page; signed in, `onThs` fires. */
+  /** Starts a QR sign-in; its code and how it ends arrive through `onThs`. */
   thsSignIn: () => invoke<void>("ths_sign_in"),
+  thsSignInCancel: () => invoke<void>("ths_sign_in_cancel"),
   thsSignOut: () => invoke<Ths>("ths_sign_out"),
-  /** The Tonghuashun login or its watchlist changed: ask `getThs` again. */
+  /** The Tonghuashun sign-in or its watchlist changed: ask `getThs` again. */
   onThs: (handler: () => void): Promise<UnlistenFn> => listen("ths", () => handler()),
   getCoinGecko: () => invoke<CoinGecko>("get_coingecko"),
   /** Checks with CoinGecko what the key is and saves it; null removes it. */

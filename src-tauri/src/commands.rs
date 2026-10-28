@@ -206,13 +206,15 @@ pub async fn check_longbridge() -> CmdResult<longbridge::Account> {
     Ok(longbridge::account().await?)
 }
 
-/// Tonghuashun as the settings window shows it: the key, and the login
-/// whose watchlist the dropdown shows.
+/// Tonghuashun as the settings window shows it: the key, the account whose
+/// watchlist the dropdown shows, and a QR sign-in under way.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ThsView {
     /// The key's ends, enough to recognize it; the key never leaves.
     key: Option<String>,
     account: Option<ths::AccountView>,
+    sign_in: Option<ths::SignIn>,
 }
 
 #[tauri::command]
@@ -221,19 +223,21 @@ pub fn get_ths(shared: State<'_, Shared>) -> ThsView {
     let model = shared.model();
     ThsView {
         key: credentials.ths.as_ref().map(|k| masked(&k.key)),
-        account: credentials
-            .ths_account
-            .as_ref()
-            .map(|account| ths::account_view(account, model.synced.as_ref())),
+        account: credentials.ths_signed_in.then(|| ths::account_view(model.synced.as_ref())),
+        sign_in: ths::sign_in_view(),
     }
 }
 
-/// Opens Tonghuashun's sign-in page; signed in, the window closes and a
-/// `ths` event follows.
+/// Starts a QR sign-in; its code and how it ends arrive as `ths` events.
 #[tauri::command]
-pub fn ths_sign_in(app: AppHandle) -> CmdResult<()> {
-    window::open_ths_sign_in(&app)?;
-    Ok(())
+pub fn ths_sign_in(app: AppHandle) {
+    ths::sign_in(&app);
+}
+
+#[tauri::command]
+pub fn ths_sign_in_cancel(app: AppHandle) {
+    ths::cancel_sign_in();
+    window::emit_ths(&app);
 }
 
 #[tauri::command]

@@ -31,7 +31,7 @@ use super::{
     },
 };
 use crate::{
-    bar::{self, Action, Hue, Row, Shape, Slot, View},
+    bar::{self, Action, Hue, Row, Shape, Slot, SyncedMenu, SyncedShape, View},
     format::Direction,
     i18n::Locale,
 };
@@ -49,8 +49,8 @@ const FIRST_ROW: u32 = 100;
 /// Row n of the holdings submenu has this id plus n; every one opens the
 /// holdings window.
 const FIRST_HOLDINGS_ROW: u32 = 200;
-/// Row n of the synced watchlist's submenu has this id plus n, past the
-/// others however long that watchlist is.
+/// Row n of the synced watchlist's submenu, counting on through its groups'
+/// rows, has this id plus n: past the others however long that watchlist is.
 const FIRST_SYNCED_ROW: u32 = 1000;
 
 /// An open dropdown.
@@ -60,9 +60,8 @@ pub struct Open {
     ids: Vec<String>,
     /// The submenu it was built with, if any.
     shape: Option<Shape>,
-    /// The instrument of each row of the synced watchlist's submenu, if it
-    /// has one.
-    synced: Option<Vec<String>>,
+    /// The synced watchlist's submenu it was built with, if any.
+    synced: Option<SyncedShape>,
     /// What its fixed items say.
     locale: Locale,
     /// The command id, text and mark of each row shown, holdings first.
@@ -106,8 +105,13 @@ fn sub(view: &View) -> Vec<Line<'_>> {
     lines((0..rows.len()).map(|index| FIRST_HOLDINGS_ROW + index as u32), rows)
 }
 
+/// The synced watchlist's rows, then its groups', laid out together.
 fn synced(view: &View) -> Vec<Line<'_>> {
-    let rows: Vec<&Row> = view.synced.iter().flat_map(|synced| &synced.rows).collect();
+    let rows: Vec<&Row> = view
+        .synced
+        .iter()
+        .flat_map(|synced| synced.rows.iter().chain(synced.groups.iter().flat_map(|g| &g.rows)))
+        .collect();
     lines((0..rows.len()).map(|index| FIRST_SYNCED_ROW + index as u32), rows)
 }
 
@@ -121,7 +125,7 @@ impl Open {
                 menu,
                 ids: Vec::new(),
                 shape: view.holdings.as_ref().map(bar::Holdings::shape),
-                synced: view.synced.as_ref().map(|synced| synced.ids.clone()),
+                synced: view.synced.as_ref().map(SyncedMenu::shape),
                 locale: view.locale,
                 shown: Vec::new(),
             };
@@ -239,37 +243,71 @@ impl Open {
         }
     }
 
-    /// The synced watchlist's submenu: its rows, then a dimmed line on
-    /// when it was read.
+    /// The synced watchlist's submenu: its rows, a submenu per group of the
+    /// user's, then a dimmed line on when it was read.
     unsafe fn synced_submenu(&mut self, view: &View, marks: &mut Marks) -> Result<HMENU> {
-        // SAFETY: a fresh menu, filled with our own items; it goes with
-        // its parent.
+        // SAFETY: fresh menus, filled with our own items; they go with
+        // their parent.
         unsafe {
             let menu = CreatePopupMenu()?;
-            for line in synced(view) {
-                let mark = marks.for_row(line.row, view);
-                let mut wide = wide(&line.text);
+            let Some(synced) = &view.synced else {
+                return Ok(menu);
+            };
+            let mut lines = self::synced(view).into_iter();
+            for _ in &synced.rows {
+                self.insert_row(menu, lines.next().expect("a line per row"), view, marks)?;
+            }
+            if !synced.rows.is_empty() && !synced.groups.is_empty() {
+                AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+            }
+            for group in &synced.groups {
+                let submenu = CreatePopupMenu()?;
+                for _ in &group.rows {
+                    self.insert_row(submenu, lines.next().expect("a line per row"), view, marks)?;
+                }
+                let mut title = wide(&escape(&group.name));
                 let item = MENUITEMINFOW {
                     cbSize: size_of::<MENUITEMINFOW>() as u32,
-                    fMask: MIIM_ID | MIIM_FTYPE | MIIM_STRING | MIIM_BITMAP,
+                    fMask: MIIM_FTYPE | MIIM_STRING | MIIM_SUBMENU,
                     fType: MFT_STRING,
-                    wID: line.id,
-                    dwTypeData: PWSTR(wide.as_mut_ptr()),
-                    hbmpItem: mark.unwrap_or_default(),
+                    hSubMenu: submenu,
+                    dwTypeData: PWSTR(title.as_mut_ptr()),
                     ..Default::default()
                 };
                 InsertMenuItemW(menu, u32::MAX, true, &item)?;
-                self.shown.push((line.id, line.text, mark));
             }
-            if let Some(synced) = &view.synced {
-                if !synced.rows.is_empty() {
-                    AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
-                }
-                let caption = HSTRING::from(escape(&synced.caption));
-                AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &caption)?;
+            if !synced.rows.is_empty() || !synced.groups.is_empty() {
+                AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
             }
+            let caption = HSTRING::from(escape(&synced.caption));
+            AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &caption)?;
             Ok(menu)
         }
+    }
+
+    /// A priced row at the end of `menu`.
+    unsafe fn insert_row(
+        &mut self,
+        menu: HMENU,
+        line: Line<'_>,
+        view: &View,
+        marks: &mut Marks,
+    ) -> Result<()> {
+        let mark = marks.for_row(line.row, view);
+        let mut wide = wide(&line.text);
+        let item = MENUITEMINFOW {
+            cbSize: size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_ID | MIIM_FTYPE | MIIM_STRING | MIIM_BITMAP,
+            fType: MFT_STRING,
+            wID: line.id,
+            dwTypeData: PWSTR(wide.as_mut_ptr()),
+            hbmpItem: mark.unwrap_or_default(),
+            ..Default::default()
+        };
+        // SAFETY: a menu of ours being built; the string outlives the call.
+        unsafe { InsertMenuItemW(menu, u32::MAX, true, &item)? };
+        self.shown.push((line.id, line.text, mark));
+        Ok(())
     }
 
     /// Brings the open menu's rows up to date and repaints it. A changed
@@ -279,7 +317,7 @@ impl Open {
         let ids: Vec<String> = view.watchlist.iter().map(|instrument| instrument.id()).collect();
         if ids != self.ids
             || view.holdings.as_ref().map(bar::Holdings::shape) != self.shape
-            || view.synced.as_ref().map(|synced| &synced.ids) != self.synced.as_ref()
+            || view.synced.as_ref().map(SyncedMenu::shape) != self.synced
             || view.locale != self.locale
         {
             return;
@@ -332,12 +370,11 @@ impl Open {
             UPDATE => Some(Action::Update),
             CHECK_UPDATE => Some(Action::CheckUpdate),
             QUIT => Some(Action::Quit),
-            id if id >= FIRST_SYNCED_ROW => self
-                .synced
-                .as_ref()
-                .and_then(|ids| ids.get((id - FIRST_SYNCED_ROW) as usize))
-                .cloned()
-                .map(Action::Chart),
+            id if id >= FIRST_SYNCED_ROW => {
+                let (rows, groups) = self.synced.as_ref()?;
+                let mut ids = rows.iter().chain(groups.iter().flat_map(|(_, ids)| ids));
+                ids.nth((id - FIRST_SYNCED_ROW) as usize).cloned().map(Action::Chart)
+            }
             id if id >= FIRST_HOLDINGS_ROW => Some(Action::Holdings),
             id if id >= FIRST_ROW => {
                 self.ids.get((id - FIRST_ROW) as usize).cloned().map(Action::Chart)

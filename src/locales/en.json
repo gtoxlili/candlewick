@@ -84,7 +84,12 @@
       "count_other": "%{count} entries",
       "skipped_one": "%{count} not quoted",
       "skipped_other": "%{count} not quoted",
-      "until": "until %{date}"
+      "account": "Tonghuashun account",
+      "scan": "Scan with the Tonghuashun app, then confirm",
+      "qrExpired": "The code expired",
+      "newCode": "New code",
+      "groups_one": "%{count} group",
+      "groups_other": "%{count} groups"
     },
     "onchain": {
       "title": "On-chain data",

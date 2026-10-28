@@ -372,11 +372,27 @@ pub struct FeedControl {
 pub struct Synced {
     /// What the app can quote, in the account's order.
     pub instruments: Vec<Instrument>,
+    /// The user's own groups, in their order; those with nothing quoted left
+    /// out.
+    pub groups: Vec<SyncedGroup>,
     /// Entries nothing here quotes: Hong Kong and US stocks, futures, bonds.
     pub skipped: usize,
     /// Epoch milliseconds of the last good read; none before the first.
     pub updated: Option<f64>,
     pub status: SyncStatus,
+}
+
+impl Synced {
+    /// Every instrument, the watchlist's and the groups' (some in both).
+    pub fn all(&self) -> impl Iterator<Item = &Instrument> {
+        self.instruments.iter().chain(self.groups.iter().flat_map(|group| &group.instruments))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncedGroup {
+    pub name: String,
+    pub instruments: Vec<Instrument>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -409,9 +425,9 @@ impl Model {
     /// The instrument `id` names: the watchlist's, or one from the user's
     /// Tonghuashun watchlist.
     pub fn instrument(&self, id: &str) -> Option<&Instrument> {
-        self.settings.instrument(id).or_else(|| {
-            self.synced.as_ref()?.instruments.iter().find(|instrument| instrument.id() == id)
-        })
+        self.settings
+            .instrument(id)
+            .or_else(|| self.synced.as_ref()?.all().find(|instrument| instrument.id() == id))
     }
 
     /// Whether prices from `provider` may be old.

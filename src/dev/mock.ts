@@ -20,15 +20,15 @@ const pool: Instrument = {
   venue: { chain: "Solana", dex: "Raydium" },
 };
 
-const thsAccount: ThsAccount = {
-  user: "同花顺用户",
-  expires: Date.now() / 1000 + 30 * 86_400,
-  count: 23,
-  skipped: 2,
-  updated: Date.now(),
-  state: "read",
-  error: null,
-};
+const thsAccount: ThsAccount = { count: 7, groups: 10, skipped: 2, updated: Date.now(), state: "read", error: null };
+
+/** A stand-in QR code: a checkerboard. */
+const thsQr = `data:image/svg+xml;utf8,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" shape-rendering="crispEdges">${Array.from(
+    { length: 32 },
+    (_, i) => `<rect x="${(i % 4) * 2 + (Math.floor(i / 4) % 2)}" y="${Math.floor(i / 4)}" width="1" height="1"/>`,
+  ).join("")}</svg>`,
+)}`;
 
 const settings: Settings = {
   exchange: "binance",
@@ -437,15 +437,18 @@ export function installMocks(label: string): void {
         return state === "empty" ? { ...loading, accounts: [] } : state === "loading" ? loading : portfolio;
       case "search_instruments":
         return search(String(args.query ?? ""));
-      // `?ths=signed-in` shows a Tonghuashun login and its watchlist.
+      // `?ths=signed-in` shows a Tonghuashun account and what was read with it,
+      // `?ths=scan` a QR sign-in under way.
       case "get_ths":
         return params.get("ths") === "signed-in"
-          ? { key: "a1b2c3…wxyz", account: thsAccount }
-          : { key: null, account: null };
+          ? { key: "a1b2c3…wxyz", account: thsAccount, signIn: null }
+          : params.get("ths") === "scan"
+            ? { key: "a1b2c3…wxyz", account: null, signIn: { qr: thsQr, state: "waiting", error: null } }
+            : { key: null, account: null, signIn: null };
       case "set_ths":
-        return { key: args.key === null ? null : "a1b2c3…wxyz", account: null };
+        return { key: args.key === null ? null : "a1b2c3…wxyz", account: null, signIn: null };
       case "ths_sign_out":
-        return { key: "a1b2c3…wxyz", account: null };
+        return { key: "a1b2c3…wxyz", account: null, signIn: null };
       case "get_coingecko":
         return { key: null, access: null };
       // Any key saved reads as an Analyst plan, to see the configured state.

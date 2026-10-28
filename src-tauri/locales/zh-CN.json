@@ -50,8 +50,7 @@
   "window": {
     "settings": "Candlewick 设置",
     "holdings": "Candlewick 持仓",
-    "chart": "%{pair} 行情",
-    "thsSignIn": "登录同花顺"
+    "chart": "%{pair} 行情"
   },
   "appMenu": {
     "about": "关于 Candlewick",
@@ -117,6 +116,7 @@
     "coingeckoKey": "CoinGecko 不认识这个 API Key",
     "coingeckoKeyMissing": "还没有保存 CoinGecko API Key",
     "thsKey": "同花顺不接受这个 API Key",
+    "thsdkMissing": "这个 Candlewick 副本缺少同花顺账号组件",
     "noQuote": "%{source}没有这只股票的报价",
     "unknownSymbol": "%{source}查不到 %{symbol}",
     "sourceBadData": "%{source}返回的数据格式有误",

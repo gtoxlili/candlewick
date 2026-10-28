@@ -165,16 +165,20 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 
 条款：文档站没有单独的使用条款页；Key 与同花顺账号绑定，签发数量有上限。应用只作为用户自带 Key 的客户端。
 
-#### 账号自选（`account.rs`）
+#### 账号自选（`account.rs`、`thsdk.rs`）
 
-在「设置 → 同花顺」登录同花顺账号后，用户在同花顺里的自选出现在下拉菜单的「同花顺自选」二级菜单里，带报价，点一行打开它的行情图。只读，从不写回。报价走上面的数据 API，所以要先填 Key。
+在「设置 → 同花顺」扫码登录同花顺账号后，用户在同花顺里的自选和自建分组出现在下拉菜单的「同花顺自选」二级菜单里：先是「我的自选」各行，再是每个分组一个子菜单，都带报价，点一行打开它的行情图。只读，从不写回。报价走上面的数据 API，所以要先填 Key。
 
-- 登录：一个普通的浏览器窗口加载同花顺社区站内嵌用的登录面板（`upass.10jqka.com.cn/login?isIframe=1&main=3&pannel=1&source=sns&redir=…`），用同花顺 App 扫码，或者用页面提供的其他方式。窗口是隐私模式（WKWebView 的非持久存储、WebView2 的 InPrivate），关掉即忘。应用每秒读一次窗口里 `t.10jqka.com.cn` 的 Cookie（含 HttpOnly），出现 `userid` 后用它们请求一次自选，成功就保存这组 Cookie 并关窗。显示的用户名取 `u_name` 或 `escapename`（JavaScript `escape` 编码），有效期取 `userid`、`ticket`、`sess_tk`、`user` 里最早到期的那个。WebView2 读 Cookie 要经过主线程，在主线程或同步回调里读会死锁，所以放在 `spawn_blocking` 里。
-- 登录页对 curl 返回 401 和一段反爬脚本（chameleon），由浏览器执行后才放行；被 DevTools 控制的 Chrome 实测被拒（「Nginx forbidden」）。
-- 读取：`GET https://t.10jqka.com.cn/newcircle/group/getSelfStockWithMarket/`，带这组 Cookie 和浏览器 UA，返回 `{"errorCode":0,"result":[{"code","marketid"}]}`。没登录或已过期时返回 `{"errorCode":-1,"errorMsg":"当前用户未登录"}`，同时用 Set-Cookie 清掉 `user`、`userid`、`u_name`、`escapename`、`ticket`、`g`。只读「我的自选」这一组。每 10 分钟读一次，失败后按 1、2、4、8 分钟重试；过期后不再重试，等用户重新登录。第三方项目实测 `sess_tk` 约 31 天有效。
-- 对应到数据 API 的代码：自选里是同花顺自己的代码（上证指数是 `1A0001`）。代码表 `/api/meta/tickers/list?asset_type=…&limit=10000` 一次给全（约 9,100 条，1.9 MB），它的 `ticker` 就是同花顺的代码，全表不重复，按它对上；marketid 为 16、17（沪）、32、33（深）、151（北）时先按交易所代码找，以防自选里写的是 `000001` 这样的交易所代码。只有出现没见过的条目时才下载代码表，用完即放；港股、美股、期货等对不上的只计数。
+同花顺的网页登录走不通：登录页对 curl 返回 401 和一段反爬脚本（chameleon），被 DevTools 控制的 Chrome 被拒（「Nginx forbidden」），普通浏览器能打开页面但登录不进去（2026-10-28）。所以用 thsdk 的运行组件，它走同花顺客户端自己的登录和自选同步协议。
+
+- 运行组件：PyPI 上 thsdk 包（MIT）里的闭源库 `hq.dylib` / `hq.dll`（Go 编译，各约 11 MB，压缩后约 4 MB），接口是 `CallAlloc(json) -> json` 加 `FreeResult`：请求 `{method, params?, timeout_ms?}`，回答 `{ok, data?, error?: {code, message, retry_after_ms?}}`。两次调用至少间隔 50 ms，太快会回 `rate_limited` 和要等的毫秒数。`scripts/fetch-thsdk.mjs` 在 `pnpm install` 之后按哈希下载 thsdk 2.0.2，取出这个平台的库和许可证放到 `src-tauri/thsdk/`；macOS 作为 framework 打进 `Contents/Frameworks`，随应用一起签名公证，Windows 放在 exe 旁边。连 `cargo check` 都要它在（`tauri-build` 检查 framework 和 resources 是否存在）。
+- 隔离：库只在辅助进程里加载，也就是这个可执行文件带 `--thsdk-helper <库路径>` 启动，`main` 一开头就转去服务它，不碰 Tauri 和单实例。两边按行交换上面的 JSON；每次同步或扫码起一个，用完关掉 stdin 它就退出。闭源代码因此读不到主进程内存里的交易所 Key，它的 Go 运行时（线程、内存、信号处理）不常驻，崩了也只是辅助进程。同一会话目录同时只开一个。
+- 会话：存在配置目录的 `thsdk/account.session`（目录 0700），是运行组件自己的格式（Go gob，里面有它模拟的客户端标识）。`credentials.json` 只记 `thsSignedIn`。约一个月有效；过期后 `auth` 回 `session_unavailable`（读自选回 `not_authenticated`），菜单和设置页提示重新登录，不再重试。退出登录调 `logout` 并删掉文件。
+- 扫码：`auth_qrcode {session_dir, timeout_seconds, poll_interval_ms}` 返回 `{state: created, image_url, scan_url}`，之后不带参数每秒问一次（`waiting`…），`authenticated` 即成；放弃时传 `{cancel: true}`。`image_url`（`upass.10jqka.com.cn/scan/creatImg?qrid=…`）是一张 252×252 的 PNG，普通请求就能取到，转成 data URL 显示在设置页；三分钟没扫或关掉设置窗口就作废。
+- 读取：先 `auth {session_dir}` 恢复会话，再 `get_account_watchlist`（「我的自选」，`securities: [{code, market}]`）和 `get_account_watchlist_groups`（`{group_order, groups: {id: {name, securities}}}`，`group_order` 里 id 会重复）。市场是同花顺客户端的写法：`USHA`、`USZA` 是沪深 A 股，`USHJ`、`USZJ` 是沪深基金。每 10 分钟读一次，失败后按 1、2、4、8 分钟重试。
+- 对应到数据 API 的代码：自选里是同花顺自己的代码（上证指数是 `1A0001`）。代码表 `/api/meta/tickers/list?asset_type=…&limit=10000` 一次给全（约 9,100 条，1.9 MB），它的 `ticker` 就是同花顺的代码，全表不重复，按它对上；市场以 `USH`、`USZ` 开头时先按 `代码.SH`、`代码.SZ` 找，以防写的是交易所代码。只有出现没见过的条目时才下载代码表，用完即放；港股、美股、期货等对不上的只计数。实测一个账号的 7 项自选和 11 个分组 60 多项全部对上。
 - 报价：这些代码交给菜单栏的报价轮询（`quotes.rs`），交易时段每 30 秒一轮，打开下拉菜单时立即一轮，休市时只在收盘后读一次。股票和指数每 50 个一批。
-- 行情窗口能打开不在自选里的品种：`Model::instrument` 先找自选，再找同步来的同花顺自选。
+- 行情窗口能打开不在自选里的品种：`Model::instrument` 先找自选，再找同步来的同花顺自选和分组。
 
 ## 持仓（交易所 API Key）
 

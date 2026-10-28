@@ -1,178 +1,153 @@
-//! The user's own Tonghuashun watchlist, through the site's web login. A
-//! window shows Tonghuashun's own sign-in page (its QR code scanned with the
-//! Tonghuashun app, or any other way the page offers); the cookies it leaves
-//! are what the site's own pages send, and all the app keeps. It only reads:
-//! nothing is ever written back to the account. A login lasts about a month,
-//! then the user signs in again.
+//! The user's own Tonghuashun watchlist, through Tonghuashun's client
+//! sign-in (thsdk's runtime, `thsdk.rs`). The settings window shows a QR
+//! code from Tonghuashun, scanned and confirmed in the Tonghuashun app; the
+//! session that leaves is the runtime's own file in the app's config folder
+//! (`thsdk/account.session`, good for about a month). With it the watchlist
+//! and its groups are read, never written.
 //!
-//! The watchlist comes as Tonghuashun's own codes with a market id. They are
-//! matched against the data API's code table ([`api::listings`]), so their
-//! quotes come the way the app's watchlist's do (`quotes.rs`); Hong Kong and
-//! US stocks, futures and the like have no match there and are only counted.
+//! Entries come as Tonghuashun's codes with its client's market codes
+//! (`USHA`, `USZJ`…). They are matched against the data API's code table
+//! ([`api::listings`]), so their quotes come the way the app's watchlist's
+//! do (`quotes.rs`); Hong Kong and US stocks, futures and the like have no
+//! match there and are only counted.
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
-use serde::{Deserialize, Deserializer, Serialize};
-use tauri::{AppHandle, Manager, Url};
-use tokio::{sync::watch, time::sleep};
+use base64::Engine as _;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
+use tauri::{AppHandle, Manager};
+use tokio::{
+    sync::{oneshot, watch},
+    time::sleep,
+};
 
-use super::{ID, Kind, QUOTE, api, code, trimmed};
+use super::{
+    ID, Kind, QUOTE, api, code,
+    thsdk::{Failure, Runtime},
+    trimmed,
+};
 use crate::{
-    bar,
-    credentials::{self, ThsAccount},
-    http,
+    bar, credentials, http,
     market::Error,
-    model::{FeedControl, Instrument, Shared, SyncStatus, Synced},
+    model::{FeedControl, Instrument, Shared, SyncStatus, Synced, SyncedGroup},
     window,
 };
 
-/// Tonghuashun's sign-in panel, as the site's community pages embed it
-/// (QR code, password or text message); signed in, it lands on their
-/// sign-in landing page, on the host the watchlist is read from.
-pub const SIGN_IN: &str = "https://upass.10jqka.com.cn/login?isIframe=1&main=3&pannel=1&source=sns\
-                           &redir=https://t.10jqka.com.cn/static/loginBack.html";
-/// The watchlist as the site's own pages read it; the cookies sent are this
-/// URL's.
-const WATCHLIST: &str = "https://t.10jqka.com.cn/newcircle/group/getSelfStockWithMarket/";
-/// The site serves browsers.
-const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
-                          (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 /// The watchlist changes when the user edits it in Tonghuashun's apps.
 const SYNC_EVERY: Duration = Duration::from_secs(600);
 const RETRY: Duration = Duration::from_secs(60);
-/// The `errorCode` of a request without a valid login.
-const SIGNED_OUT: i64 = -1;
-/// Cookies that make the login, whose expiry is the login's.
-const LOGIN_COOKIES: [&str; 4] = ["userid", "ticket", "sess_tk", "user"];
+/// How long a QR code waits to be scanned and confirmed.
+const QR_TIMEOUT: Duration = Duration::from_secs(180);
+const QR_POLL: Duration = Duration::from_secs(1);
+/// A call's longest wait for Tonghuashun.
+const CALL: Duration = Duration::from_secs(30);
 
-/// An entry of the watchlist: Tonghuashun's code and market id.
+/// One helper at a time: they share the session file.
+static HELPER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Where thsdk's runtime keeps the session: the config folder's `thsdk`,
+/// readable by the user only.
+fn session_dir(app: &AppHandle) -> Result<PathBuf, Error> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|_| Error::Message(t!("error.noConfigDir").to_owned()))?
+        .join("thsdk");
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(&dir).map_err(|e| Error::Message(t!("error.saveFailed", error = e)))?;
+    Ok(dir)
+}
+
+/// An entry of the watchlist: Tonghuashun's code and its client's market.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 struct Entry {
     code: String,
-    #[serde(deserialize_with = "text")]
-    marketid: String,
-}
-
-/// A string, or a number written without quotes.
-fn text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
-    Ok(match serde_json::Value::deserialize(deserializer)? {
-        serde_json::Value::String(text) => text,
-        other => other.to_string(),
-    })
-}
-
-/// `{"errorCode": 0, "errorMsg": "", "result": [{"code": …, "marketid": …}]}`
-#[derive(Deserialize)]
-struct Answer {
-    #[serde(rename = "errorCode")]
-    error_code: i64,
-    #[serde(rename = "errorMsg", default)]
-    error_msg: String,
     #[serde(default)]
-    result: Option<Vec<Entry>>,
+    market: String,
 }
 
-enum Failure {
-    /// The login ran out.
+#[derive(Deserialize)]
+struct List {
+    #[serde(default)]
+    securities: Vec<Entry>,
+}
+
+#[derive(Deserialize)]
+struct Groups {
+    /// The groups' order in the user's apps; ids can repeat.
+    #[serde(default)]
+    group_order: Vec<i64>,
+    #[serde(default)]
+    groups: HashMap<String, Group>,
+}
+
+#[derive(Deserialize)]
+struct Group {
+    id: i64,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    securities: Vec<Entry>,
+}
+
+impl Groups {
+    /// The groups as the user orders them, any the order misses after.
+    fn ordered(mut self) -> Vec<Group> {
+        let mut ordered = Vec::new();
+        for id in self.group_order {
+            if let Some(group) = self.groups.remove(&id.to_string()) {
+                ordered.push(group);
+            }
+        }
+        let mut rest: Vec<Group> = self.groups.into_values().collect();
+        rest.sort_by_key(|group| group.id);
+        ordered.extend(rest);
+        ordered
+    }
+}
+
+enum Read {
+    /// No session, or it ran out.
     SignedOut,
     Failed(Error),
 }
 
-async fn read(account: &ThsAccount) -> Result<Vec<Entry>, Failure> {
-    let cookie = account
-        .cookies
-        .iter()
-        .map(|(name, value)| format!("{name}={value}"))
-        .collect::<Vec<_>>()
-        .join("; ");
-    let headers = [
-        ("Cookie", cookie.as_str()),
-        ("User-Agent", USER_AGENT),
-        ("Referer", "https://t.10jqka.com.cn/"),
-    ];
-    let answer: Answer =
-        http::get_json_with(WATCHLIST, &headers).await.map_err(|e| Failure::Failed(e.into()))?;
-    match answer.error_code {
-        0 => Ok(answer.result.unwrap_or_default()),
-        SIGNED_OUT => Err(Failure::SignedOut),
-        code if answer.error_msg.is_empty() => Err(Failure::Failed(Error::Message(t!(
-            "error.sourceCode",
-            source = ID.name(),
-            code = code
-        )))),
-        _ => Err(Failure::Failed(Error::Message(t!(
-            "error.sourceSays",
-            source = ID.name(),
-            message = answer.error_msg
-        )))),
-    }
-}
-
-/// The login a sign-in left, from its cookies as `(name, value, expires)`:
-/// none until the site has set the user's id. The name shown is the one
-/// the site keeps, else the id.
-fn account_of(cookies: &[(String, String, Option<i64>)]) -> Option<ThsAccount> {
-    let set = |value: &str| !value.is_empty() && value != "deleted";
-    let get = |name: &str| {
-        cookies.iter().find(|(n, value, _)| n == name && set(value)).map(|(_, value, _)| value)
-    };
-    let userid = get("userid")?;
-    let user = ["u_name", "escapename"]
-        .into_iter()
-        .find_map(|name| get(name).map(|value| unescape(value)))
-        .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| userid.clone());
-    let expires = cookies
-        .iter()
-        .filter(|(name, value, _)| LOGIN_COOKIES.contains(&name.as_str()) && set(value))
-        .filter_map(|(_, _, expires)| *expires)
-        .min();
-    let cookies = cookies
-        .iter()
-        .filter(|(_, value, _)| set(value))
-        .map(|(name, value, _)| (name.clone(), value.clone()))
-        .collect();
-    Some(ThsAccount { cookies, user, expires })
-}
-
-/// A name as the site's cookies write it: JavaScript's `escape` (`%uXXXX`
-/// beyond Latin-1) or percent-encoded UTF-8.
-fn unescape(text: &str) -> String {
-    let mut out = String::new();
-    let mut bytes = Vec::new();
-    let mut rest = text;
-    let flush = |bytes: &mut Vec<u8>, out: &mut String| {
-        match String::from_utf8(std::mem::take(bytes)) {
-            Ok(text) => out.push_str(&text),
-            // Latin-1, as `escape` writes it.
-            Err(e) => out.extend(e.into_bytes().into_iter().map(char::from)),
-        }
-    };
-    while let Some(at) = rest.find('%') {
-        if !bytes.is_empty() && at > 0 {
-            flush(&mut bytes, &mut out);
-        }
-        out.push_str(&rest[..at]);
-        let tail = &rest[at + 1..];
-        let wide = tail.strip_prefix('u').and_then(|hex| hex.get(..4));
-        if let Some(c) =
-            wide.and_then(|hex| u32::from_str_radix(hex, 16).ok()).and_then(char::from_u32)
-        {
-            flush(&mut bytes, &mut out);
-            out.push(c);
-            rest = &tail[5..];
-        } else if let Some(byte) = tail.get(..2).and_then(|hex| u8::from_str_radix(hex, 16).ok()) {
-            bytes.push(byte);
-            rest = &tail[2..];
+impl From<Failure> for Read {
+    fn from(failure: Failure) -> Self {
+        if failure.refused("session_unavailable") || failure.refused("not_authenticated") {
+            Read::SignedOut
         } else {
-            flush(&mut bytes, &mut out);
-            out.push('%');
-            rest = tail;
+            Read::Failed(failure.into())
         }
     }
-    flush(&mut bytes, &mut out);
-    out.push_str(rest);
-    out
+}
+
+/// The watchlist and its groups, as the account has them.
+async fn read(app: &AppHandle) -> Result<(Vec<Entry>, Vec<Group>), Read> {
+    let dir = session_dir(app).map_err(Read::Failed)?;
+    let _helper = HELPER.lock().await;
+    let mut runtime = Runtime::start().map_err(Read::Failed)?;
+    let auth = runtime.call("auth", Some(json!({ "session_dir": dir })), CALL).await?;
+    if auth.get("authenticated") != Some(&Value::Bool(true)) {
+        return Err(Read::SignedOut);
+    }
+    let list: List = parse(runtime.call("get_account_watchlist", None, CALL).await?)?;
+    let groups: Groups = parse(runtime.call("get_account_watchlist_groups", None, CALL).await?)?;
+    Ok((list.securities, groups.ordered()))
+}
+
+fn parse<T: DeserializeOwned>(value: Value) -> Result<T, Read> {
+    serde_json::from_value(value)
+        .map_err(|_| Read::Failed(Error::Message(t!("error.sourceBadData", source = ID.name()))))
 }
 
 /// What the data API calls an entry, resolved once each: the code table is
@@ -181,30 +156,41 @@ fn unescape(text: &str) -> String {
 struct Resolved(HashMap<Entry, Option<(Instrument, Kind)>>);
 
 impl Resolved {
-    async fn instruments(&mut self, entries: &[Entry]) -> Result<(Vec<Instrument>, usize), Error> {
-        let new: Vec<&Entry> = entries.iter().filter(|e| !self.0.contains_key(*e)).collect();
-        if !new.is_empty() {
-            let listings = api::listings().await?;
-            let table = Table::new(&listings);
-            for entry in new {
-                let found = table.find(entry).map(|listing| (instrument(listing), listing.kind));
-                self.0.insert(entry.clone(), found);
-            }
+    async fn resolve<'a>(&mut self, entries: impl Iterator<Item = &'a Entry>) -> Result<(), Error> {
+        let new: Vec<&Entry> = entries.filter(|e| !self.0.contains_key(*e)).collect();
+        if new.is_empty() {
+            return Ok(());
         }
+        let listings = api::listings().await?;
+        let table = Table::new(&listings);
+        for entry in new {
+            let found = table.find(entry).map(|listing| (instrument(listing), listing.kind));
+            self.0.insert(entry.clone(), found);
+        }
+        Ok(())
+    }
+
+    /// The instruments of `entries` that resolved, each once, in order.
+    fn instruments(&self, entries: &[Entry]) -> Vec<Instrument> {
         let mut instruments: Vec<Instrument> = Vec::new();
-        let mut skipped = 0;
         for entry in entries {
-            match self.0.get(entry) {
-                Some(Some((instrument, kind))) => {
-                    if !instruments.iter().any(|i| i.symbol == instrument.symbol) {
-                        api::remember(&instrument.symbol, *kind);
-                        instruments.push(instrument.clone());
-                    }
-                }
-                _ => skipped += 1,
+            if let Some(Some((instrument, kind))) = self.0.get(entry)
+                && !instruments.iter().any(|i| i.symbol == instrument.symbol)
+            {
+                api::remember(&instrument.symbol, *kind);
+                instruments.push(instrument.clone());
             }
         }
-        Ok((instruments, skipped))
+        instruments
+    }
+
+    /// How many different entries nothing here quotes.
+    fn unmatched<'a>(&self, entries: impl Iterator<Item = &'a Entry>) -> usize {
+        let mut unmatched: Vec<&Entry> =
+            entries.filter(|e| matches!(self.0.get(*e), Some(None))).collect();
+        unmatched.sort_by(|a, b| (&a.code, &a.market).cmp(&(&b.code, &b.market)));
+        unmatched.dedup();
+        unmatched.len()
     }
 }
 
@@ -223,23 +209,24 @@ impl<'a> Table<'a> {
     }
 
     /// Tonghuashun's codes are unique across the table (an index can have
-    /// one of its own, `1A0001`); one written as the exchange writes it is
-    /// found by its market instead.
+    /// one of its own, `1A0001` for `000001.SH`); one written as the
+    /// exchange writes it is found by its market instead.
     fn find(&self, entry: &Entry) -> Option<&'a api::Listing> {
-        let by_market = exchange(&entry.marketid)
+        let by_market = exchange(&entry.market)
             .and_then(|market| self.symbols.get(format!("{}.{market}", entry.code).as_str()));
         by_market.or_else(|| self.tickers.get(entry.code.as_str())).copied()
     }
 }
 
-/// The exchange of a Tonghuashun market id, for the ids known for sure:
-/// Shanghai's and Shenzhen's indexes and shares, and Beijing.
-fn exchange(marketid: &str) -> Option<&'static str> {
-    match marketid {
-        "16" | "17" => Some("SH"),
-        "32" | "33" => Some("SZ"),
-        "151" => Some("BJ"),
-        _ => None,
+/// The exchange of one of Tonghuashun's client markets: `USHA` (Shanghai
+/// shares), `USHJ` (its funds), `USZA`, `USZJ` (Shenzhen's)…
+fn exchange(market: &str) -> Option<&'static str> {
+    if market.starts_with("USH") {
+        Some("SH")
+    } else if market.starts_with("USZ") {
+        Some("SZ")
+    } else {
+        None
     }
 }
 
@@ -259,7 +246,7 @@ fn instrument(listing: &api::Listing) -> Instrument {
 /// What the watchlist sync depends on.
 #[derive(Clone, PartialEq)]
 struct Wanted {
-    account: Option<ThsAccount>,
+    signed_in: bool,
     /// Quotes need the data API's key.
     key: bool,
     paused: bool,
@@ -268,7 +255,7 @@ struct Wanted {
 impl Wanted {
     fn of(control: &FeedControl) -> Self {
         Self {
-            account: control.credentials.ths_account.clone(),
+            signed_in: control.credentials.ths_signed_in,
             key: control.credentials.ths.is_some(),
             paused: control.paused != 0,
         }
@@ -277,41 +264,40 @@ impl Wanted {
 
 /// Keeps the user's Tonghuashun watchlist current while signed in there:
 /// read every [`SYNC_EVERY`], not at all while nobody can see it, and no
-/// more once the login has run out.
+/// more once the session has run out.
 pub async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
     let mut resolved = Resolved::default();
     let mut failures: u32 = 0;
     loop {
         let wanted = Wanted::of(&control.borrow_and_update());
-        let delay = match &wanted.account {
-            None => {
-                resolved = Resolved::default();
-                failures = 0;
-                publish(&app, |synced| *synced = None);
-                None
-            }
-            Some(_) if wanted.paused => None,
-            Some(_) if !wanted.key => {
-                let error = t!("error.sourceNeedsCredentials", source = ID.name());
-                status(&app, SyncStatus::Failed(error));
-                None
-            }
-            Some(account) => match sync(&app, account, &mut resolved).await {
+        let delay = if !wanted.signed_in {
+            resolved = Resolved::default();
+            failures = 0;
+            publish(&app, |synced| *synced = None);
+            None
+        } else if wanted.paused {
+            None
+        } else if !wanted.key {
+            let error = t!("error.sourceNeedsCredentials", source = ID.name());
+            status(&app, SyncStatus::Failed(error));
+            None
+        } else {
+            match sync(&app, &mut resolved).await {
                 Ok(()) => {
                     failures = 0;
                     Some(SYNC_EVERY)
                 }
-                Err(Failure::SignedOut) => {
+                Err(Read::SignedOut) => {
                     status(&app, SyncStatus::SignedOut);
                     None
                 }
-                Err(Failure::Failed(e)) => {
+                Err(Read::Failed(e)) => {
                     log::warn!("tonghuashun watchlist: {e}");
                     status(&app, SyncStatus::Failed(e.to_string()));
                     failures += 1;
                     Some((RETRY * (1 << (failures - 1).min(3))).min(SYNC_EVERY))
                 }
-            },
+            }
         };
         let changed = changed(&mut control, &wanted);
         let ended = match delay {
@@ -340,24 +326,28 @@ async fn changed(
     }
 }
 
-async fn sync(
-    app: &AppHandle,
-    account: &ThsAccount,
-    resolved: &mut Resolved,
-) -> Result<(), Failure> {
+async fn sync(app: &AppHandle, resolved: &mut Resolved) -> Result<(), Read> {
     if app.state::<Shared>().model().synced.is_none() {
         publish(app, |synced| *synced = Some(Synced::default()));
     }
-    let entries = read(account).await?;
-    let (instruments, skipped) = resolved.instruments(&entries).await.map_err(Failure::Failed)?;
-    publish(app, |synced| {
-        *synced = Some(Synced {
-            instruments,
-            skipped,
-            updated: Some(crate::portfolio::now_ms()),
-            status: SyncStatus::Read,
-        });
-    });
+    let (list, groups) = read(app).await?;
+    let all = || list.iter().chain(groups.iter().flat_map(|g| &g.securities));
+    resolved.resolve(all()).await.map_err(Read::Failed)?;
+    let synced = Synced {
+        instruments: resolved.instruments(&list),
+        groups: groups
+            .iter()
+            .map(|group| SyncedGroup {
+                name: group.name.clone(),
+                instruments: resolved.instruments(&group.securities),
+            })
+            .filter(|group| !group.instruments.is_empty())
+            .collect(),
+        skipped: resolved.unmatched(all()),
+        updated: Some(crate::portfolio::now_ms()),
+        status: SyncStatus::Read,
+    };
+    publish(app, |current| *current = Some(synced));
     Ok(())
 }
 
@@ -379,9 +369,11 @@ fn publish(app: &AppHandle, change: impl FnOnce(&mut Option<Synced>)) {
         let mut symbols: Vec<String> = model
             .synced
             .iter()
-            .flat_map(|synced| synced.instruments.iter().map(|i| i.symbol.clone()))
+            .flat_map(Synced::all)
+            .map(|instrument| instrument.symbol.clone())
             .collect();
         symbols.sort();
+        symbols.dedup();
         // Quotes of codes that left the watchlist go with them.
         let kept: Vec<String> =
             model.quotes.keys().filter(|id| model.instrument(id).is_some()).cloned().collect();
@@ -397,14 +389,15 @@ fn publish(app: &AppHandle, change: impl FnOnce(&mut Option<Synced>)) {
     window::emit_ths(app);
 }
 
-/// Keeps a login and lets everything that reads the watchlist know.
-fn keep(app: &AppHandle, account: Option<ThsAccount>) {
+/// Records whether the user is signed in, and lets everything that reads
+/// the watchlist know.
+fn keep(app: &AppHandle, signed_in: bool) {
     let shared = app.state::<Shared>();
     let credentials = {
         let mut stored = shared.credentials();
-        stored.ths_account = account;
+        stored.ths_signed_in = signed_in;
         if let Err(e) = credentials::save(&shared.credentials_path, &stored) {
-            log::error!("cannot save the Tonghuashun login: {e}");
+            log::error!("cannot save the Tonghuashun sign-in: {e}");
         }
         stored.clone()
     };
@@ -412,73 +405,219 @@ fn keep(app: &AppHandle, account: Option<ThsAccount>) {
     window::emit_ths(app);
 }
 
-/// Forgets the login; the watchlist leaves the dropdown.
+/// Signs out: the session ends and its file goes; the watchlist leaves the
+/// dropdown.
 pub fn sign_out(app: &AppHandle) {
-    keep(app, None);
+    cancel_sign_in();
+    keep(app, false);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let Ok(dir) = session_dir(&app) else { return };
+        let _helper = HELPER.lock().await;
+        if let Ok(mut runtime) = Runtime::start() {
+            let params = Some(json!({ "session_dir": dir }));
+            if let Err(e) = runtime.call("logout", params, CALL).await {
+                log::warn!("tonghuashun sign-out: {e:?}");
+            }
+        }
+        let _ = std::fs::remove_file(dir.join("account.session"));
+    });
 }
 
-/// Watches the sign-in window until its cookies make a login that reads the
-/// watchlist, then keeps the login and closes the window. Ends when the
-/// window closes.
-pub fn watch_sign_in(app: AppHandle) {
+/// A sign-in under way, as the settings window shows it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignIn {
+    /// The QR code to scan in the Tonghuashun app, a PNG data URL; none
+    /// until it has arrived.
+    pub qr: Option<String>,
+    pub state: SignInState,
+    /// Why it failed.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SignInState {
+    /// Waiting for the code, then for it to be scanned and confirmed.
+    Waiting,
+    /// The code ran out unscanned; another one takes asking again.
+    Expired,
+    Failed,
+}
+
+struct Job {
+    view: SignIn,
+    /// Sending (or dropping) it stops the sign-in.
+    cancel: Option<oneshot::Sender<()>>,
+}
+
+static JOB: Mutex<Option<Job>> = Mutex::new(None);
+
+fn job() -> std::sync::MutexGuard<'static, Option<Job>> {
+    JOB.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The sign-in under way or how the last one ended, if any.
+pub fn sign_in_view() -> Option<SignIn> {
+    job().as_ref().map(|job| job.view.clone())
+}
+
+/// Starts signing in with a QR code, unless that is already under way.
+pub fn sign_in(app: &AppHandle) {
+    let (cancel, cancelled) = oneshot::channel();
+    {
+        let mut job = job();
+        if job.as_ref().is_some_and(|job| job.view.state == SignInState::Waiting) {
+            return;
+        }
+        *job = Some(Job {
+            view: SignIn { qr: None, state: SignInState::Waiting, error: None },
+            cancel: Some(cancel),
+        });
+    }
+    window::emit_ths(app);
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let url = Url::parse(WATCHLIST).expect("a valid URL");
-        let mut tried: Option<Vec<(String, String)>> = None;
-        loop {
-            sleep(Duration::from_secs(1)).await;
-            let Some(window) = app.get_webview_window(window::THS_SIGN_IN) else {
-                return;
-            };
-            // Off the runtime's thread: WebView2 answers through the main
-            // thread, and deadlocks if asked from it.
-            let url = url.clone();
-            let found = tauri::async_runtime::spawn_blocking(move || window.cookies_for_url(url));
-            let Ok(Ok(cookies)) = found.await else {
-                continue;
-            };
-            let cookies: Vec<(String, String, Option<i64>)> = cookies
-                .iter()
-                .map(|cookie| {
-                    let expires = cookie.expires_datetime().map(|at| at.unix_timestamp());
-                    (cookie.name().to_owned(), cookie.value().to_owned(), expires)
-                })
-                .collect();
-            let Some(account) = account_of(&cookies) else {
-                continue;
-            };
-            if tried.as_ref() == Some(&account.cookies) {
-                continue;
-            }
-            tried = Some(account.cookies.clone());
-            match read(&account).await {
-                Ok(_) => {
-                    log::info!("signed in to tonghuashun");
-                    keep(&app, Some(account));
-                    if let Some(window) = app.get_webview_window(window::THS_SIGN_IN) {
-                        let _ = window.close();
+        let ended = scan(&app, cancelled).await;
+        let signed_in = matches!(ended, Scan::SignedIn);
+        {
+            let mut job = job();
+            match ended {
+                Scan::SignedIn | Scan::Cancelled => *job = None,
+                Scan::Expired => {
+                    if let Some(job) = job.as_mut() {
+                        (job.view.state, job.cancel) = (SignInState::Expired, None);
                     }
-                    return;
                 }
-                // Halfway there: the page goes on setting cookies.
-                Err(Failure::SignedOut) => {}
-                Err(Failure::Failed(e)) => {
-                    log::warn!("tonghuashun sign-in check: {e}");
-                    tried = None;
+                Scan::Failed(e) => {
+                    if let Some(job) = job.as_mut() {
+                        job.view = SignIn {
+                            qr: None,
+                            state: SignInState::Failed,
+                            error: Some(e.to_string()),
+                        };
+                        job.cancel = None;
+                    }
                 }
             }
         }
+        if signed_in {
+            keep(&app, true);
+        } else {
+            window::emit_ths(&app);
+        }
     });
+}
+
+/// Stops a sign-in under way, and forgets how the last one ended.
+pub fn cancel_sign_in() {
+    if let Some(mut job) = job().take()
+        && let Some(cancel) = job.cancel.take()
+    {
+        let _ = cancel.send(());
+    }
+}
+
+enum Scan {
+    SignedIn,
+    Cancelled,
+    Expired,
+    Failed(Error),
+}
+
+/// thsdk's QR sign-in: a code, then its state every [`QR_POLL`] until it is
+/// confirmed in the app, runs out, or the user stops it. A session still
+/// good needs no code at all.
+async fn scan(app: &AppHandle, mut cancelled: oneshot::Receiver<()>) -> Scan {
+    let dir = match session_dir(app) {
+        Ok(dir) => dir,
+        Err(e) => return Scan::Failed(e),
+    };
+    let _helper = HELPER.lock().await;
+    let mut runtime = match Runtime::start() {
+        Ok(runtime) => runtime,
+        Err(e) => return Scan::Failed(e),
+    };
+    let params = json!({
+        "session_dir": dir,
+        "timeout_seconds": QR_TIMEOUT.as_secs(),
+        "poll_interval_ms": QR_POLL.as_millis() as u64,
+    });
+    let deadline = Instant::now() + QR_TIMEOUT;
+    let mut state = runtime.call("auth_qrcode", Some(params), Duration::from_secs(20)).await;
+    let mut shown = String::new();
+    loop {
+        let challenge: Challenge = match state {
+            Ok(value) => serde_json::from_value(value).unwrap_or_default(),
+            Err(e) => return Scan::Failed(e.into()),
+        };
+        if challenge.authenticated || challenge.state == "authenticated" {
+            return Scan::SignedIn;
+        }
+        if ENDED.contains(&challenge.state.as_str()) || Instant::now() >= deadline {
+            return Scan::Expired;
+        }
+        if !challenge.image_url.is_empty() && challenge.image_url != shown {
+            match qr_image(&challenge.image_url).await {
+                Ok(qr) => {
+                    shown = challenge.image_url;
+                    if let Some(job) = job().as_mut() {
+                        job.view.qr = Some(qr);
+                    }
+                    window::emit_ths(app);
+                }
+                Err(e) => log::warn!("tonghuashun QR code: {e}"),
+            }
+        }
+        tokio::select! {
+            _ = &mut cancelled => {
+                let stop = Some(json!({ "cancel": true }));
+                let _ = runtime.call("auth_qrcode", stop, Duration::from_secs(5)).await;
+                return Scan::Cancelled;
+            }
+            () = sleep(QR_POLL) => {}
+        }
+        state = runtime.call("auth_qrcode", None, Duration::from_secs(10)).await;
+    }
+}
+
+/// States in which a QR code no longer leads anywhere.
+const ENDED: [&str; 5] = ["expired", "timeout", "cancelled", "canceled", "failed"];
+
+/// The state of a QR sign-in, as thsdk reports it.
+#[derive(Default, Deserialize)]
+struct Challenge {
+    #[serde(default)]
+    authenticated: bool,
+    /// `created`, `waiting`, …, `authenticated`.
+    #[serde(default)]
+    state: String,
+    /// Tonghuashun's picture of the code.
+    #[serde(default)]
+    image_url: String,
+}
+
+/// The code's picture as a data URL the settings page can show.
+async fn qr_image(url: &str) -> Result<String, Error> {
+    let response = http::send(|client| client.get(url)).await?;
+    if !response.status().is_success() {
+        return Err(http::Error::Status(response.status().as_u16()).into());
+    }
+    let bytes = response.bytes().await.map_err(http::Error::from)?;
+    Ok(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    ))
 }
 
 /// The login as the settings window shows it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountView {
-    pub user: String,
-    /// Epoch seconds the login runs out at, where known.
-    pub expires: Option<i64>,
-    /// Codes in the dropdown, and entries nothing here quotes.
+    /// Codes in the watchlist, groups shown, and entries nothing here quotes.
     pub count: usize,
+    pub groups: usize,
     pub skipped: usize,
     /// Epoch milliseconds of the last good read.
     pub updated: Option<f64>,
@@ -496,12 +635,11 @@ pub enum SyncState {
     Failed,
 }
 
-pub fn view(account: &ThsAccount, synced: Option<&Synced>) -> AccountView {
+pub fn view(synced: Option<&Synced>) -> AccountView {
     let status = synced.map(|s| &s.status);
     AccountView {
-        user: account.user.clone(),
-        expires: account.expires,
         count: synced.map_or(0, |s| s.instruments.len()),
+        groups: synced.map_or(0, |s| s.groups.len()),
         skipped: synced.map_or(0, |s| s.skipped),
         updated: synced.and_then(|s| s.updated),
         state: match status {
@@ -521,82 +659,65 @@ pub fn view(account: &ThsAccount, synced: Option<&Synced>) -> AccountView {
 mod tests {
     use super::*;
 
-    fn cookie(name: &str, value: &str, expires: Option<i64>) -> (String, String, Option<i64>) {
-        (name.to_owned(), value.to_owned(), expires)
-    }
-
-    // upstream: the cookies the site clears when a request isn't signed in
-    // (`user`, `userid`, `u_name`, `escapename`, `ticket`, `g`), seen 2026-10-28.
-    #[test]
-    fn a_login_needs_the_user_id_and_keeps_every_cookie_set() {
-        assert!(account_of(&[cookie("v", "x", None), cookie("userid", "deleted", None)]).is_none());
-        let account = account_of(&[
-            cookie("userid", "123456", Some(1_800_000_000)),
-            cookie("ticket", "t", Some(1_799_000_000)),
-            cookie("escapename", "%u5F20%u4E09", None),
-            cookie("g", "", None),
-            cookie("v", "x", Some(1_700_000_000)),
-        ])
-        .unwrap();
-        assert_eq!(account.user, "张三");
-        // The login's own cookies set its expiry, not a short-lived one beside them.
-        assert_eq!(account.expires, Some(1_799_000_000));
-        let names: Vec<&str> = account.cookies.iter().map(|(name, _)| name.as_str()).collect();
-        assert_eq!(names, ["userid", "ticket", "escapename", "v"]);
-        let unnamed = account_of(&[cookie("userid", "123456", None)]).unwrap();
-        assert_eq!((unnamed.user.as_str(), unnamed.expires), ("123456", None));
-    }
-
-    #[test]
-    fn names_read_as_the_site_escapes_them() {
-        assert_eq!(unescape("%u5F20%u4E09"), "张三");
-        assert_eq!(unescape("%E5%BC%A0%E4%B8%89"), "张三");
-        assert_eq!(unescape("mx_123"), "mx_123");
-        assert_eq!(unescape("a%20b%"), "a b%");
-    }
-
     fn listing(symbol: &str, ticker: &str, kind: Kind) -> api::Listing {
         api::Listing { symbol: symbol.into(), ticker: ticker.into(), name: None, kind }
     }
 
-    fn entry(code: &str, marketid: &str) -> Entry {
-        Entry { code: code.into(), marketid: marketid.into() }
+    fn entry(code: &str, market: &str) -> Entry {
+        Entry { code: code.into(), market: market.into() }
     }
 
     // upstream: the code table writes the Shanghai Composite as `000001.SH`
-    // with Tonghuashun's own code `1A0001` (2026-10-28).
+    // with Tonghuashun's own code `1A0001`; the account's entries come with
+    // client markets such as `USHA`, `USHJ`, `USZA`, `USZJ` (2026-10-28).
     #[test]
     fn entries_match_by_tonghuashun_code_or_by_market() {
         let listings = [
             listing("000001.SH", "1A0001", Kind::Index),
             listing("000001.SZ", "000001", Kind::Stock),
             listing("885525.TI", "885525", Kind::Index),
-            listing("510300.SH", "510300", Kind::Etf),
+            listing("515030.SH", "515030", Kind::Etf),
         ];
         let table = Table::new(&listings);
         let found = |code, market| table.find(&entry(code, market)).map(|l| l.symbol.as_str());
-        assert_eq!(found("1A0001", "16"), Some("000001.SH"));
-        assert_eq!(found("000001", "33"), Some("000001.SZ"));
+        assert_eq!(found("1A0001", "USHI"), Some("000001.SH"));
+        assert_eq!(found("000001", "USZA"), Some("000001.SZ"));
         // An index written as the exchange writes it.
-        assert_eq!(found("000001", "16"), Some("000001.SH"));
-        assert_eq!(found("885525", "48"), Some("885525.TI"));
-        assert_eq!(found("510300", "20"), Some("510300.SH"));
-        assert_eq!(found("00700", "177"), None);
+        assert_eq!(found("000001", "USHI"), Some("000001.SH"));
+        assert_eq!(found("885525", "URFI"), Some("885525.TI"));
+        assert_eq!(found("515030", "USHJ"), Some("515030.SH"));
+        assert_eq!(found("00700", "UHKM"), None);
     }
 
+    // upstream: `get_account_watchlist_groups` on 2026-10-28, whose order
+    // repeats an id.
     #[test]
-    fn the_answer_reads_market_ids_written_either_way() {
-        let answer: Answer = serde_json::from_str(
-            r#"{"errorCode":0,"errorMsg":"","result":[{"code":"600519","marketid":"17"},{"code":"00700","marketid":177}]}"#,
+    fn groups_follow_the_users_order_once_each() {
+        let groups: Groups = serde_json::from_str(
+            r#"{"version":286,"group_order":[36,35,36],"groups":{
+                "35":{"id":35,"name":"算力芯片","securities":[{"code":"688256","market":"USHA"}],"version":277},
+                "36":{"id":36,"name":"科技ETF","securities":[{"code":"515030","market":"USHJ"}],"version":276},
+                "37":{"id":37,"name":"其他","securities":[],"version":1}}}"#,
         )
         .unwrap();
-        let entries = answer.result.unwrap();
-        assert_eq!(entries, [entry("600519", "17"), entry("00700", "177")]);
-        // upstream: a request without a valid login, 2026-10-28.
-        let refused: Answer = serde_json::from_str(
-            r#"{"errorCode":-1,"errorMsg":"当前用户未登录","result":[],"isT":true}"#,
+        let names: Vec<String> = groups.ordered().into_iter().map(|g| g.name).collect();
+        assert_eq!(names, ["科技ETF", "算力芯片", "其他"]);
+    }
+
+    // upstream: `auth_qrcode` while waiting, and `auth` without a session,
+    // on 2026-10-28.
+    #[test]
+    fn sign_in_answers_parse() {
+        let waiting: Challenge = serde_json::from_str(
+            r#"{"authenticated":false,"image_url":"https://upass.10jqka.com.cn/scan/creatImg?qrid=usk_1","scan_url":"http://mobile.10jqka.com.cn/?qrid=usk_1&source=PC","state":"waiting"}"#,
         )
         .unwrap();
-        assert_eq!(refused.error_code, SIGNED_OUT);
+        assert!(!waiting.authenticated && waiting.state == "waiting");
+        assert!(waiting.image_url.ends_with("qrid=usk_1"));
+        let failure = Failure::Refused(
+            serde_json::from_str(r#"{"code":"session_unavailable","message":"no session"}"#)
+                .unwrap(),
+        );
+        assert!(matches!(Read::from(failure), Read::SignedOut));
     }
 }

@@ -50,8 +50,7 @@
   "window": {
     "settings": "Candlewick 設定",
     "holdings": "Candlewick 保有資産",
-    "chart": "%{pair} チャート",
-    "thsSignIn": "同花順にログイン"
+    "chart": "%{pair} チャート"
   },
   "appMenu": {
     "about": "Candlewick について",
@@ -117,6 +116,7 @@
     "coingeckoKey": "CoinGecko がこの API キーを認識しません",
     "coingeckoKeyMissing": "CoinGecko の API キーが保存されていません",
     "thsKey": "同花順がこの API キーを受け付けません",
+    "thsdkMissing": "この Candlewick には同花順アカウントのコンポーネントがありません",
     "noQuote": "%{source} にこの銘柄の気配がありません",
     "unknownSymbol": "%{source} に %{symbol} はありません",
     "sourceBadData": "%{source} から想定外のデータが返されました",

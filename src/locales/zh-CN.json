@@ -82,7 +82,11 @@
       "readFailed": "读取失败：%{error}",
       "count_other": "自选 %{count} 只",
       "skipped_other": "%{count} 项无行情",
-      "until": "有效至 %{date}"
+      "account": "同花顺账号",
+      "scan": "用同花顺 App 扫码，并在手机上确认",
+      "qrExpired": "二维码已过期",
+      "newCode": "刷新二维码",
+      "groups_other": "%{count} 个分组"
     },
     "onchain": {
       "title": "链上数据",

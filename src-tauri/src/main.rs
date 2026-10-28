@@ -34,6 +34,11 @@ use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 use crate::{market::ProviderId, model::Shared};
 
 fn main() {
+    // Started as thsdk's helper: serve it, and nothing else of the app.
+    if let Some(code) = market::ths::serve_if_asked() {
+        std::process::exit(code);
+    }
+
     #[cfg(debug_assertions)]
     init_debug_logger();
 
@@ -75,6 +80,7 @@ fn main() {
             commands::get_ths,
             commands::set_ths,
             commands::ths_sign_in,
+            commands::ths_sign_in_cancel,
             commands::ths_sign_out,
             commands::chart_instrument,
             commands::get_coingecko,

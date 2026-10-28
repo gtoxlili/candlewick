@@ -192,13 +192,14 @@ fn verify_holdings_menu(app: &AppHandle) {
     verify_synced_menu(app);
 }
 
-/// Signed in on Tonghuashun's site: a row after the watchlist whose submenu
-/// is the watchlist there, with quotes that update in place.
+/// Signed in to a Tonghuashun account: a row after the watchlist whose
+/// submenu is the watchlist there, then a submenu per group of the user's,
+/// all with quotes that update in place.
 fn verify_synced_menu(app: &AppHandle) {
     use crate::{
         format,
         market::ProviderId,
-        model::{Quote, Shared, SyncStatus, Synced},
+        model::{Quote, Shared, SyncStatus, Synced, SyncedGroup},
     };
     use tauri::Manager;
 
@@ -213,18 +214,26 @@ fn verify_synced_menu(app: &AppHandle) {
         pinned: false,
         venue: None,
     };
+    let etf = Instrument {
+        symbol: "510300.SH".into(),
+        base: "510300".into(),
+        name: Some("沪深300ETF".into()),
+        decimals: Some(3),
+        ..moutai.clone()
+    };
     let updated = 1_700_000_000_000.0;
     {
         let mut model = shared.model();
         model.synced = Some(Synced {
             instruments: vec![moutai],
+            groups: vec![SyncedGroup { name: "宽基".into(), instruments: vec![etf] }],
             skipped: 2,
             updated: Some(updated),
             status: SyncStatus::Read,
         });
-        model
-            .quotes
-            .insert("ths:600519.SH".into(), Quote { last: 1_331.45, open: 1_355.9, session: None });
+        let quote = |last, open| Quote { last, open, session: None };
+        model.quotes.insert("ths:600519.SH".into(), quote(1_331.45, 1_355.9));
+        model.quotes.insert("ths:510300.SH".into(), quote(4.156, 4.123));
     }
     bar::request_render(app);
     let titles = |menu: &NSMenu| -> Vec<String> {
@@ -236,7 +245,7 @@ fn verify_synced_menu(app: &AppHandle) {
             })
             .collect()
     };
-    let submenu = UI.with_borrow(|ui| {
+    let menus = UI.with_borrow(|ui| {
         let ui = ui.as_ref().unwrap();
         let menu = ui.menu.as_ref().unwrap();
         let index = titles(menu).iter().position(|t| *t == t!("tray.thsWatchlist"));
@@ -245,26 +254,35 @@ fn verify_synced_menu(app: &AppHandle) {
         assert_eq!(ui.synced_menu.as_ref().map(Retained::as_ptr), Some(Retained::as_ptr(&submenu)));
         let rows = titles(&submenu);
         assert!(rows[0].starts_with("贵州茅台 600519\t1,331.45\t"), "{rows:?}");
+        let group = rows.iter().position(|r| r == "宽基").expect("the group's row");
+        let group = submenu.itemAtIndex(group as isize).unwrap().submenu().expect("its submenu");
+        let members = titles(&group);
+        assert!(members[0].starts_with("沪深300ETF 510300\t4.156\t"), "{members:?}");
         let caption = format!(
             "{} · {}",
             t!("common.holdings.updated", time = format::clock(updated)),
             t!("tray.thsSkipped", count = 2)
         );
         assert_eq!(rows.last().unwrap(), &caption, "{rows:?}");
-        Retained::as_ptr(&submenu)
+        (Retained::as_ptr(&submenu), Retained::as_ptr(&group))
     });
 
-    // A quote moves the row without rebuilding the menu.
-    shared
-        .model()
-        .quotes
-        .insert("ths:600519.SH".into(), Quote { last: 1_340.0, open: 1_355.9, session: None });
+    // Quotes move the rows, a group's too, without rebuilding the menu.
+    {
+        let mut model = shared.model();
+        let quote = |last, open| Quote { last, open, session: None };
+        model.quotes.insert("ths:600519.SH".into(), quote(1_340.0, 1_355.9));
+        model.quotes.insert("ths:510300.SH".into(), quote(4.2, 4.123));
+    }
     bar::request_render(app);
     UI.with_borrow(|ui| {
-        let synced = ui.as_ref().unwrap().synced_menu.as_ref().unwrap();
-        assert_eq!(Retained::as_ptr(synced), submenu);
+        let ui = ui.as_ref().unwrap();
+        let synced = ui.synced_menu.as_ref().unwrap();
+        assert_eq!((Retained::as_ptr(synced), Retained::as_ptr(&ui.synced_groups[0])), menus);
         let rows = titles(synced);
         assert!(rows[0].starts_with("贵州茅台 600519\t1,340.00\t"), "{rows:?}");
+        let members = titles(&ui.synced_groups[0]);
+        assert!(members[0].starts_with("沪深300ETF 510300\t4.200\t"), "{members:?}");
     });
 
     shared.model().synced = None;

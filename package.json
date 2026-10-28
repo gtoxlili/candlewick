@@ -26,6 +26,7 @@
     "**/*.css"
   ],
   "scripts": {
+    "postinstall": "node scripts/fetch-thsdk.mjs",
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "tauri": "tauri"

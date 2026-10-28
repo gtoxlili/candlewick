@@ -14,14 +14,16 @@
 //! (`api::kind`); the instrument's `base` is the six digits, its `quote`
 //! always `CNY`.
 //!
-//! Signed in on Tonghuashun's site as well, the user's watchlist there joins
-//! the dropdown as a submenu (`account.rs`).
+//! Signed in to a Tonghuashun account as well (thsdk's runtime, `thsdk.rs`),
+//! the user's watchlist there and its groups join the dropdown as a submenu
+//! (`account.rs`).
 
 mod account;
 mod api;
 mod quotes;
 mod session;
 mod stream;
+mod thsdk;
 
 use std::time::Duration;
 
@@ -46,7 +48,12 @@ pub fn configure(key: Option<String>) {
     api::configure(key);
 }
 
-pub use self::account::{AccountView, SIGN_IN, sign_out, view as account_view, watch_sign_in};
+pub use self::{
+    account::{
+        AccountView, SignIn, cancel_sign_in, sign_in, sign_in_view, sign_out, view as account_view,
+    },
+    thsdk::serve_if_asked,
+};
 
 /// Keeps the user's Tonghuashun watchlist current while signed in there.
 pub async fn sync_watchlist(app: AppHandle, control: watch::Receiver<FeedControl>) {

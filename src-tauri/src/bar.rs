@@ -1,10 +1,10 @@
 //! What the system bar shows: the macOS menu bar, the Windows taskbar. The
 //! ticker (the pinned entry, or the total holdings), one dropdown row per
 //! watchlist entry and a status caption, once an exchange has an API key a
-//! holdings row with a submenu that sums the holdings up, and signed in on
-//! Tonghuashun's site a row whose submenu is the watchlist there: all
-//! derived from the model here; `platform::bar` draws them the way each
-//! system does.
+//! holdings row with a submenu that sums the holdings up, and signed in to a
+//! Tonghuashun account a row whose submenu is the watchlist there and its
+//! groups: all derived from the model here; `platform::bar` draws them the
+//! way each system does.
 //!
 //! Other threads call [`request_render`], which collapses any burst of updates
 //! into one pass on the thread that owns the bar.
@@ -31,7 +31,7 @@ pub struct View {
     pub holdings: Option<Holdings>,
     pub rows: Vec<Row>,
     /// The user's Tonghuashun watchlist, below the watchlist; none unless
-    /// signed in there.
+    /// signed in to a Tonghuashun account.
     pub synced: Option<SyncedMenu>,
     pub ticker: Option<Ticker>,
     /// Why a feed is not live; empty while all are.
@@ -93,15 +93,35 @@ pub struct Holdings {
     pub caption: String,
 }
 
-/// The submenu of the user's Tonghuashun watchlist: a row per code, then a
-/// line on when it was read or why it couldn't be.
+/// The submenu of the user's Tonghuashun watchlist: a row per code, a
+/// submenu per group of theirs, then a line on when it was read or why it
+/// couldn't be.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SyncedMenu {
-    /// The instrument of each row; the same ids, the same items, which a
-    /// built menu can update in place.
+    /// The instrument of each row.
     pub ids: Vec<String>,
     pub rows: Vec<Row>,
+    pub groups: Vec<SyncedGroupMenu>,
     pub caption: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncedGroupMenu {
+    pub name: String,
+    pub ids: Vec<String>,
+    pub rows: Vec<Row>,
+}
+
+/// The instruments of a synced watchlist's rows, then each group's name and
+/// instruments: the same shape, the same items, which a built menu can
+/// update in place.
+pub type SyncedShape = (Vec<String>, Vec<(String, Vec<String>)>);
+
+impl SyncedMenu {
+    pub fn shape(&self) -> SyncedShape {
+        let groups = self.groups.iter().map(|g| (g.name.clone(), g.ids.clone())).collect();
+        (self.ids.clone(), groups)
+    }
 }
 
 /// Rows of the submenu beyond this many assets or positions fold into one.
@@ -481,6 +501,15 @@ fn synced(model: &Model) -> Option<SyncedMenu> {
     Some(SyncedMenu {
         ids: synced.instruments.iter().map(Instrument::id).collect(),
         rows: rows(&synced.instruments, &model.quotes),
+        groups: synced
+            .groups
+            .iter()
+            .map(|group| SyncedGroupMenu {
+                name: group.name.clone(),
+                ids: group.instruments.iter().map(Instrument::id).collect(),
+                rows: rows(&group.instruments, &model.quotes),
+            })
+            .collect(),
         caption,
     })
 }

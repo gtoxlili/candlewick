@@ -82,7 +82,11 @@
       "readFailed": "読み込めませんでした：%{error}",
       "count_other": "%{count} 銘柄",
       "skipped_other": "相場なし %{count} 件",
-      "until": "%{date} まで有効"
+      "account": "同花順アカウント",
+      "scan": "同花順アプリでスキャンして確認",
+      "qrExpired": "コードの期限が切れました",
+      "newCode": "新しいコード",
+      "groups_other": "グループ %{count} 件"
     },
     "onchain": {
       "title": "オンチェーンデータ",

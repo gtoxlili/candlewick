@@ -49,7 +49,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed; t
 2. Paste them into Settings → Longbridge or Settings → Tonghuashun.
 3. Add stocks in the search field by code, such as AAPL, 700 or 600519, and with Tonghuashun by Chinese name too, such as 茅台.
 
-Tonghuashun's quotes refresh every few seconds while the market trades, and its charts have daily and weekly candles. Sign in under Settings → Tonghuashun as well (scan the code with the Tonghuashun app) and your watchlist there joins the dropdown, read only.
+Tonghuashun's quotes refresh every few seconds while the market trades, and its charts have daily and weekly candles. Sign in under Settings → Tonghuashun as well (scan the code with the Tonghuashun app) and your watchlist there and its groups join the dropdown, read only.
 
 ## Holdings
 
@@ -73,7 +73,7 @@ Tonghuashun's quotes refresh every few seconds while the market trades, and its 
 You need Rust 1.98+, Node.js and pnpm, plus macOS 15 or later on a Mac, or the Visual Studio C++ build tools on Windows.
 
 ```sh
-pnpm install
+pnpm install       # also fetches thsdk's runtime, for Tonghuashun sign-in
 pnpm tauri dev     # run in development
 pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
 ```
@@ -95,4 +95,4 @@ Built with [Tauri 2](https://tauri.app), Rust, React 19 and Tailwind CSS.
 
 ## License
 
-[GPL-3.0](LICENSE). Candlewick is not affiliated with Binance, Bybit, OKX, DEX Screener, CoinGecko, Longbridge or Tonghuashun. Prices are for reference only and are not financial advice.
+[GPL-3.0](LICENSE). Candlewick is not affiliated with Binance, Bybit, OKX, DEX Screener, CoinGecko, Longbridge or Tonghuashun. Signing in to Tonghuashun uses the runtime of [thsdk](https://pypi.org/project/thsdk/) (MIT), which the app carries with its license. Prices are for reference only and are not financial advice.

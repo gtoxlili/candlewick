@@ -37,6 +37,7 @@ import {
   type Settings,
   type Ths,
   type ThsAccount,
+  type ThsSignIn,
   type Update,
   type UpdateState,
 } from "@/lib/api";
@@ -1084,6 +1085,11 @@ function ThsSection() {
     api.thsSignIn().catch((e: unknown) => setProblem(String(e)));
   };
 
+  const cancelSignIn = () => {
+    setProblem(null);
+    api.thsSignInCancel().catch((e: unknown) => setProblem(String(e)));
+  };
+
   const signOut = () => {
     setProblem(null);
     api
@@ -1131,7 +1137,13 @@ function ThsSection() {
                 {t("settings.remove")}
               </Button>
             </div>
-            <ThsAccountRow account={state.account} onSignIn={signIn} onSignOut={signOut} />
+            <ThsAccountRow
+              account={state.account}
+              signIn={state.signIn}
+              onSignIn={signIn}
+              onCancel={cancelSignIn}
+              onSignOut={signOut}
+            />
           </>
         ) : (
           <div className="space-y-3 px-3.5 py-3">
@@ -1165,37 +1177,92 @@ function ThsSection() {
   );
 }
 
-/** The Tonghuashun login: a way in, or who is signed in and what was read. */
-function ThsAccountRow(props: { account: ThsAccount | null; onSignIn: () => void; onSignOut: () => void }) {
-  const { t, i18n } = useTranslation();
-  const { account } = props;
-  const title = account ? account.user : t("settings.ths.watchlist");
-  const detail = account ? accountDetail(account, t, i18n.language) : t("settings.ths.watchlistDetail", PLATFORM);
-  const problem = account?.state === "signedOut" || account?.state === "failed";
+/**
+ * The Tonghuashun account: a way in, the QR code to scan while signing in,
+ * or what was read with it.
+ */
+function ThsAccountRow(props: {
+  account: ThsAccount | null;
+  signIn: ThsSignIn | null;
+  onSignIn: () => void;
+  onCancel: () => void;
+  onSignOut: () => void;
+}) {
+  const { t } = useTranslation();
+  const { account, signIn } = props;
+  const title = account ? t("settings.ths.account") : t("settings.ths.watchlist");
+  const detail = signIn
+    ? signInDetail(signIn, t)
+    : account
+      ? accountDetail(account, t)
+      : t("settings.ths.watchlistDetail", PLATFORM);
+  const problem =
+    signIn?.state === "failed" || account?.state === "signedOut" || account?.state === "failed";
   return (
-    <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <p className="truncate">{title}</p>
-        <p className={cn("truncate text-xs", problem ? "text-destructive" : "text-muted-foreground")} title={detail}>
-          {detail}
-        </p>
+    <div>
+      <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <p className="truncate">{title}</p>
+          <p className={cn("truncate text-xs", problem ? "text-destructive" : "text-muted-foreground")} title={detail}>
+            {detail}
+          </p>
+        </div>
+        {signIn ? (
+          <>
+            {signIn.state !== "waiting" && (
+              <Button variant="ghost" size="sm" onClick={props.onSignIn}>
+                {t("settings.ths.newCode")}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={props.onCancel}>
+              {t("settings.cancel")}
+            </Button>
+          </>
+        ) : (
+          <>
+            {(!account || account.state === "signedOut") && (
+              <Button variant="ghost" size="sm" onClick={props.onSignIn}>
+                {account ? t("settings.ths.signInAgain") : t("settings.ths.signIn")}
+              </Button>
+            )}
+            {account && (
+              <Button variant="ghost" size="sm" className="hover:text-destructive" onClick={props.onSignOut}>
+                {t("settings.ths.signOut")}
+              </Button>
+            )}
+          </>
+        )}
       </div>
-      {(!account || account.state === "signedOut") && (
-        <Button variant="ghost" size="sm" onClick={props.onSignIn}>
-          {account ? t("settings.ths.signInAgain") : t("settings.ths.signIn")}
-        </Button>
-      )}
-      {account && (
-        <Button variant="ghost" size="sm" className="hover:text-destructive" onClick={props.onSignOut}>
-          {t("settings.ths.signOut")}
-        </Button>
+      {signIn?.state === "waiting" && (
+        <div className="flex justify-center px-3.5 pb-3">
+          {/* Tonghuashun's own picture: dark modules on white, whatever the theme. */}
+          <div className="flex size-44 items-center justify-center rounded-lg bg-white p-2">
+            {signIn.qr ? (
+              <img src={signIn.qr} alt={t("settings.ths.scan")} className="size-full" />
+            ) : (
+              <Spinner className="text-neutral-500" aria-label={t("loading")} />
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
-/** What was read with the login, in one short line: "自选 23 只 · 2 项无行情 · 有效至 11月27日". */
-function accountDetail(account: ThsAccount, t: TFunction, locale: string): string {
+/** Where a QR sign-in stands, in one short line. */
+function signInDetail(signIn: ThsSignIn, t: TFunction): string {
+  switch (signIn.state) {
+    case "waiting":
+      return t("settings.ths.scan");
+    case "expired":
+      return t("settings.ths.qrExpired");
+    case "failed":
+      return signIn.error ?? t("settings.ths.qrExpired");
+  }
+}
+
+/** What was read with the account, in one short line: "自选 7 只 · 10 个分组 · 2 项无行情". */
+function accountDetail(account: ThsAccount, t: TFunction): string {
   switch (account.state) {
     case "reading":
       return t("settings.ths.reading");
@@ -1205,11 +1272,8 @@ function accountDetail(account: ThsAccount, t: TFunction, locale: string): strin
       return t("settings.ths.readFailed", { error: account.error ?? "" });
     case "read": {
       const parts = [t("settings.ths.count", { count: account.count })];
+      if (account.groups > 0) parts.push(t("settings.ths.groups", { count: account.groups }));
       if (account.skipped > 0) parts.push(t("settings.ths.skipped", { count: account.skipped }));
-      if (account.expires !== null) {
-        const date = new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(account.expires * 1000);
-        parts.push(t("settings.ths.until", { date }));
-      }
       return parts.join(" · ");
     }
   }
