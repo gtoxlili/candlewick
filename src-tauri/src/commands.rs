@@ -64,8 +64,11 @@ pub fn save_settings(
     model::save(&shared.settings_path, &settings)?;
     let before = {
         let mut model = shared.model();
-        model.quotes.retain(|id, _| settings.instrument(id).is_some());
-        std::mem::replace(&mut model.settings, settings.clone())
+        let before = std::mem::replace(&mut model.settings, settings.clone());
+        let kept: Vec<String> =
+            model.quotes.keys().filter(|id| model.instrument(id).is_some()).cloned().collect();
+        model.quotes.retain(|id, _| kept.contains(id));
+        before
     };
     if settings.agent_access != before.agent_access {
         agent::sync(&app);
@@ -203,16 +206,40 @@ pub async fn check_longbridge() -> CmdResult<longbridge::Account> {
     Ok(longbridge::account().await?)
 }
 
-/// The Tonghuashun key as the settings window shows it.
+/// Tonghuashun as the settings window shows it: the key, and the login
+/// whose watchlist the dropdown shows.
 #[derive(Serialize)]
 pub struct ThsView {
     /// The key's ends, enough to recognize it; the key never leaves.
     key: Option<String>,
+    account: Option<ths::AccountView>,
 }
 
 #[tauri::command]
 pub fn get_ths(shared: State<'_, Shared>) -> ThsView {
-    ThsView { key: shared.credentials().ths.as_ref().map(|k| masked(&k.key)) }
+    let credentials = shared.credentials().clone();
+    let model = shared.model();
+    ThsView {
+        key: credentials.ths.as_ref().map(|k| masked(&k.key)),
+        account: credentials
+            .ths_account
+            .as_ref()
+            .map(|account| ths::account_view(account, model.synced.as_ref())),
+    }
+}
+
+/// Opens Tonghuashun's sign-in page; signed in, the window closes and a
+/// `ths` event follows.
+#[tauri::command]
+pub fn ths_sign_in(app: AppHandle) -> CmdResult<()> {
+    window::open_ths_sign_in(&app)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn ths_sign_out(app: AppHandle) -> ThsView {
+    ths::sign_out(&app);
+    get_ths(app.state::<Shared>())
 }
 
 /// Saves (or with `None`, removes) the Tonghuashun key, once Tonghuashun
@@ -235,7 +262,7 @@ pub async fn set_ths(app: AppHandle, key: Option<String>) -> CmdResult<ThsView> 
     }
     ths::configure(key.clone());
     bar::request_render(&app);
-    Ok(ThsView { key: key.map(|k| masked(&k)) })
+    Ok(get_ths(shared))
 }
 
 /// The CoinGecko key as the settings window shows it.
@@ -403,6 +430,13 @@ pub fn open_chart(app: AppHandle, id: String) -> CmdResult<()> {
     Ok(())
 }
 
+/// The instrument `id` names, for a chart of one outside the watchlist (the
+/// synced Tonghuashun watchlist's).
+#[tauri::command]
+pub fn chart_instrument(shared: State<'_, Shared>, id: String) -> CmdResult<Instrument> {
+    instrument(&shared, &id)
+}
+
 #[tauri::command]
 pub fn chart_spec(shared: State<'_, Shared>, id: String) -> CmdResult<ChartSpec> {
     let instrument = instrument(&shared, &id)?;
@@ -469,6 +503,6 @@ pub fn open_link(shared: State<'_, Shared>, id: String) -> CmdResult<()> {
 
 fn instrument(shared: &Shared, id: &str) -> CmdResult<Instrument> {
     let model = shared.model();
-    let found = model.settings.instrument(id).cloned();
+    let found = model.instrument(id).cloned();
     found.ok_or_else(|| CommandError::Invalid(t!("error.notInWatchlist", id = id)))
 }

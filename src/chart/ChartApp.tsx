@@ -101,6 +101,8 @@ export default function ChartApp() {
     return initial;
   });
   const [chartKey, setChartKey] = useState(0);
+  /** An instrument outside the watchlist (the synced Tonghuashun watchlist's), as the app has it. */
+  const [outside, setOutside] = useState<{ id: string; instrument: Instrument } | null>(null);
   /** Drawings and indicators; one layer for the window, re-pointed at each instrument. */
   const [analysis] = useState(() => new Analysis());
 
@@ -110,7 +112,8 @@ export default function ChartApp() {
   const chartSpec = spec?.id === id ? spec.spec : null;
   const interval = pickInterval(chartSpec?.intervals ?? [], intervalSecs);
   const mode: ChartMode = (interval && modes[interval.secs]) ?? interval?.mode ?? "candle";
-  const instrument: Instrument | undefined = settings?.watchlist.find((i) => instrumentId(i) === id);
+  const listed = settings?.watchlist.find((i) => instrumentId(i) === id);
+  const instrument: Instrument | undefined = listed ?? (outside?.id === id ? outside.instrument : undefined);
   const volumeUnit = chartSpec ? (chartSpec.volumeUnit ?? t("chart.shares")) : "";
   const priceUnit = chartSpec?.turnoverUnit ?? "";
   const decimals = priceDecimals(stats?.last ?? 0, instrument?.decimals ?? null);
@@ -175,6 +178,19 @@ export default function ChartApp() {
   useEffect(() => {
     analysis.setInstrument(id || null);
   }, [analysis, id]);
+
+  // Opened from the synced watchlist: ask the app what the instrument is.
+  useEffect(() => {
+    if (!id || !settings || listed) return;
+    let current = true;
+    api
+      .chartInstrument(id)
+      .then((found) => current && setOutside({ id, instrument: found }))
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [id, settings, listed]);
 
   // What the instrument's provider offers: intervals, units, link.
   useEffect(() => {
@@ -273,7 +289,7 @@ export default function ChartApp() {
     <main className="flex h-screen flex-col select-none">
       <TitleBar className={cn(TITLE_INSET, "gap-2", !__WINDOWS__ && "pr-2")} maximizable>
         <InstrumentPicker
-          watchlist={settings?.watchlist ?? []}
+          watchlist={[...(settings?.watchlist ?? []), ...(instrument && !listed ? [instrument] : [])]}
           instrument={instrument}
           id={id}
           onPick={(next) => void api.openChart(next)}

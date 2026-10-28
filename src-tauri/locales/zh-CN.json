@@ -30,7 +30,11 @@
     "checkUpdate": "检查更新…",
     "update": "更新到 %{version} 并重新启动",
     "settings": "设置…",
-    "quit": "退出 Candlewick"
+    "quit": "退出 Candlewick",
+    "thsWatchlist": "同花顺自选",
+    "thsSignedOut": "登录已过期 · 在设置中重新登录",
+    "thsReadFailed": "读取失败：%{error}",
+    "thsSkipped": "另有 %{count} 项无行情"
   },
   "session": {
     "pre": "盘前",
@@ -46,7 +50,8 @@
   "window": {
     "settings": "Candlewick 设置",
     "holdings": "Candlewick 持仓",
-    "chart": "%{pair} 行情"
+    "chart": "%{pair} 行情",
+    "thsSignIn": "登录同花顺"
   },
   "appMenu": {
     "about": "关于 Candlewick",

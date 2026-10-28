@@ -70,7 +70,19 @@
     "ths": {
       "footnote": "入力すると、中国 A 株・指数・業種・ETF を追加できます。",
       "getKey": "同花順データ API でキーを取得",
-      "checking": "キーを確認中…"
+      "checking": "キーを確認中…",
+      "watchlist": "同花順のウォッチリスト",
+      "watchlistDetail": "ログインするとメニューに表示・読み取りのみ",
+      "watchlistDetail_windows": "ログインするとメニューに表示・読み取りのみ",
+      "signIn": "ログイン",
+      "signInAgain": "再ログイン",
+      "signOut": "ログアウト",
+      "reading": "ウォッチリストを読み込み中…",
+      "signedOut": "ログインが切れました",
+      "readFailed": "読み込めませんでした：%{error}",
+      "count_other": "%{count} 銘柄",
+      "skipped_other": "相場なし %{count} 件",
+      "until": "%{date} まで有効"
     },
     "onchain": {
       "title": "オンチェーンデータ",

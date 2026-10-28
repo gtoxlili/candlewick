@@ -13,7 +13,11 @@
 //! endpoints, and which kind a code is comes from Tonghuashun's search
 //! (`api::kind`); the instrument's `base` is the six digits, its `quote`
 //! always `CNY`.
+//!
+//! Signed in on Tonghuashun's site as well, the user's watchlist there joins
+//! the dropdown as a submenu (`account.rs`).
 
+mod account;
 mod api;
 mod quotes;
 mod session;
@@ -40,6 +44,13 @@ pub async fn check(key: &str) -> Result<(), Error> {
 /// The key to use from now on, as the settings keep it.
 pub fn configure(key: Option<String>) {
     api::configure(key);
+}
+
+pub use self::account::{AccountView, SIGN_IN, sign_out, view as account_view, watch_sign_in};
+
+/// Keeps the user's Tonghuashun watchlist current while signed in there.
+pub async fn sync_watchlist(app: AppHandle, control: watch::Receiver<FeedControl>) {
+    account::run(app, control).await;
 }
 
 const ID: ProviderId = ProviderId::Ths;

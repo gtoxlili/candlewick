@@ -36,6 +36,7 @@ import {
   type Search as SearchResults,
   type Settings,
   type Ths,
+  type ThsAccount,
   type Update,
   type UpdateState,
 } from "@/lib/api";
@@ -1054,7 +1055,11 @@ function CoinGeckoSection() {
   );
 }
 
-/** A key for China's shares, indexes, boards and funds, checked with Tonghuashun when saved. */
+/**
+ * A key for China's shares, indexes, boards and funds, checked with
+ * Tonghuashun when saved; with it, signing in on Tonghuashun's site brings
+ * the watchlist there into the dropdown.
+ */
 function ThsSection() {
   const { t } = useTranslation();
   const source = t("common.provider.ths");
@@ -1065,11 +1070,27 @@ function ThsSection() {
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
+    const read = () =>
+      api
+        .getThs()
+        .then(setState)
+        .catch((e: unknown) => setProblem(String(e)));
+    read();
+    return subscribe(api.onThs(() => void read()));
+  }, []);
+
+  const signIn = () => {
+    setProblem(null);
+    api.thsSignIn().catch((e: unknown) => setProblem(String(e)));
+  };
+
+  const signOut = () => {
+    setProblem(null);
     api
-      .getThs()
+      .thsSignOut()
       .then(setState)
       .catch((e: unknown) => setProblem(String(e)));
-  }, []);
+  };
 
   const save = (next: string | null) => {
     setBusy(true);
@@ -1092,23 +1113,26 @@ function ThsSection() {
     <Section title={source} footnote={configured ? undefined : t("settings.ths.footnote")}>
       <Group>
         {configured ? (
-          <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
-            <p className="min-w-0 flex-1">
-              API Key <span className="font-mono text-xs text-muted-foreground">{state.key}</span>
-            </p>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditing(true)}>
-              {t("settings.replace")}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="hover:text-destructive"
-              disabled={busy}
-              onClick={() => save(null)}
-            >
-              {t("settings.remove")}
-            </Button>
-          </div>
+          <>
+            <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
+              <p className="min-w-0 flex-1">
+                API Key <span className="font-mono text-xs text-muted-foreground">{state.key}</span>
+              </p>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditing(true)}>
+                {t("settings.replace")}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="hover:text-destructive"
+                disabled={busy}
+                onClick={() => save(null)}
+              >
+                {t("settings.remove")}
+              </Button>
+            </div>
+            <ThsAccountRow account={state.account} onSignIn={signIn} onSignOut={signOut} />
+          </>
         ) : (
           <div className="space-y-3 px-3.5 py-3">
             <FieldGroup className="gap-2.5">
@@ -1139,6 +1163,56 @@ function ThsSection() {
       {problem && <Problem>{problem}</Problem>}
     </Section>
   );
+}
+
+/** The Tonghuashun login: a way in, or who is signed in and what was read. */
+function ThsAccountRow(props: { account: ThsAccount | null; onSignIn: () => void; onSignOut: () => void }) {
+  const { t, i18n } = useTranslation();
+  const { account } = props;
+  const title = account ? account.user : t("settings.ths.watchlist");
+  const detail = account ? accountDetail(account, t, i18n.language) : t("settings.ths.watchlistDetail", PLATFORM);
+  const problem = account?.state === "signedOut" || account?.state === "failed";
+  return (
+    <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <p className="truncate">{title}</p>
+        <p className={cn("truncate text-xs", problem ? "text-destructive" : "text-muted-foreground")} title={detail}>
+          {detail}
+        </p>
+      </div>
+      {(!account || account.state === "signedOut") && (
+        <Button variant="ghost" size="sm" onClick={props.onSignIn}>
+          {account ? t("settings.ths.signInAgain") : t("settings.ths.signIn")}
+        </Button>
+      )}
+      {account && (
+        <Button variant="ghost" size="sm" className="hover:text-destructive" onClick={props.onSignOut}>
+          {t("settings.ths.signOut")}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** What was read with the login, in one short line: "自选 23 只 · 2 项无行情 · 有效至 11月27日". */
+function accountDetail(account: ThsAccount, t: TFunction, locale: string): string {
+  switch (account.state) {
+    case "reading":
+      return t("settings.ths.reading");
+    case "signedOut":
+      return t("settings.ths.signedOut");
+    case "failed":
+      return t("settings.ths.readFailed", { error: account.error ?? "" });
+    case "read": {
+      const parts = [t("settings.ths.count", { count: account.count })];
+      if (account.skipped > 0) parts.push(t("settings.ths.skipped", { count: account.skipped }));
+      if (account.expires !== null) {
+        const date = new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(account.expires * 1000);
+        parts.push(t("settings.ths.until", { date }));
+      }
+      return parts.join(" · ");
+    }
+  }
 }
 
 const LONGBRIDGE_FIELDS = [

@@ -359,6 +359,35 @@ pub struct FeedControl {
     /// Goes up when someone is about to look at the holdings (the dropdown
     /// opened), so old ones refresh.
     pub holdings_wanted: u32,
+    /// The codes of the user's Tonghuashun watchlist the data API quotes,
+    /// sorted: their quotes are wanted too, less often than the watchlist's.
+    pub ths_synced: Vec<String>,
+    /// Goes up when the dropdown opens with that watchlist in it, so its
+    /// quotes refresh.
+    pub menu_opened: u32,
+}
+
+/// The user's Tonghuashun watchlist, as last read from their account.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Synced {
+    /// What the app can quote, in the account's order.
+    pub instruments: Vec<Instrument>,
+    /// Entries nothing here quotes: Hong Kong and US stocks, futures, bonds.
+    pub skipped: usize,
+    /// Epoch milliseconds of the last good read; none before the first.
+    pub updated: Option<f64>,
+    pub status: SyncStatus,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SyncStatus {
+    #[default]
+    Reading,
+    Read,
+    /// The login ran out: only signing in again helps.
+    SignedOut,
+    /// The last read failed, and why; the instruments are the read before.
+    Failed(String),
 }
 
 pub struct Model {
@@ -372,9 +401,19 @@ pub struct Model {
     pub chart: Option<String>,
     /// Holdings of each exchange with an API key.
     pub accounts: BTreeMap<ProviderId, portfolio::Account>,
+    /// The user's Tonghuashun watchlist, while signed in there.
+    pub synced: Option<Synced>,
 }
 
 impl Model {
+    /// The instrument `id` names: the watchlist's, or one from the user's
+    /// Tonghuashun watchlist.
+    pub fn instrument(&self, id: &str) -> Option<&Instrument> {
+        self.settings.instrument(id).or_else(|| {
+            self.synced.as_ref()?.instruments.iter().find(|instrument| instrument.id() == id)
+        })
+    }
+
     /// Whether prices from `provider` may be old.
     pub fn stale(&self, provider: ProviderId) -> bool {
         self.feeds.get(&provider).is_some_and(|feed| feed.stale)
@@ -412,6 +451,7 @@ impl Shared {
                 feeds: Feeds::new(),
                 chart: None,
                 accounts: BTreeMap::new(),
+                synced: None,
             }),
             control,
             render_pending: AtomicBool::new(false),

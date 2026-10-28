@@ -49,7 +49,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed; t
 2. Paste them into Settings → Longbridge or Settings → Tonghuashun.
 3. Add stocks in the search field by code, such as AAPL, 700 or 600519, and with Tonghuashun by Chinese name too, such as 茅台.
 
-Tonghuashun's quotes refresh every few seconds while the market trades, and its charts have daily and weekly candles.
+Tonghuashun's quotes refresh every few seconds while the market trades, and its charts have daily and weekly candles. Sign in under Settings → Tonghuashun as well (scan the code with the Tonghuashun app) and your watchlist there joins the dropdown, read only.
 
 ## Holdings
 

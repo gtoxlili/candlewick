@@ -165,6 +165,17 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 
 条款：文档站没有单独的使用条款页；Key 与同花顺账号绑定，签发数量有上限。应用只作为用户自带 Key 的客户端。
 
+#### 账号自选（`account.rs`）
+
+在「设置 → 同花顺」登录同花顺账号后，用户在同花顺里的自选出现在下拉菜单的「同花顺自选」二级菜单里，带报价，点一行打开它的行情图。只读，从不写回。报价走上面的数据 API，所以要先填 Key。
+
+- 登录：一个普通的浏览器窗口加载同花顺社区站内嵌用的登录面板（`upass.10jqka.com.cn/login?isIframe=1&main=3&pannel=1&source=sns&redir=…`），用同花顺 App 扫码，或者用页面提供的其他方式。窗口是隐私模式（WKWebView 的非持久存储、WebView2 的 InPrivate），关掉即忘。应用每秒读一次窗口里 `t.10jqka.com.cn` 的 Cookie（含 HttpOnly），出现 `userid` 后用它们请求一次自选，成功就保存这组 Cookie 并关窗。显示的用户名取 `u_name` 或 `escapename`（JavaScript `escape` 编码），有效期取 `userid`、`ticket`、`sess_tk`、`user` 里最早到期的那个。WebView2 读 Cookie 要经过主线程，在主线程或同步回调里读会死锁，所以放在 `spawn_blocking` 里。
+- 登录页对 curl 返回 401 和一段反爬脚本（chameleon），由浏览器执行后才放行；被 DevTools 控制的 Chrome 实测被拒（「Nginx forbidden」）。
+- 读取：`GET https://t.10jqka.com.cn/newcircle/group/getSelfStockWithMarket/`，带这组 Cookie 和浏览器 UA，返回 `{"errorCode":0,"result":[{"code","marketid"}]}`。没登录或已过期时返回 `{"errorCode":-1,"errorMsg":"当前用户未登录"}`，同时用 Set-Cookie 清掉 `user`、`userid`、`u_name`、`escapename`、`ticket`、`g`。只读「我的自选」这一组。每 10 分钟读一次，失败后按 1、2、4、8 分钟重试；过期后不再重试，等用户重新登录。第三方项目实测 `sess_tk` 约 31 天有效。
+- 对应到数据 API 的代码：自选里是同花顺自己的代码（上证指数是 `1A0001`）。代码表 `/api/meta/tickers/list?asset_type=…&limit=10000` 一次给全（约 9,100 条，1.9 MB），它的 `ticker` 就是同花顺的代码，全表不重复，按它对上；marketid 为 16、17（沪）、32、33（深）、151（北）时先按交易所代码找，以防自选里写的是 `000001` 这样的交易所代码。只有出现没见过的条目时才下载代码表，用完即放；港股、美股、期货等对不上的只计数。
+- 报价：这些代码交给菜单栏的报价轮询（`quotes.rs`），交易时段每 30 秒一轮，打开下拉菜单时立即一轮，休市时只在收盘后读一次。股票和指数每 50 个一批。
+- 行情窗口能打开不在自选里的品种：`Model::instrument` 先找自选，再找同步来的同花顺自选。
+
 ## 持仓（交易所 API Key）
 
 调研于 2026-10-01，手上没有真实的 Key：签名按文档的示例或公式验证，错误路径用格式正确的假 Key 实测过，读到真实余额的那一步没有实测。

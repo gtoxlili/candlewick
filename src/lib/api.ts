@@ -258,10 +258,28 @@ export interface LongbridgeKeys {
   accessToken: string;
 }
 
-/** The Tonghuashun key as the settings window shows it. */
+/** Tonghuashun as the settings window shows it. */
 export interface Ths {
   /** The key's ends, when one is saved. */
   key: string | null;
+  /** Signed in on Tonghuashun's site: the dropdown shows the watchlist there. */
+  account: ThsAccount | null;
+}
+
+/** A Tonghuashun login and the watchlist read with it. */
+export interface ThsAccount {
+  user: string;
+  /** Epoch seconds the login runs out at, where known. */
+  expires: number | null;
+  /** Entries in the dropdown, and those nothing here quotes (Hong Kong, US, futures). */
+  count: number;
+  skipped: number;
+  /** Epoch ms of the last good read. */
+  updated: number | null;
+  /** `signedOut`: the login ran out; only signing in again helps. */
+  state: "reading" | "read" | "signedOut" | "failed";
+  /** Why the last read failed. */
+  error: string | null;
 }
 
 /** What a CoinGecko key is, once CoinGecko has been asked. */
@@ -410,6 +428,8 @@ export const api = {
   getChartInstrument: () => invoke<string | null>("get_chart_instrument"),
   openChart: (id: string) => invoke<void>("open_chart", { id }),
   chartSpec: (id: string) => invoke<ChartSpec>("chart_spec", { id }),
+  /** An instrument outside the watchlist (from the synced Tonghuashun watchlist). */
+  chartInstrument: (id: string) => invoke<Instrument>("chart_instrument", { id }),
   /** Candles oldest first: the latest (the last still forming), or those before `end`. */
   chartHistory: (id: string, interval: number, end: number | null, limit: number) =>
     invoke<Candle[]>("chart_history", { id, interval, end, limit }),
@@ -432,6 +452,11 @@ export const api = {
   getThs: () => invoke<Ths>("get_ths"),
   /** Checks with Tonghuashun that the key works and saves it; null removes it. */
   setThs: (key: string | null) => invoke<Ths>("set_ths", { key }),
+  /** Opens Tonghuashun's sign-in page; signed in, `onThs` fires. */
+  thsSignIn: () => invoke<void>("ths_sign_in"),
+  thsSignOut: () => invoke<Ths>("ths_sign_out"),
+  /** The Tonghuashun login or its watchlist changed: ask `getThs` again. */
+  onThs: (handler: () => void): Promise<UnlistenFn> => listen("ths", () => handler()),
   getCoinGecko: () => invoke<CoinGecko>("get_coingecko"),
   /** Checks with CoinGecko what the key is and saves it; null removes it. */
   setCoinGecko: (key: string | null) => invoke<CoinGecko>("set_coingecko", { key }),

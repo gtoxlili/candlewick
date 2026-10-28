@@ -70,7 +70,21 @@
     "ths": {
       "footnote": "Fill this in to add China A-shares, indexes, boards and ETFs.",
       "getKey": "Get a key from the Tonghuashun data API",
-      "checking": "Checking the key…"
+      "checking": "Checking the key…",
+      "watchlist": "Tonghuashun watchlist",
+      "watchlistDetail": "Shows in the menu bar menu once signed in; read only",
+      "watchlistDetail_windows": "Shows in the taskbar menu once signed in; read only",
+      "signIn": "Sign in",
+      "signInAgain": "Sign in again",
+      "signOut": "Sign out",
+      "reading": "Reading the watchlist…",
+      "signedOut": "Signed out: the login ran out",
+      "readFailed": "Couldn't read it: %{error}",
+      "count_one": "%{count} entry",
+      "count_other": "%{count} entries",
+      "skipped_one": "%{count} not quoted",
+      "skipped_other": "%{count} not quoted",
+      "until": "until %{date}"
     },
     "onchain": {
       "title": "On-chain data",

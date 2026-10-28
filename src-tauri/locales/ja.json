@@ -30,7 +30,11 @@
     "checkUpdate": "アップデートを確認…",
     "update": "%{version} にアップデートして再起動",
     "settings": "設定…",
-    "quit": "Candlewick を終了"
+    "quit": "Candlewick を終了",
+    "thsWatchlist": "同花順のウォッチリスト",
+    "thsSignedOut": "ログイン切れ · 設定で再ログイン",
+    "thsReadFailed": "読み込めませんでした：%{error}",
+    "thsSkipped": "ほか %{count} 件は相場なし"
   },
   "session": {
     "pre": "プレ",
@@ -46,7 +50,8 @@
   "window": {
     "settings": "Candlewick 設定",
     "holdings": "Candlewick 保有資産",
-    "chart": "%{pair} チャート"
+    "chart": "%{pair} チャート",
+    "thsSignIn": "同花順にログイン"
   },
   "appMenu": {
     "about": "Candlewick について",

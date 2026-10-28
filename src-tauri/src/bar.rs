@@ -1,8 +1,10 @@
 //! What the system bar shows: the macOS menu bar, the Windows taskbar. The
 //! ticker (the pinned entry, or the total holdings), one dropdown row per
-//! watchlist entry and a status caption, and once an exchange has an API key
-//! a holdings row with a submenu that sums the holdings up: all derived from
-//! the model here; `platform::bar` draws them the way each system does.
+//! watchlist entry and a status caption, once an exchange has an API key a
+//! holdings row with a submenu that sums the holdings up, and signed in on
+//! Tonghuashun's site a row whose submenu is the watchlist there: all
+//! derived from the model here; `platform::bar` draws them the way each
+//! system does.
 //!
 //! Other threads call [`request_render`], which collapses any burst of updates
 //! into one pass on the thread that owns the bar.
@@ -14,7 +16,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     format::{self, Direction},
     i18n::{self, Locale},
-    model::{ColorScheme, Instrument, Model, Quote, Session, Shared},
+    model::{ColorScheme, Instrument, Model, Quote, Session, Shared, SyncStatus},
     platform,
     portfolio::{Portfolio, Totals},
     update, window,
@@ -28,6 +30,9 @@ pub struct View {
     /// none without an API key.
     pub holdings: Option<Holdings>,
     pub rows: Vec<Row>,
+    /// The user's Tonghuashun watchlist, below the watchlist; none unless
+    /// signed in there.
+    pub synced: Option<SyncedMenu>,
     pub ticker: Option<Ticker>,
     /// Why a feed is not live; empty while all are.
     pub caption: String,
@@ -85,6 +90,17 @@ pub struct Holdings {
     /// The largest unrealized PnL first.
     pub positions: Vec<Row>,
     /// When the holdings were read, or why they could not be.
+    pub caption: String,
+}
+
+/// The submenu of the user's Tonghuashun watchlist: a row per code, then a
+/// line on when it was read or why it couldn't be.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SyncedMenu {
+    /// The instrument of each row; the same ids, the same items, which a
+    /// built menu can update in place.
+    pub ids: Vec<String>,
+    pub rows: Vec<Row>,
     pub caption: String,
 }
 
@@ -263,11 +279,16 @@ pub fn perform(app: &AppHandle, action: Action) {
 /// is current a moment later.
 pub fn menu_opening(app: &AppHandle) {
     app.state::<Shared>().control.send_if_modified(|control| {
-        let any = !control.credentials.exchanges.is_empty();
-        if any {
+        let holdings = !control.credentials.exchanges.is_empty();
+        if holdings {
             control.holdings_wanted = control.holdings_wanted.wrapping_add(1);
         }
-        any
+        // So are the quotes of the synced watchlist's submenu.
+        let synced = !control.ths_synced.is_empty();
+        if synced {
+            control.menu_opened = control.menu_opened.wrapping_add(1);
+        }
+        holdings || synced
     });
 }
 
@@ -294,6 +315,7 @@ pub fn view(app: &AppHandle) -> View {
         watchlist: model.settings.watchlist.clone(),
         holdings: holdings(&model),
         rows: rows(&model.settings.watchlist, &model.quotes),
+        synced: synced(&model),
         ticker: ticker(&model),
         caption: caption(&model),
         scheme: model.settings.color_scheme,
@@ -437,6 +459,30 @@ fn holdings(model: &Model) -> Option<Holdings> {
         })
         .unwrap_or_else(|| t!("common.holdings.reading").to_owned());
     Some(Holdings { total, day, accounts, assets, positions, caption })
+}
+
+fn synced(model: &Model) -> Option<SyncedMenu> {
+    let synced = model.synced.as_ref()?;
+    let caption = match &synced.status {
+        SyncStatus::SignedOut => t!("tray.thsSignedOut").to_owned(),
+        SyncStatus::Failed(error) => t!("tray.thsReadFailed", error = error),
+        SyncStatus::Reading if synced.updated.is_none() => t!("common.holdings.reading").to_owned(),
+        SyncStatus::Reading | SyncStatus::Read => {
+            let updated = synced.updated.map_or_else(
+                || t!("common.holdings.reading").to_owned(),
+                |at| t!("common.holdings.updated", time = format::clock(at)),
+            );
+            match synced.skipped {
+                0 => updated,
+                skipped => format!("{updated} · {}", t!("tray.thsSkipped", count = skipped)),
+            }
+        }
+    };
+    Some(SyncedMenu {
+        ids: synced.instruments.iter().map(Instrument::id).collect(),
+        rows: rows(&synced.instruments, &model.quotes),
+        caption,
+    })
 }
 
 /// The first feed that isn't live explains itself; empty while all are.

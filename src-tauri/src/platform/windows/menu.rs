@@ -2,9 +2,10 @@
 //! total holdings once an exchange has an API key, with a submenu of what
 //! they are made of; a row per entry (its price and change right-aligned in
 //! a column of their own, a small colored triangle for the direction), a
-//! status line while a feed isn't live, then check for updates (or restart
-//! into one), settings and quit. It stays live while open: rows update in
-//! place as prices tick.
+//! status line while a feed isn't live, signed in on Tonghuashun's site a
+//! row whose submenu is the watchlist there, then check for updates (or
+//! restart into one), settings and quit. It stays live while open: rows
+//! update in place as prices tick.
 
 use windows::{
     Win32::{
@@ -48,6 +49,9 @@ const FIRST_ROW: u32 = 100;
 /// Row n of the holdings submenu has this id plus n; every one opens the
 /// holdings window.
 const FIRST_HOLDINGS_ROW: u32 = 200;
+/// Row n of the synced watchlist's submenu has this id plus n, past the
+/// others however long that watchlist is.
+const FIRST_SYNCED_ROW: u32 = 1000;
 
 /// An open dropdown.
 pub struct Open {
@@ -56,6 +60,9 @@ pub struct Open {
     ids: Vec<String>,
     /// The submenu it was built with, if any.
     shape: Option<Shape>,
+    /// The instrument of each row of the synced watchlist's submenu, if it
+    /// has one.
+    synced: Option<Vec<String>>,
     /// What its fixed items say.
     locale: Locale,
     /// The command id, text and mark of each row shown, holdings first.
@@ -99,6 +106,11 @@ fn sub(view: &View) -> Vec<Line<'_>> {
     lines((0..rows.len()).map(|index| FIRST_HOLDINGS_ROW + index as u32), rows)
 }
 
+fn synced(view: &View) -> Vec<Line<'_>> {
+    let rows: Vec<&Row> = view.synced.iter().flat_map(|synced| &synced.rows).collect();
+    lines((0..rows.len()).map(|index| FIRST_SYNCED_ROW + index as u32), rows)
+}
+
 impl Open {
     pub fn build(view: &View, marks: &mut Marks) -> Result<Self> {
         // SAFETY: a fresh menu, filled with our own items; `Drop` destroys
@@ -109,6 +121,7 @@ impl Open {
                 menu,
                 ids: Vec::new(),
                 shape: view.holdings.as_ref().map(bar::Holdings::shape),
+                synced: view.synced.as_ref().map(|synced| synced.ids.clone()),
                 locale: view.locale,
                 shown: Vec::new(),
             };
@@ -153,6 +166,19 @@ impl Open {
                         &HSTRING::from(escape(&view.caption)),
                     )?;
                 }
+            }
+            if view.synced.is_some() {
+                let submenu = open.synced_submenu(view, marks)?;
+                let mut title = wide(&escape(t!("tray.thsWatchlist")));
+                let item = MENUITEMINFOW {
+                    cbSize: size_of::<MENUITEMINFOW>() as u32,
+                    fMask: MIIM_FTYPE | MIIM_STRING | MIIM_SUBMENU,
+                    fType: MFT_STRING,
+                    hSubMenu: submenu,
+                    dwTypeData: PWSTR(title.as_mut_ptr()),
+                    ..Default::default()
+                };
+                InsertMenuItemW(menu, u32::MAX, true, &item)?;
             }
             AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
             if let Some(version) = &view.update {
@@ -213,23 +239,62 @@ impl Open {
         }
     }
 
+    /// The synced watchlist's submenu: its rows, then a dimmed line on
+    /// when it was read.
+    unsafe fn synced_submenu(&mut self, view: &View, marks: &mut Marks) -> Result<HMENU> {
+        // SAFETY: a fresh menu, filled with our own items; it goes with
+        // its parent.
+        unsafe {
+            let menu = CreatePopupMenu()?;
+            for line in synced(view) {
+                let mark = marks.for_row(line.row, view);
+                let mut wide = wide(&line.text);
+                let item = MENUITEMINFOW {
+                    cbSize: size_of::<MENUITEMINFOW>() as u32,
+                    fMask: MIIM_ID | MIIM_FTYPE | MIIM_STRING | MIIM_BITMAP,
+                    fType: MFT_STRING,
+                    wID: line.id,
+                    dwTypeData: PWSTR(wide.as_mut_ptr()),
+                    hbmpItem: mark.unwrap_or_default(),
+                    ..Default::default()
+                };
+                InsertMenuItemW(menu, u32::MAX, true, &item)?;
+                self.shown.push((line.id, line.text, mark));
+            }
+            if let Some(synced) = &view.synced {
+                if !synced.rows.is_empty() {
+                    AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+                }
+                let caption = HSTRING::from(escape(&synced.caption));
+                AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, &caption)?;
+            }
+            Ok(menu)
+        }
+    }
+
     /// Brings the open menu's rows up to date and repaints it. A changed
-    /// watchlist, holdings appearing, going or changing shape, or another
-    /// language waits for the next time it opens.
+    /// watchlist, holdings or synced watchlist appearing, going or changing
+    /// shape, or another language waits for the next time it opens.
     pub fn update(&mut self, view: &View, marks: &mut Marks) {
         let ids: Vec<String> = view.watchlist.iter().map(|instrument| instrument.id()).collect();
         if ids != self.ids
             || view.holdings.as_ref().map(bar::Holdings::shape) != self.shape
+            || view.synced.as_ref().map(|synced| &synced.ids) != self.synced.as_ref()
             || view.locale != self.locale
         {
             return;
         }
-        let lines: Vec<Line> = priced(view).into_iter().chain(sub(view)).collect();
-        if !lines.iter().map(|line| line.id).eq(self.shown.iter().map(|(id, ..)| *id)) {
+        let lines: Vec<Line> =
+            priced(view).into_iter().chain(sub(view)).chain(synced(view)).collect();
+        // Shown in the order the menus were built, submenus before their row.
+        if lines.len() != self.shown.len() {
             return;
         }
         let mut changed = false;
-        for (index, line) in lines.into_iter().enumerate() {
+        for line in lines {
+            let Some(index) = self.shown.iter().position(|(id, ..)| *id == line.id) else {
+                continue;
+            };
             let mark = marks.for_row(line.row, view);
             if self.shown[index] == (line.id, line.text.clone(), mark) {
                 continue;
@@ -267,6 +332,12 @@ impl Open {
             UPDATE => Some(Action::Update),
             CHECK_UPDATE => Some(Action::CheckUpdate),
             QUIT => Some(Action::Quit),
+            id if id >= FIRST_SYNCED_ROW => self
+                .synced
+                .as_ref()
+                .and_then(|ids| ids.get((id - FIRST_SYNCED_ROW) as usize))
+                .cloned()
+                .map(Action::Chart),
             id if id >= FIRST_HOLDINGS_ROW => Some(Action::Holdings),
             id if id >= FIRST_ROW => {
                 self.ids.get((id - FIRST_ROW) as usize).cloned().map(Action::Chart)

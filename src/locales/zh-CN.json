@@ -70,7 +70,19 @@
     "ths": {
       "footnote": "填写后可添加 A 股、指数、同花顺板块和场内基金。",
       "getKey": "到同花顺金融数据 API 获取 Key",
-      "checking": "正在验证 Key…"
+      "checking": "正在验证 Key…",
+      "watchlist": "同花顺自选",
+      "watchlistDetail": "登录后显示在菜单栏菜单里，只读不改",
+      "watchlistDetail_windows": "登录后显示在任务栏菜单里，只读不改",
+      "signIn": "扫码登录",
+      "signInAgain": "重新登录",
+      "signOut": "退出登录",
+      "reading": "正在读取自选…",
+      "signedOut": "登录已过期",
+      "readFailed": "读取失败：%{error}",
+      "count_other": "自选 %{count} 只",
+      "skipped_other": "%{count} 项无行情",
+      "until": "有效至 %{date}"
     },
     "onchain": {
       "title": "链上数据",

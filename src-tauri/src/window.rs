@@ -1,10 +1,10 @@
-//! The settings and chart windows. Each exists only while open: closing one
-//! destroys its webview, so the always-on app carries no browser engine in
-//! between.
+//! The settings, chart and holdings windows, and a plain one for signing in
+//! on Tonghuashun's site. Each exists only while open: closing one destroys
+//! its webview, so the always-on app carries no browser engine in between.
 //!
-//! Both share one look, which `platform::window` gives them: the system's
-//! translucent material behind a transparent page, which draws its own title
-//! bar and marks it as the drag region.
+//! The app's own share one look, which `platform::window` gives them: the
+//! system's translucent material behind a transparent page, which draws its
+//! own title bar and marks it as the drag region.
 
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ use tauri::{
 
 use crate::{
     i18n,
-    market::ProviderId,
+    market::{ProviderId, ths},
     model::{Instrument, Settings, Shared},
     net, platform,
     portfolio::Portfolio,
@@ -24,10 +24,13 @@ use crate::{
 pub const SETTINGS: &str = "settings";
 pub const CHART: &str = "chart";
 pub const HOLDINGS: &str = "holdings";
+pub const THS_SIGN_IN: &str = "ths-sign-in";
 pub const SETTINGS_EVENT: &str = "settings";
 pub const LOCALE_EVENT: &str = "locale";
 pub const CHART_INSTRUMENT_EVENT: &str = "chart-instrument";
 pub const PORTFOLIO_EVENT: &str = "portfolio";
+/// The Tonghuashun login or its watchlist changed; the settings page asks again.
+pub const THS_EVENT: &str = "ths";
 
 struct Spec {
     label: &'static str,
@@ -68,6 +71,51 @@ pub fn open_holdings(app: &AppHandle) -> tauri::Result<()> {
     )
 }
 
+/// Tonghuashun's own sign-in page, in a plain browser window on its site:
+/// it keeps the page's cookies to itself and forgets them when it closes
+/// (`ths::watch_sign_in` reads them before it does). The page can't reach
+/// the app: no capability names this window.
+pub fn open_ths_sign_in(app: &AppHandle) -> tauri::Result<()> {
+    platform::window::will_show(app, THS_SIGN_IN)?;
+    if let Some(window) = app.get_webview_window(THS_SIGN_IN) {
+        return raise(&window);
+    }
+    platform::window::create(app, |app| {
+        if let Some(window) = app.get_webview_window(THS_SIGN_IN) {
+            return raise(&window);
+        }
+        let url = Url::parse(ths::SIGN_IN).expect("a valid URL");
+        WebviewWindowBuilder::new(app, THS_SIGN_IN, WebviewUrl::External(url))
+            .title(t!("window.thsSignIn"))
+            .inner_size(440.0, 640.0)
+            .min_inner_size(360.0, 480.0)
+            .center()
+            .incognito(true)
+            // Its pages and the sign-in ways they offer; plain HTTP only on
+            // Tonghuashun's own site, whose pages still link it.
+            .on_navigation(|url| {
+                url.scheme() == "https"
+                    || url.host_str().is_some_and(|host| {
+                        host == "10jqka.com.cn" || host.ends_with(".10jqka.com.cn")
+                    })
+            })
+            .on_new_window(|url, _| {
+                open_externally(&url);
+                NewWindowResponse::Deny
+            })
+            .build()?;
+        ths::watch_sign_in(app.clone());
+        Ok(())
+    })
+}
+
+/// Tells the settings page the Tonghuashun login or its watchlist changed.
+pub fn emit_ths(app: &AppHandle) {
+    if app.get_webview_window(SETTINGS).is_some() {
+        let _ = app.emit_to(SETTINGS, THS_EVENT, ());
+    }
+}
+
 fn set_holdings_open(app: &AppHandle, open: bool) {
     app.state::<Shared>().control.send_if_modified(|control| {
         let changed = control.holdings_open != open;
@@ -97,12 +145,12 @@ pub fn open_chart(app: &AppHandle, id: &str) -> tauri::Result<()> {
 /// Points the chart at the instrument `id` without bringing its window
 /// forward: records it (a page still loading reads it from there), retitles
 /// an open window and tells its page. Returns the title, or `None` for an
-/// instrument not in the watchlist.
+/// instrument in neither the watchlist nor the synced one.
 fn retarget_chart(app: &AppHandle, id: &str) -> tauri::Result<Option<String>> {
     let title = {
         let shared = app.state::<Shared>();
         let mut model = shared.model();
-        let Some(instrument) = model.settings.instrument(id) else {
+        let Some(instrument) = model.instrument(id) else {
             return Ok(None);
         };
         let title = chart_title(instrument);
@@ -127,7 +175,7 @@ pub fn relabel(app: &AppHandle) {
     let chart = {
         let shared = app.state::<Shared>();
         let model = shared.model();
-        model.chart.as_deref().and_then(|id| model.settings.instrument(id)).map(chart_title)
+        model.chart.as_deref().and_then(|id| model.instrument(id)).map(chart_title)
     };
     for (label, title) in [
         (SETTINGS, Some(t!("window.settings").to_owned())),
@@ -183,7 +231,7 @@ pub fn sync_chart(app: &AppHandle) {
     let replacement = {
         let shared = app.state::<Shared>();
         let model = shared.model();
-        if model.chart.as_deref().is_some_and(|id| model.settings.instrument(id).is_some()) {
+        if model.chart.as_deref().is_some_and(|id| model.instrument(id).is_some()) {
             return;
         }
         model.settings.watchlist.first().map(|instrument| instrument.id())

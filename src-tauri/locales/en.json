@@ -30,7 +30,11 @@
     "checkUpdate": "Check for Updates…",
     "update": "Update to %{version} and Restart",
     "settings": "Settings…",
-    "quit": "Quit Candlewick"
+    "quit": "Quit Candlewick",
+    "thsWatchlist": "Tonghuashun Watchlist",
+    "thsSignedOut": "Signed out · sign in again in Settings",
+    "thsReadFailed": "Couldn't read it: %{error}",
+    "thsSkipped": "%{count} more not quoted here"
   },
   "session": {
     "pre": "Pre-market",
@@ -46,7 +50,8 @@
   "window": {
     "settings": "Candlewick Settings",
     "holdings": "Candlewick Holdings",
-    "chart": "%{pair} Chart"
+    "chart": "%{pair} Chart",
+    "thsSignIn": "Sign in to Tonghuashun"
   },
   "appMenu": {
     "about": "About Candlewick",

@@ -23,7 +23,7 @@ use tray_icon::menu::{ContextMenu, IsMenuItem, Menu, MenuItem, PredefinedMenuIte
 
 use super::ticker;
 use crate::{
-    bar::{self, Action, Holdings, Row, Shape, Slot, Ticker, View},
+    bar::{self, Action, Holdings, Row, Shape, Slot, SyncedMenu, Ticker, View},
     i18n::Locale,
     model::{ColorScheme, Instrument},
 };
@@ -36,6 +36,8 @@ const ID_UPDATE: &str = "update";
 const ID_CHECK_UPDATE: &str = "check-update";
 const ID_QUIT: &str = "quit";
 const INSTRUMENT_PREFIX: &str = "instrument:";
+/// A row of the synced watchlist's submenu: opens that instrument's chart.
+const SYNCED_PREFIX: &str = "synced:";
 
 fn template_icon() -> Image<'static> {
     tauri::include_image!("icons/tray-template.png")
@@ -52,6 +54,8 @@ struct Ui {
     menu: Option<Retained<NSMenu>>,
     /// The holdings submenu, while the layout has one.
     submenu: Option<Retained<NSMenu>>,
+    /// The synced watchlist's submenu, while the layout has one.
+    synced_menu: Option<Retained<NSMenu>>,
     status_item: Option<Retained<NSStatusItem>>,
     fonts: Fonts,
     /// What the current menu was built for; a change rebuilds it. `None`
@@ -62,10 +66,13 @@ struct Ui {
     /// shifts as prices tick.
     columns: Table,
     sub_columns: Table,
+    synced_columns: Table,
     scheme: ColorScheme,
-    /// As applied to the menu: the holdings, then the watchlist's rows.
+    /// As applied to the menu: the holdings, the watchlist's rows, the
+    /// synced watchlist.
     holdings: Option<Holdings>,
     rows: Vec<Row>,
+    synced: Option<SyncedMenu>,
     /// `None` until applied to the current menu.
     caption: Option<String>,
     /// What the status item shows: `None` is the template icon. `Some(None)`
@@ -87,6 +94,9 @@ struct Layout {
     /// A holdings row with this submenu leads the menu, with a separator
     /// after it.
     holdings: Option<Shape>,
+    /// A row whose submenu has a row for each of these instruments follows
+    /// the watchlist.
+    synced: Option<Vec<String>>,
     /// What the fixed items say.
     locale: Locale,
 }
@@ -96,6 +106,12 @@ impl Layout {
     /// the last row.
     fn row(&self, index: usize) -> isize {
         (index + if self.holdings.is_some() { 2 } else { 0 }) as isize
+    }
+
+    /// The menu index of the synced watchlist's row: after the watchlist's
+    /// rows and caption, or the line saying it is empty.
+    fn synced_row(&self) -> isize {
+        self.row(self.watchlist.len().max(1)) + isize::from(!self.watchlist.is_empty())
     }
 }
 
@@ -163,6 +179,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             native_tray: inner.clone(),
             menu: None,
             submenu: None,
+            synced_menu: None,
             status_item: inner.ns_status_item().inspect(|item| use_tabular_digits(item)),
             fonts: Fonts {
                 row: NSFont::monospacedDigitSystemFontOfSize_weight(menu_font_size, regular),
@@ -171,9 +188,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             layout: None,
             columns: Table::new(),
             sub_columns: Table::new(),
+            synced_columns: Table::new(),
             scheme: ColorScheme::default(),
             holdings: None,
             rows: Vec::new(),
+            synced: None,
             caption: None,
             ticker: None,
         }));
@@ -209,6 +228,7 @@ impl Ui {
             watchlist: view.watchlist,
             update: view.update,
             holdings: view.holdings.as_ref().map(Holdings::shape),
+            synced: view.synced.as_ref().map(|synced| synced.ids.clone()),
             locale: view.locale,
         };
         if self.layout.as_ref() != Some(&layout) {
@@ -228,12 +248,22 @@ impl Ui {
                 }
                 None => None,
             };
+            self.synced_menu = match layout.synced {
+                Some(_) => self
+                    .menu
+                    .as_ref()
+                    .and_then(|m| m.itemAtIndex(layout.synced_row()))
+                    .and_then(|i| i.submenu()),
+                None => None,
+            };
             self.native_tray.set_menu(Some(Box::new(menu)));
             self.layout = Some(layout);
             self.columns = Table::new();
             self.sub_columns = Table::new();
+            self.synced_columns = Table::new();
             self.holdings = None;
             self.rows.clear();
+            self.synced = None;
             self.caption = None;
         }
         let menu = self.menu.clone().expect("the tray menu has been built");
@@ -325,6 +355,40 @@ impl Ui {
             }
         }
         self.holdings = view.holdings;
+
+        // The synced watchlist's submenu: its rows, then its caption. The
+        // layout matched, so the applied rows (if any) are the same ones.
+        if let (Some(synced), Some(submenu)) = (&view.synced, &self.synced_menu) {
+            let applied = self.synced.as_ref();
+            let changed: Vec<bool> = synced
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(index, row)| applied.and_then(|a| a.rows.get(index)) != Some(row))
+                .collect();
+            let widened = self.synced_columns.fit(
+                synced.rows.iter().zip(&changed).filter(|(_, c)| **c).map(|(row, _)| row),
+                &self.fonts.row,
+            );
+            let restyle = scheme_changed || widened;
+            for (index, (row, changed)) in synced.rows.iter().zip(changed).enumerate() {
+                if (restyle || changed)
+                    && let Some(item) = submenu.itemAtIndex(index as isize)
+                {
+                    item.setAttributedTitle(Some(&styled_row(
+                        row,
+                        &self.fonts.row,
+                        &self.synced_columns.tabs,
+                        self.scheme,
+                    )));
+                }
+            }
+            if applied.map(|a| &a.caption) != Some(&synced.caption) {
+                let at = synced.rows.len() + usize::from(!synced.rows.is_empty());
+                set_caption(submenu, at as isize, &synced.caption, &self.fonts.caption);
+            }
+        }
+        self.synced = view.synced;
 
         let count = layout.watchlist.len();
         if count > 0 && self.caption.as_ref() != Some(&view.caption) {
@@ -524,7 +588,7 @@ fn utf16_len(s: &str) -> usize {
 }
 
 fn build_menu(layout: &Layout, holdings: Option<&Holdings>) -> tauri::Result<Menu> {
-    let Layout { watchlist, update, .. } = layout;
+    let Layout { watchlist, update, synced, .. } = layout;
     let menu = Menu::new();
     if let Some(holdings) = holdings {
         // The row and its submenu's rows are styled by `apply`; the section
@@ -564,6 +628,22 @@ fn build_menu(layout: &Layout, holdings: Option<&Holdings>) -> tauri::Result<Men
         // Status caption, styled and shown/hidden natively by `set_caption`.
         menu.append(&MenuItem::with_id("status", "", false, None))?;
     }
+    if let Some(ids) = synced {
+        // Rows and caption styled by `apply`.
+        let mut items: Vec<Box<dyn IsMenuItem>> = ids
+            .iter()
+            .map(|id| -> Box<dyn IsMenuItem> {
+                Box::new(MenuItem::with_id(format!("{SYNCED_PREFIX}{id}"), "", true, None))
+            })
+            .collect();
+        if !ids.is_empty() {
+            items.push(Box::new(PredefinedMenuItem::separator()));
+        }
+        items.push(Box::new(MenuItem::with_id("synced-caption", "", false, None)));
+        let refs: Vec<&dyn IsMenuItem> = items.iter().map(|item| item.as_ref()).collect();
+        let title = t!("tray.thsWatchlist");
+        menu.append(&Submenu::with_id_and_items("synced-menu", title, true, &refs)?)?;
+    }
     menu.append(&PredefinedMenuItem::separator())?;
     if let Some(version) = update {
         let title = t!("tray.update", version = version);
@@ -597,7 +677,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         ID_UPDATE => Action::Update,
         ID_CHECK_UPDATE => Action::CheckUpdate,
         ID_QUIT => Action::Quit,
-        id => match id.strip_prefix(INSTRUMENT_PREFIX) {
+        id => match id.strip_prefix(INSTRUMENT_PREFIX).or_else(|| id.strip_prefix(SYNCED_PREFIX)) {
             Some(instrument) => Action::Chart(instrument.to_owned()),
             None => return,
         },

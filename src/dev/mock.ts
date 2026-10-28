@@ -6,7 +6,7 @@
 import type { Channel } from "@tauri-apps/api/core";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
-import type { Candle, ChartSpec, Instrument, LiveEvent, Portfolio, Search, Settings, Trade } from "@/lib/api";
+import type { Candle, ChartSpec, Instrument, LiveEvent, Portfolio, Search, Settings, ThsAccount, Trade } from "@/lib/api";
 import { LOCALES, type Locale } from "@/lib/i18n";
 
 const pool: Instrument = {
@@ -18,6 +18,16 @@ const pool: Instrument = {
   decimals: null,
   pinned: false,
   venue: { chain: "Solana", dex: "Raydium" },
+};
+
+const thsAccount: ThsAccount = {
+  user: "同花顺用户",
+  expires: Date.now() / 1000 + 30 * 86_400,
+  count: 23,
+  skipped: 2,
+  updated: Date.now(),
+  state: "read",
+  error: null,
 };
 
 const settings: Settings = {
@@ -427,10 +437,15 @@ export function installMocks(label: string): void {
         return state === "empty" ? { ...loading, accounts: [] } : state === "loading" ? loading : portfolio;
       case "search_instruments":
         return search(String(args.query ?? ""));
+      // `?ths=signed-in` shows a Tonghuashun login and its watchlist.
       case "get_ths":
-        return { key: null };
+        return params.get("ths") === "signed-in"
+          ? { key: "a1b2c3…wxyz", account: thsAccount }
+          : { key: null, account: null };
       case "set_ths":
-        return { key: args.key === null ? null : "a1b2c3…wxyz" };
+        return { key: args.key === null ? null : "a1b2c3…wxyz", account: null };
+      case "ths_sign_out":
+        return { key: "a1b2c3…wxyz", account: null };
       case "get_coingecko":
         return { key: null, access: null };
       // Any key saved reads as an Analyst plan, to see the configured state.

@@ -160,6 +160,51 @@ pub async fn search(query: &str, limit: usize) -> Result<Vec<Found>, Error> {
     Ok(found)
 }
 
+/// Remembers what `symbol` is, as a listing said.
+pub fn remember(symbol: &str, kind: Kind) {
+    kinds().insert(symbol.to_owned(), Some(kind));
+}
+
+#[derive(Deserialize)]
+struct Listed {
+    thscode: Option<String>,
+    #[serde(default)]
+    ticker: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    asset_type: String,
+}
+
+/// A code the data API lists among the kinds the app quotes.
+pub struct Listing {
+    pub symbol: String,
+    /// Tonghuashun's own code for it, as its apps write it: the six digits,
+    /// or for some indexes a code of its own (`1A0001` for `000001.SH`).
+    pub ticker: String,
+    pub name: Option<String>,
+    pub kind: Kind,
+}
+
+/// Every code the app could quote, some 9,000 of them (2 MB): one request.
+pub async fn listings() -> Result<Vec<Listing>, Error> {
+    let path = format!("/api/meta/tickers/list?asset_type={ASSET_TYPES}&limit=10000");
+    let listed: Items<Listed> = fetch(&path).await?;
+    Ok(listed
+        .list()
+        .into_iter()
+        .filter_map(|listed| {
+            let symbol = parse(listed.thscode.as_deref()?)?;
+            Some(Listing {
+                ticker: listed.ticker.unwrap_or_else(|| super::code(&symbol).to_owned()),
+                kind: Kind::of(&listed.asset_type)?,
+                name: listed.name,
+                symbol,
+            })
+        })
+        .collect())
+}
+
 /// What `symbol` is, if a search has found it.
 pub fn known(symbol: &str) -> Option<Kind> {
     kinds().get(symbol).copied().flatten()
@@ -223,28 +268,22 @@ impl Row {
     }
 }
 
-/// Snapshots of codes of one kind, by code: shares and indexes in one
-/// request each, funds one request apiece. Codes it doesn't know are left
-/// out.
+/// Codes per quote request for shares and indexes.
+const BATCH: usize = 50;
+
+/// Snapshots of codes of one kind, by code: shares and indexes [`BATCH`] to
+/// a request, funds one apiece. Codes it doesn't know are left out.
 pub async fn snapshots(kind: Kind, symbols: &[String]) -> Result<Vec<(String, Snapshot)>, Error> {
-    let rows = match kind {
-        _ if symbols.is_empty() => Vec::new(),
-        Kind::Stock => {
-            rows(&format!("/api/a-share/prices/snapshot?thscodes={}", symbols.join(","))).await?
-        }
-        Kind::Index => {
-            rows(&format!("/api/a-share-index/prices/snapshot?thscodes={}", symbols.join(",")))
-                .await?
-        }
-        Kind::Etf | Kind::Lof => {
-            let mut all = Vec::new();
-            for symbol in symbols {
-                all.extend(rows(&format!("/api/fund/market/snapshot?thscode={symbol}")).await?);
-            }
-            all
-        }
+    let (path, batch) = match kind {
+        Kind::Stock => ("/api/a-share/prices/snapshot?thscodes=", BATCH),
+        Kind::Index => ("/api/a-share-index/prices/snapshot?thscodes=", BATCH),
+        Kind::Etf | Kind::Lof => ("/api/fund/market/snapshot?thscode=", 1),
     };
-    Ok(rows
+    let mut found = Vec::new();
+    for batch in symbols.chunks(batch) {
+        found.extend(rows(&format!("{path}{}", batch.join(","))).await?);
+    }
+    Ok(found
         .into_iter()
         .filter_map(|row| Some((parse(row.thscode.as_deref()?)?, row.snapshot()?)))
         .collect())

@@ -74,6 +74,9 @@ fn main() {
             commands::check_longbridge,
             commands::get_ths,
             commands::set_ths,
+            commands::ths_sign_in,
+            commands::ths_sign_out,
+            commands::chart_instrument,
             commands::get_coingecko,
             commands::set_coingecko,
             commands::check_coingecko,
@@ -124,6 +127,10 @@ fn main() {
                 tauri::async_runtime::spawn(quotes);
             }
             market::watch_accounts(app.handle(), &control);
+            tauri::async_runtime::spawn(market::ths::sync_watchlist(
+                app.handle().clone(),
+                control.clone(),
+            ));
 
             update::start(app.handle());
 

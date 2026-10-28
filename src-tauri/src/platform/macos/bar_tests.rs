@@ -188,4 +188,86 @@ fn verify_holdings_menu(app: &AppHandle) {
     });
     i18n::set(Locale::En);
     bar::request_render(app);
+
+    verify_synced_menu(app);
+}
+
+/// Signed in on Tonghuashun's site: a row after the watchlist whose submenu
+/// is the watchlist there, with quotes that update in place.
+fn verify_synced_menu(app: &AppHandle) {
+    use crate::{
+        format,
+        market::ProviderId,
+        model::{Quote, Shared, SyncStatus, Synced},
+    };
+    use tauri::Manager;
+
+    let shared = app.state::<Shared>();
+    let moutai = Instrument {
+        provider: ProviderId::Ths,
+        symbol: "600519.SH".into(),
+        base: "600519".into(),
+        quote: "CNY".into(),
+        name: Some("贵州茅台".into()),
+        decimals: Some(2),
+        pinned: false,
+        venue: None,
+    };
+    let updated = 1_700_000_000_000.0;
+    {
+        let mut model = shared.model();
+        model.synced = Some(Synced {
+            instruments: vec![moutai],
+            skipped: 2,
+            updated: Some(updated),
+            status: SyncStatus::Read,
+        });
+        model
+            .quotes
+            .insert("ths:600519.SH".into(), Quote { last: 1_331.45, open: 1_355.9, session: None });
+    }
+    bar::request_render(app);
+    let titles = |menu: &NSMenu| -> Vec<String> {
+        (0..menu.numberOfItems())
+            .map(|i| {
+                let item = menu.itemAtIndex(i).unwrap();
+                item.attributedTitle()
+                    .map_or_else(|| item.title().to_string(), |t| t.string().to_string())
+            })
+            .collect()
+    };
+    let submenu = UI.with_borrow(|ui| {
+        let ui = ui.as_ref().unwrap();
+        let menu = ui.menu.as_ref().unwrap();
+        let index = titles(menu).iter().position(|t| *t == t!("tray.thsWatchlist"));
+        let item = menu.itemAtIndex(index.expect("a synced watchlist row") as isize).unwrap();
+        let submenu = item.submenu().expect("its submenu");
+        assert_eq!(ui.synced_menu.as_ref().map(Retained::as_ptr), Some(Retained::as_ptr(&submenu)));
+        let rows = titles(&submenu);
+        assert!(rows[0].starts_with("贵州茅台 600519\t1,331.45\t"), "{rows:?}");
+        let caption = format!(
+            "{} · {}",
+            t!("common.holdings.updated", time = format::clock(updated)),
+            t!("tray.thsSkipped", count = 2)
+        );
+        assert_eq!(rows.last().unwrap(), &caption, "{rows:?}");
+        Retained::as_ptr(&submenu)
+    });
+
+    // A quote moves the row without rebuilding the menu.
+    shared
+        .model()
+        .quotes
+        .insert("ths:600519.SH".into(), Quote { last: 1_340.0, open: 1_355.9, session: None });
+    bar::request_render(app);
+    UI.with_borrow(|ui| {
+        let synced = ui.as_ref().unwrap().synced_menu.as_ref().unwrap();
+        assert_eq!(Retained::as_ptr(synced), submenu);
+        let rows = titles(synced);
+        assert!(rows[0].starts_with("贵州茅台 600519\t1,340.00\t"), "{rows:?}");
+    });
+
+    shared.model().synced = None;
+    bar::request_render(app);
+    UI.with_borrow(|ui| assert!(ui.as_ref().unwrap().synced_menu.is_none()));
 }
