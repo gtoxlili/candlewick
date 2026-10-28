@@ -385,6 +385,11 @@ function search(query: string): Search {
   if ("SOL".startsWith(q)) {
     candidates.push({ provider: "binance", symbol: "SOLUSDT", base: "SOL", quote: "USDT", decimals: 2, pinned: false, manual: false, liquidity: null });
   }
+  // A China share both stock sources offer: the rows name their source.
+  if (["600519", "茅台", "贵州茅台"].some((s) => s.startsWith(q))) {
+    const moutai = { symbol: "600519.SH", base: "600519", quote: "CNY", name: "贵州茅台", decimals: 2, pinned: false, manual: false, liquidity: null };
+    candidates.push({ ...moutai, provider: "longbridge" }, { ...moutai, provider: "ths" });
+  }
   if ("WIF".startsWith(q) || "$WIF".startsWith(q)) {
     candidates.push({ ...pool, manual: false, liquidity: 6_141_965.07 });
     candidates.push({
@@ -422,6 +427,10 @@ export function installMocks(label: string): void {
         return state === "empty" ? { ...loading, accounts: [] } : state === "loading" ? loading : portfolio;
       case "search_instruments":
         return search(String(args.query ?? ""));
+      case "get_ths":
+        return { key: null };
+      case "set_ths":
+        return { key: args.key === null ? null : "a1b2c3…wxyz" };
       case "get_coingecko":
         return { key: null, access: null };
       // Any key saved reads as an Analyst plan, to see the configured state.

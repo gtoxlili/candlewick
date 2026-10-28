@@ -15,7 +15,7 @@
 
 <p align="center"><a href="README.md">English</a></p>
 
-加密货币用币安、Bybit 或 OKX 的公开行情，不需要账号；只在链上交易的代币来自 DEX Screener 和 GeckoTerminal，同样不需要账号；美股、港股和 A 股来自长桥，需要你自己的 OpenAPI 凭证。
+加密货币用币安、Bybit 或 OKX 的公开行情，不需要账号；只在链上交易的代币来自 DEX Screener 和 GeckoTerminal，同样不需要账号；美股、港股和 A 股来自长桥，需要你自己的 OpenAPI 凭证；A 股、指数、板块和场内基金也可以来自同花顺，只需一个免费的 API Key。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/chart-dark.png">
@@ -27,7 +27,7 @@
 - 菜单栏或任务栏常驻一个标的，下拉菜单列出全部自选，最多 30 个
 - 加密货币：币安、Bybit、OKX 任选一家，任意现货交易对
 - 链上：DEX Screener 收录的任何池子，Solana、Ethereum、Base、BNB Chain 等都有，按美元计价；填上自己的 CoinGecko API Key，K 线就走你的额度，付费套餐刷新更快
-- 股票：美股（含盘前、盘后、夜盘）、港股、A 股，按代码添加
+- 股票：美股（含盘前、盘后、夜盘）、港股、A 股来自长桥，按代码添加；A 股、指数、同花顺板块和场内基金来自同花顺，按代码或中文名添加
 - 行情图随每笔成交跳动，带盘口和最近成交
 - 图上分析：悬停卡片显示每根 K 线的数据，均线和布林带，趋势线、水平线、斐波那契回撤和测量工具，画线跟着品种保存
 - 填上交易所的 API Key，就能看总资产和各账户持仓
@@ -43,9 +43,13 @@
 
 ## 看股票
 
-1. 在 [open.longbridge.com](https://open.longbridge.com/) 的用户中心复制 App Key、App Secret 和 Access Token。
-2. 粘贴到「设置 → 长桥」。
-3. 在搜索框里输入代码添加，比如 AAPL、700、600519。
+1. 从任一数据源取得凭证，也可以两个都用：
+   - 长桥，美股、港股和 A 股：在 [open.longbridge.com](https://open.longbridge.com/) 的用户中心复制 App Key、App Secret 和 Access Token。
+   - 同花顺，A 股、指数、板块和场内基金，不需要证券账户：用同花顺账号登录 [fuyao.aicubes.cn](https://fuyao.aicubes.cn/admin)，创建一个 API Key。
+2. 粘贴到「设置 → 长桥」或「设置 → 同花顺」。
+3. 在搜索框里输入代码添加，比如 AAPL、700、600519；用同花顺还可以输入中文名，比如茅台。
+
+同花顺的报价在交易时段每几秒刷新一次，行情图只有日线和周线。
 
 ## 看持仓
 
@@ -60,7 +64,7 @@
 
 **占用多少资源？** 在 Mac 上约 19 MB 内存，CPU 不到单核的 1%。
 
-**会收集数据吗？** 不会。它只连你用到的交易所、DEX Screener、GeckoTerminal 和长桥，以及 GitHub（检查更新，可在设置里关掉）。凭证和 Key 只保存在本机，Candlewick 从不下单。打开「AI 助手接入」后，本机的 AI 助手能读取数据，别的电脑和网页都读不到。
+**会收集数据吗？** 不会。它只连你用到的交易所、DEX Screener、GeckoTerminal、长桥和同花顺，以及 GitHub（检查更新，可在设置里关掉）。凭证和 Key 只保存在本机，Candlewick 从不下单。打开「AI 助手接入」后，本机的 AI 助手能读取数据，别的电脑和网页都读不到。
 
 **有 Intel 版本吗？** 暂时没有。
 
@@ -91,4 +95,4 @@ Windows 版是怎么实现的，见 [docs/windows.md](docs/windows.md)。main �
 
 ## 许可
 
-[GPL-3.0](LICENSE)。本项目与币安、Bybit、OKX、DEX Screener、CoinGecko、长桥均无关联，价格仅供参考，不构成投资建议。
+[GPL-3.0](LICENSE)。本项目与币安、Bybit、OKX、DEX Screener、CoinGecko、长桥、同花顺均无关联，价格仅供参考，不构成投资建议。

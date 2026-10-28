@@ -67,6 +67,11 @@
       "checkAccess": "Check quote access",
       "getKeys": "Get them from the %{source} developer center"
     },
+    "ths": {
+      "footnote": "Fill this in to add China A-shares, indexes, boards and ETFs.",
+      "getKey": "Get a key from the Tonghuashun data API",
+      "checking": "Checking the key…"
+    },
     "onchain": {
       "title": "On-chain data",
       "footnote": "Optional. With a CoinGecko API key, pool candles and trades use your own quota; paid plans refresh faster.",

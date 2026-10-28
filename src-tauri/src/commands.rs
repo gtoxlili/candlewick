@@ -9,10 +9,10 @@ use tokio::sync::oneshot;
 use crate::{
     agent::{self, Agent, AgentStatus},
     bar,
-    credentials::{self, ApiKey, CoinGeckoKey, LongbridgeKeys},
+    credentials::{self, ApiKey, CoinGeckoKey, LongbridgeKeys, ThsKey},
     i18n::{self, Locale},
     market::{
-        self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, dexscreener, longbridge,
+        self, Candle, ChartSpec, LiveEvent, ProviderId, Search, Trade, dexscreener, longbridge, ths,
     },
     model::{self, Instrument, Settings, Shared},
     platform,
@@ -135,7 +135,8 @@ pub fn window_ready(window: WebviewWindow) -> CmdResult<()> {
     Ok(())
 }
 
-/// Instruments matching the query: pairs on the exchange picked, and stocks.
+/// Instruments matching the query: pairs on the exchange picked, stocks,
+/// and pools.
 #[tauri::command]
 pub async fn search_instruments(app: AppHandle, query: String) -> Search {
     let exchange = app.state::<Shared>().model().settings.exchange;
@@ -200,6 +201,41 @@ pub fn set_longbridge(
 #[tauri::command]
 pub async fn check_longbridge() -> CmdResult<longbridge::Account> {
     Ok(longbridge::account().await?)
+}
+
+/// The Tonghuashun key as the settings window shows it.
+#[derive(Serialize)]
+pub struct ThsView {
+    /// The key's ends, enough to recognize it; the key never leaves.
+    key: Option<String>,
+}
+
+#[tauri::command]
+pub fn get_ths(shared: State<'_, Shared>) -> ThsView {
+    ThsView { key: shared.credentials().ths.as_ref().map(|k| masked(&k.key)) }
+}
+
+/// Saves (or with `None`, removes) the Tonghuashun key, once Tonghuashun
+/// takes it.
+#[tauri::command]
+pub async fn set_ths(app: AppHandle, key: Option<String>) -> CmdResult<ThsView> {
+    let key = key
+        .map(|key| key.chars().filter(|c| !c.is_whitespace()).collect::<String>())
+        .filter(|key| !key.is_empty());
+    if let Some(key) = &key {
+        ths::check(key).await?;
+    }
+    let shared = app.state::<Shared>();
+    {
+        let mut stored = shared.credentials();
+        stored.ths = key.clone().map(|key| ThsKey { key });
+        credentials::save(&shared.credentials_path, &stored)?;
+        let credentials = stored.clone();
+        shared.control.send_modify(|control| control.credentials = credentials);
+    }
+    ths::configure(key.clone());
+    bar::request_render(&app);
+    Ok(ThsView { key: key.map(|k| masked(&k)) })
 }
 
 /// The CoinGecko key as the settings window shows it.

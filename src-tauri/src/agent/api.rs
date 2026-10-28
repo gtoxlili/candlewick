@@ -126,8 +126,8 @@ struct Index {
     exchange: ProviderId,
     /// Exchanges whose holdings `/v1/portfolio` reads.
     holdings: Vec<ProviderId>,
-    /// Stocks can be read: Longbridge credentials are set.
-    stocks: bool,
+    /// Stock sources whose credentials are set.
+    stocks: Vec<ProviderId>,
     /// Candle intervals in seconds, by source.
     intervals: BTreeMap<ProviderId, Vec<u32>>,
 }
@@ -137,7 +137,12 @@ async fn index(State(api): State<Api>) -> Json<Index> {
     let exchange = shared.model().settings.exchange;
     let (holdings, stocks) = {
         let credentials = shared.credentials();
-        (credentials.exchanges.keys().copied().collect(), credentials.longbridge.is_some())
+        let stocks = [
+            (ProviderId::Longbridge, credentials.longbridge.is_some()),
+            (ProviderId::Ths, credentials.ths.is_some()),
+        ];
+        let stocks = stocks.into_iter().filter_map(|(source, set)| set.then_some(source)).collect();
+        (credentials.exchanges.keys().copied().collect(), stocks)
     };
     let intervals = ProviderId::ALL
         .into_iter()

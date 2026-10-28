@@ -72,6 +72,8 @@ fn main() {
             commands::get_longbridge,
             commands::set_longbridge,
             commands::check_longbridge,
+            commands::get_ths,
+            commands::set_ths,
             commands::get_coingecko,
             commands::set_coingecko,
             commands::check_coingecko,

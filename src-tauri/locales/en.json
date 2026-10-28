@@ -5,6 +5,7 @@
       "bybit": "Bybit",
       "okx": "OKX",
       "longbridge": "Longbridge",
+      "ths": "Tonghuashun",
       "dexscreener": "DEX Screener"
     },
     "holdings": {
@@ -110,7 +111,9 @@
     "rateLimited": "%{source} is rate limiting · retry in %{seconds}s",
     "coingeckoKey": "CoinGecko doesn't recognize this API key",
     "coingeckoKeyMissing": "No CoinGecko API key is saved",
+    "thsKey": "Tonghuashun doesn't accept this API key",
     "noQuote": "%{source} has no quote for this stock",
+    "unknownSymbol": "%{source} doesn't list %{symbol}",
     "sourceBadData": "Unexpected data from %{source}",
     "sourceStopped": "The %{source} connection has stopped",
     "sourceNeedsCredentials": "Enter your %{source} credentials in Settings first",

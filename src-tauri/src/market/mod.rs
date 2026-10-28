@@ -14,6 +14,7 @@ mod crypto;
 pub mod dexscreener;
 pub mod longbridge;
 mod okx;
+pub mod ths;
 
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
@@ -38,13 +39,15 @@ pub enum ProviderId {
     Bybit,
     Okx,
     Longbridge,
+    /// China A-shares, indexes and funds from Tonghuashun (同花顺).
+    Ths,
     /// On-chain pools on decentralized exchanges.
     DexScreener,
 }
 
 impl ProviderId {
-    pub const ALL: [Self; 5] =
-        [Self::Binance, Self::Bybit, Self::Okx, Self::Longbridge, Self::DexScreener];
+    pub const ALL: [Self; 6] =
+        [Self::Binance, Self::Bybit, Self::Okx, Self::Longbridge, Self::Ths, Self::DexScreener];
 
     /// The crypto exchanges, one of which the settings pick for every pair
     /// (`Settings::exchange`).
@@ -61,6 +64,7 @@ impl ProviderId {
             Self::Bybit => "bybit",
             Self::Okx => "okx",
             Self::Longbridge => "longbridge",
+            Self::Ths => "ths",
             Self::DexScreener => "dexscreener",
         }
     }
@@ -72,6 +76,7 @@ impl ProviderId {
             Self::Bybit => t!("common.provider.bybit"),
             Self::Okx => t!("common.provider.okx"),
             Self::Longbridge => t!("common.provider.longbridge"),
+            Self::Ths => t!("common.provider.ths"),
             Self::DexScreener => t!("common.provider.dexscreener"),
         }
     }
@@ -82,14 +87,16 @@ impl ProviderId {
             Self::Bybit => &bybit::Bybit,
             Self::Okx => &okx::Okx,
             Self::Longbridge => &longbridge::Longbridge,
+            Self::Ths => &ths::Ths,
             Self::DexScreener => &dexscreener::DexScreener,
         }
     }
 }
 
-/// Instruments matching `query`: pairs on `exchange`, stocks, and pools.
+/// Instruments matching `query`: pairs on `exchange`, stocks from both
+/// stock sources, and pools.
 pub async fn search(exchange: ProviderId, query: &str) -> Search {
-    let searches = [exchange, ProviderId::Longbridge, ProviderId::DexScreener]
+    let searches = [exchange, ProviderId::Longbridge, ProviderId::Ths, ProviderId::DexScreener]
         .map(|provider| provider.provider().search(query));
     let mut all = Search::default();
     for found in futures_util::future::join_all(searches).await {
@@ -117,7 +124,7 @@ pub async fn check_key(exchange: ProviderId, key: &ApiKey) -> Result<(), Error> 
         ProviderId::Binance => binance::Binance::check(key).await,
         ProviderId::Bybit => bybit::Bybit::check(key).await,
         ProviderId::Okx => okx::Okx::check(key).await,
-        ProviderId::Longbridge | ProviderId::DexScreener => {
+        ProviderId::Longbridge | ProviderId::Ths | ProviderId::DexScreener => {
             Err(Error::Message(t!("error.noApiKey", source = exchange.name())))
         }
     }

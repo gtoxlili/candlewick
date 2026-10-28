@@ -15,7 +15,7 @@
 
 <p align="center"><a href="README.zh-CN.md">简体中文</a></p>
 
-Crypto comes from Binance, Bybit or OKX public market data, no account needed; tokens that only trade on-chain come from DEX Screener and GeckoTerminal, also without an account. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI keys. It speaks English, Simplified Chinese and Japanese.
+Crypto comes from Binance, Bybit or OKX public market data, no account needed; tokens that only trade on-chain come from DEX Screener and GeckoTerminal, also without an account. US, Hong Kong and China A-share stocks come from Longbridge, with your own OpenAPI keys; China A-shares, indexes, sector boards and ETFs can also come from Tonghuashun, with a free API key. It speaks English, Simplified Chinese and Japanese.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/chart-dark.png">
@@ -27,7 +27,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed; t
 - One instrument always in the menu bar or taskbar, and up to 30 in the dropdown
 - Crypto: Binance, Bybit or OKX, any spot pair
 - On-chain: any pool DEX Screener lists, on Solana, Ethereum, Base, BNB Chain and the rest, priced in USD; add your own CoinGecko API key and candles come on your quota, faster on a paid plan
-- Stocks: US (including pre-market, after-hours and overnight), Hong Kong and China A-shares, by code
+- Stocks: US (including pre-market, after-hours and overnight), Hong Kong and China A-shares from Longbridge, by code; China A-shares, indexes, Tonghuashun's sector boards and ETFs from Tonghuashun, by code or Chinese name
 - A chart that moves with every trade, with the order book and recent trades
 - Chart analysis: a hover card with each candle's figures, moving averages and Bollinger Bands, and trend lines, levels, Fibonacci retracements and measurements that stay with the instrument
 - With an exchange's API key, your total holdings and every account's positions
@@ -43,9 +43,13 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed; t
 
 ## Stocks
 
-1. Copy the App Key, App Secret and Access Token from the user center at [open.longbridge.com](https://open.longbridge.com/).
-2. Paste them into Settings → Longbridge.
-3. Add stocks by code in the search field, such as AAPL, 700 or 600519.
+1. Get credentials from either source, or both:
+   - Longbridge, for US, Hong Kong and China A-shares: the App Key, App Secret and Access Token from the user center at [open.longbridge.com](https://open.longbridge.com/).
+   - Tonghuashun, for China A-shares, indexes, sector boards and ETFs, without a brokerage account: sign in at [fuyao.aicubes.cn](https://fuyao.aicubes.cn/admin) with a Tonghuashun account and create an API key.
+2. Paste them into Settings → Longbridge or Settings → Tonghuashun.
+3. Add stocks in the search field by code, such as AAPL, 700 or 600519, and with Tonghuashun by Chinese name too, such as 茅台.
+
+Tonghuashun's quotes refresh every few seconds while the market trades, and its charts have daily and weekly candles.
 
 ## Holdings
 
@@ -60,7 +64,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed; t
 
 **How much does it use?** About 19 MB of memory and under 1% of one CPU core on a Mac.
 
-**Does it collect any data?** No. It only talks to the exchanges, DEX Screener, GeckoTerminal and Longbridge you use, and to GitHub for updates (you can turn that off in the settings). Keys stay on your computer, and Candlewick never trades. With AI access on, AI agents on your computer can read its data; other computers and web pages can't.
+**Does it collect any data?** No. It only talks to the exchanges, DEX Screener, GeckoTerminal, Longbridge and Tonghuashun you use, and to GitHub for updates (you can turn that off in the settings). Keys stay on your computer, and Candlewick never trades. With AI access on, AI agents on your computer can read its data; other computers and web pages can't.
 
 **Is there a build for Intel Macs?** Not yet.
 
@@ -91,4 +95,4 @@ Built with [Tauri 2](https://tauri.app), Rust, React 19 and Tailwind CSS.
 
 ## License
 
-[GPL-3.0](LICENSE). Candlewick is not affiliated with Binance, Bybit, OKX, DEX Screener, CoinGecko or Longbridge. Prices are for reference only and are not financial advice.
+[GPL-3.0](LICENSE). Candlewick is not affiliated with Binance, Bybit, OKX, DEX Screener, CoinGecko, Longbridge or Tonghuashun. Prices are for reference only and are not financial advice.

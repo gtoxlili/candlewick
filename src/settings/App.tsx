@@ -35,6 +35,7 @@ import {
   type LongbridgeKeys,
   type Search as SearchResults,
   type Settings,
+  type Ths,
   type Update,
   type UpdateState,
 } from "@/lib/api";
@@ -127,6 +128,8 @@ export default function App() {
 
           <LongbridgeSection />
 
+          <ThsSection />
+
           <CoinGeckoSection />
 
           <Section title={t("settings.display.title")}>
@@ -195,6 +198,7 @@ function WatchlistSection(props: {
 }) {
   const { t } = useTranslation();
   const { watchlist, onChange } = props;
+  const shared = sharedSymbols(watchlist);
   const move = (index: number, delta: number) => {
     const next = [...watchlist];
     const [moved] = next.splice(index, 1);
@@ -216,7 +220,11 @@ function WatchlistSection(props: {
         ) : (
           watchlist.map((item, index) => (
             <div key={instrumentId(item)} className="flex h-10 items-center gap-0.5 pr-1.5 pl-3.5">
-              <InstrumentName instrument={item} className="min-w-0 flex-1 truncate" />
+              <InstrumentName
+                instrument={item}
+                source={shared.has(item.symbol)}
+                className="min-w-0 flex-1 truncate"
+              />
               <Label className="mr-2 gap-2 text-xs font-normal text-muted-foreground">
                 {t("settings.watchlist.bar", PLATFORM)}
                 <Switch
@@ -732,15 +740,25 @@ function updateNote(state: UpdateState, t: TFunction): string | null {
   }
 }
 
+/** Symbols more than one source offers (a China share from both stock sources). */
+function sharedSymbols(instruments: Instrument[]): Set<string> {
+  const seen = new Set<string>();
+  const shared = new Set<string>();
+  for (const { symbol } of instruments) (seen.has(symbol) ? shared : seen).add(symbol);
+  return shared;
+}
+
 /**
  * "BTC/USDT", "AAPL Apple US", "腾讯控股 700 港股", "$WIF dogwifhat Solana · Raydium":
- * the name, then dimmed details, then where it trades.
+ * the name, then dimmed details, then where it trades, and with `source`
+ * where it comes from ("贵州茅台 600519 A 股 · 同花顺").
  */
-function InstrumentName(props: { instrument: Instrument; className?: string; dim?: string }) {
+function InstrumentName(props: { instrument: Instrument; source?: boolean; className?: string; dim?: string }) {
   const { t } = useTranslation();
   const { name, detail, venue } = instrumentLabel(props.instrument);
   const market = marketOf(props.instrument);
-  const where = venue ?? (market && t(`market.${market}`));
+  const from = props.source ? t(`common.provider.${props.instrument.provider}`) : null;
+  const where = [venue ?? (market && t(`market.${market}`)), from].filter(Boolean).join(" · ");
   const dim = props.dim ?? "text-muted-foreground";
   return (
     <span className={props.className}>
@@ -782,6 +800,7 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
 
   const taken = new Set(props.existing.map(instrumentId));
   const options: Candidate[] = query.trim() ? (results?.candidates ?? []) : [];
+  const shared = sharedSymbols(options);
 
   const current =
     active >= 0 && active < options.length ? active : options.findIndex((o) => !taken.has(instrumentId(o)));
@@ -864,6 +883,7 @@ function InstrumentSearch(props: { existing: Instrument[]; full: boolean; onAdd:
                 >
                   <InstrumentName
                     instrument={candidate}
+                    source={shared.has(candidate.symbol)}
                     className="min-w-0 truncate"
                     dim={highlighted ? "opacity-80" : "text-muted-foreground"}
                   />
@@ -1023,6 +1043,93 @@ function CoinGeckoSection() {
               )}
               <Button size="sm" disabled={!key.trim() || busy} onClick={() => save(key)}>
                 {busy && <Spinner aria-label={t("settings.onchain.checking")} />}
+                {t("settings.save")}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Group>
+      {problem && <Problem>{problem}</Problem>}
+    </Section>
+  );
+}
+
+/** A key for China's shares, indexes, boards and funds, checked with Tonghuashun when saved. */
+function ThsSection() {
+  const { t } = useTranslation();
+  const source = t("common.provider.ths");
+  const [state, setState] = useState<Ths | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getThs()
+      .then(setState)
+      .catch((e: unknown) => setProblem(String(e)));
+  }, []);
+
+  const save = (next: string | null) => {
+    setBusy(true);
+    setProblem(null);
+    api
+      .setThs(next)
+      .then((saved) => {
+        setState(saved);
+        setEditing(false);
+        setKey("");
+      })
+      .catch((e: unknown) => setProblem(String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  if (!state) return null;
+  const configured = state.key !== null && !editing;
+
+  return (
+    <Section title={source} footnote={configured ? undefined : t("settings.ths.footnote")}>
+      <Group>
+        {configured ? (
+          <div className="flex min-h-10 items-center gap-2 px-3.5 py-2">
+            <p className="min-w-0 flex-1">
+              API Key <span className="font-mono text-xs text-muted-foreground">{state.key}</span>
+            </p>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditing(true)}>
+              {t("settings.replace")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="hover:text-destructive"
+              disabled={busy}
+              onClick={() => save(null)}
+            >
+              {t("settings.remove")}
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3 px-3.5 py-3">
+            <FieldGroup className="gap-2.5">
+              <CredentialField label="API Key" secret value={key} disabled={busy} onChange={setKey} />
+            </FieldGroup>
+            <div className="flex items-center justify-end gap-2">
+              <a
+                href="https://fuyao.aicubes.cn/admin"
+                target="_blank"
+                rel="noreferrer"
+                className="mr-auto text-xs text-muted-foreground underline"
+              >
+                {t("settings.ths.getKey")}
+              </a>
+              {state.key !== null && (
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditing(false)}>
+                  {t("settings.cancel")}
+                </Button>
+              )}
+              <Button size="sm" disabled={!key.trim() || busy} onClick={() => save(key)}>
+                {busy && <Spinner aria-label={t("settings.ths.checking")} />}
                 {t("settings.save")}
               </Button>
             </div>

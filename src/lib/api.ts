@@ -8,10 +8,15 @@ export type ColorScheme = "greenUp" | "redUp";
 /** The crypto exchanges; the settings pick one for every pair. */
 export type Exchange = "binance" | "bybit" | "okx";
 
-/** Exchanges, Longbridge for stocks, DEX Screener for on-chain pools. */
-export type ProviderId = Exchange | "longbridge" | "dexscreener";
+/** Where stocks come from: Longbridge (US, Hong Kong, China), Tonghuashun (China). */
+type StockSource = "longbridge" | "ths";
+
+/** Exchanges, the stock sources, DEX Screener for on-chain pools. */
+export type ProviderId = Exchange | StockSource | "dexscreener";
 
 export const EXCHANGES = ["binance", "bybit", "okx"] as const satisfies readonly Exchange[];
+
+const isStock = (provider: ProviderId): provider is StockSource => provider === "longbridge" || provider === "ths";
 
 /** A watchlist entry. */
 export interface Instrument {
@@ -54,20 +59,21 @@ export function instrumentLabel(instrument: Instrument): { name: string; detail:
     const venue = [instrument.venue?.chain, instrument.venue?.dex].filter((p): p is string => !!p).join(" · ");
     return { name: instrument.base, detail: instrument.name ? ` ${instrument.name}` : "", venue: venue || null };
   }
-  if (instrument.provider !== "longbridge") return { name: instrument.base, detail: `/${instrument.quote}`, venue: null };
+  if (!isStock(instrument.provider)) return { name: instrument.base, detail: `/${instrument.quote}`, venue: null };
   const name = instrument.name ?? "";
   // US tickers read better than their names; other codes are just numbers.
   if (instrument.symbol.endsWith(".US") || !name) return { name: instrument.base, detail: name && ` ${name}`, venue: null };
   return { name, detail: ` ${instrument.base}`, venue: null };
 }
 
-/** Where Longbridge's markets are. */
+/** Where stocks trade. */
 export type Market = "US" | "HK" | "CN";
 
 const MARKETS: Record<string, Market> = { US: "US", HK: "HK", SH: "CN", SZ: "CN" };
 
-/** The market a stock trades in, by its symbol's suffix; none for crypto. */
+/** The market a stock trades in, by its symbol's suffix; none for crypto. Tonghuashun's are all China's. */
 export function marketOf(instrument: Instrument): Market | null {
+  if (instrument.provider === "ths") return "CN";
   return instrument.provider === "longbridge" ? (MARKETS[instrument.symbol.split(".").at(-1) ?? ""] ?? null) : null;
 }
 
@@ -252,6 +258,12 @@ export interface LongbridgeKeys {
   accessToken: string;
 }
 
+/** The Tonghuashun key as the settings window shows it. */
+export interface Ths {
+  /** The key's ends, when one is saved. */
+  key: string | null;
+}
+
 /** What a CoinGecko key is, once CoinGecko has been asked. */
 export type CoinGeckoAccess =
   /** A Demo key: 100 calls a minute and 10,000 a month, which it can't report. */
@@ -417,6 +429,9 @@ export const api = {
   setLongbridge: (keys: LongbridgeKeys | null) => invoke<Longbridge>("set_longbridge", { keys }),
   /** Logs in with the saved credentials and reports what the account may see. */
   checkLongbridge: () => invoke<LongbridgeAccount>("check_longbridge"),
+  getThs: () => invoke<Ths>("get_ths"),
+  /** Checks with Tonghuashun that the key works and saves it; null removes it. */
+  setThs: (key: string | null) => invoke<Ths>("set_ths", { key }),
   getCoinGecko: () => invoke<CoinGecko>("get_coingecko"),
   /** Checks with CoinGecko what the key is and saves it; null removes it. */
   setCoinGecko: (key: string | null) => invoke<CoinGecko>("set_coingecko", { key }),

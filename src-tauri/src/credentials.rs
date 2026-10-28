@@ -1,7 +1,7 @@
 //! Account credentials, in `credentials.json` next to the settings, readable
-//! by the user only: Longbridge's for stock quotes, exchange API keys for
-//! holdings, which the app only ever reads with, and a CoinGecko key for
-//! pool candles and trades on the user's own quota.
+//! by the user only: Longbridge's and a Tonghuashun key for stock quotes,
+//! exchange API keys for holdings, which the app only ever reads with, and a
+//! CoinGecko key for pool candles and trades on the user's own quota.
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -21,12 +21,27 @@ use crate::market::ProviderId;
 pub struct Credentials {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub longbridge: Option<LongbridgeKeys>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ths: Option<ThsKey>,
     /// By crypto exchange.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exchanges: BTreeMap<ProviderId, ApiKey>,
     /// Optional: pool data on the user's own CoinGecko quota.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coingecko: Option<CoinGeckoKey>,
+}
+
+/// A Tonghuashun financial data API key, from its key management page.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThsKey {
+    pub key: String,
+}
+
+// Keeps the secret out of logs.
+impl fmt::Debug for ThsKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ThsKey { .. }")
+    }
 }
 
 /// A CoinGecko API key (Demo or paid), from its developer dashboard.
@@ -134,6 +149,7 @@ mod tests {
                 app_secret: "secret".into(),
                 access_token: "token".into(),
             }),
+            ths: Some(ThsKey { key: "ths-key".into() }),
             exchanges: [(
                 ProviderId::Okx,
                 ApiKey { key: "key".into(), secret: "secret".into(), passphrase: Some("p".into()) },

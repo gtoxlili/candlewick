@@ -36,7 +36,7 @@
       "moveDown": "下移",
       "remove": "删除 %{name}",
       "full": "最多 %{max} 个",
-      "search": "搜索币种、股票代码或链上代币，如 SOL、AAPL、700、WIF",
+      "search": "搜索币种、股票或链上代币，如 SOL、AAPL、茅台、WIF",
       "searching": "正在搜索…",
       "noResults": "没有找到",
       "added": "已添加",
@@ -66,6 +66,11 @@
       "noAccess": "无行情权限",
       "checkAccess": "查看行情权限",
       "getKeys": "在%{source}开发者中心获取"
+    },
+    "ths": {
+      "footnote": "填写后可添加 A 股、指数、同花顺板块和场内基金。",
+      "getKey": "到同花顺金融数据 API 获取 Key",
+      "checking": "正在验证 Key…"
     },
     "onchain": {
       "title": "链上数据",

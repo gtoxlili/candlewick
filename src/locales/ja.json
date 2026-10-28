@@ -67,6 +67,11 @@
       "checkAccess": "相場の閲覧権限を確認",
       "getKeys": "%{source} の開発者センターで取得"
     },
+    "ths": {
+      "footnote": "入力すると、中国 A 株・指数・業種・ETF を追加できます。",
+      "getKey": "同花順データ API でキーを取得",
+      "checking": "キーを確認中…"
+    },
     "onchain": {
       "title": "オンチェーンデータ",
       "footnote": "任意。CoinGecko API キーを入れると、プールのローソク足と約定が自分の枠で取得されます。有料プランは更新が速くなります。",

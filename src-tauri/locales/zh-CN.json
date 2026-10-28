@@ -5,6 +5,7 @@
       "bybit": "Bybit",
       "okx": "OKX",
       "longbridge": "长桥",
+      "ths": "同花顺",
       "dexscreener": "DEX Screener"
     },
     "holdings": {
@@ -110,7 +111,9 @@
     "rateLimited": "%{source}限流中 · %{seconds} 秒后重试",
     "coingeckoKey": "CoinGecko 不认识这个 API Key",
     "coingeckoKeyMissing": "还没有保存 CoinGecko API Key",
+    "thsKey": "同花顺不接受这个 API Key",
     "noQuote": "%{source}没有这只股票的报价",
+    "unknownSymbol": "%{source}查不到 %{symbol}",
     "sourceBadData": "%{source}返回的数据格式有误",
     "sourceStopped": "%{source}连接已停止",
     "sourceNeedsCredentials": "请先在设置中填写%{source}凭证",

@@ -117,7 +117,7 @@ export default function ChartApp() {
   const bookSteps = chartSpec?.bookSteps ?? [];
   const step = Math.min(Math.max(bookStep, 0), Math.max(bookSteps.length - 1, 0));
   const book = books?.[Math.min(step, books.length - 1)] ?? null;
-  /** Pools have no order book: the side panel shows the trades and the day's buy/sell split. */
+  /** Pools and Tonghuashun's codes have no order book: the side panel shows the trades, with a pool's buy/sell split. */
   const hasBook = chartSpec?.book ?? true;
   const pool = chartSpec?.onchain ?? false;
   const scheme = settings?.colorScheme ?? "greenUp";
@@ -428,7 +428,7 @@ function buyShare(onchain: Onchain | null): number | null {
   return total > 0 ? (onchain.buys / total) * 100 : null;
 }
 
-/** Above a pool's trades: the day's buys against its sells, as the book panel shows bids against asks. */
+/** Above the trades where there is no book; for a pool, the day's buys against its sells, as the book panel shows bids against asks. */
 function FlowHeader(props: { onchain: Onchain | null }) {
   const { t } = useTranslation();
   const share = buyShare(props.onchain);
@@ -436,7 +436,9 @@ function FlowHeader(props: { onchain: Onchain | null }) {
     <div className="px-3 pb-2.5">
       <div className="flex h-6 items-center justify-between">
         <span className="text-xs font-medium">{t("chart.trades")}</span>
-        <span className="text-2xs text-muted-foreground">{t("chart.span", { context: "rolling24h" })}</span>
+        {share !== null && (
+          <span className="text-2xs text-muted-foreground">{t("chart.span", { context: "rolling24h" })}</span>
+        )}
       </div>
       {share !== null && (
         <>
