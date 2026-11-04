@@ -485,8 +485,6 @@ impl Shared {
     }
 
     pub fn model(&self) -> MutexGuard<'_, Model> {
-        // A panic while holding the lock aborts the process (panic = "abort"),
-        // so poisoning cannot be observed in release builds.
         self.model.lock().unwrap_or_else(|e| e.into_inner())
     }
 }

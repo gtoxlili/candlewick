@@ -46,6 +46,9 @@ mod portfolio;
 #[path = "../src/sign.rs"]
 mod sign;
 #[cfg(target_os = "macos")]
+#[path = "../src/ui/mod.rs"]
+mod ui;
+#[cfg(target_os = "macos")]
 #[path = "../src/update.rs"]
 mod update;
 #[cfg(target_os = "macos")]
@@ -54,34 +57,25 @@ mod window;
 
 #[cfg(target_os = "macos")]
 fn main() {
-    use tauri::Manager;
-
     platform::bar::install_event_handlers();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let runtime_handle = runtime.handle().clone();
-    tauri::Builder::default()
-        .setup(move |app| {
-            let (shared, _) = model::Shared::new(
-                model::Settings::default(),
-                Default::default(),
-                Default::default(),
-                Default::default(),
-            );
-            let handle = app::App::new(app.handle().clone(), runtime_handle.clone(), shared);
-            app.manage(handle.clone());
-            verify_topics(&handle);
-            platform::bar::create(&handle)?;
-            Ok(())
-        })
-        .build(tauri::generate_context!())
-        .expect("build native regression app")
-        .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Ready) {
-                platform::bar::tests::verify_closed_menu_refresh(&app.state::<app::App>());
-                println!("macos_bar: prices, settings and menu rows refresh without a click");
-                app.exit(0);
-            }
-        });
+    gpui_kit::application().run(move |cx| {
+        gpui_kit::init(cx);
+        let (shared, _) = model::Shared::new(
+            model::Settings::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
+        let handle = app::App::new(cx, runtime_handle, shared);
+        verify_topics(&handle);
+        platform::bar::create(&handle).unwrap();
+        platform::bar::tests::verify_closed_menu_refresh(&handle);
+        println!("macos_bar: prices, settings and menu rows refresh without a click");
+        platform::bar::shutdown();
+        cx.quit();
+    });
 }
 
 #[cfg(not(target_os = "macos"))]

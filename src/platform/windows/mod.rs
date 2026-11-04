@@ -17,15 +17,10 @@ pub mod window;
 
 use std::time::Duration;
 
-use tauri::{Builder, Wry};
 use windows::{
     Win32::{
         Foundation::{ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, GetLastError, LPARAM, WPARAM},
         System::{
-            Memory::{
-                GetProcessHeap, HEAP_FLAGS, HeapCompact, SETPROCESSWORKINGSETSIZEEX_FLAGS,
-                SetProcessWorkingSetSizeEx,
-            },
             Registry::{
                 HKEY_CURRENT_USER, REG_BINARY, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_SZ,
                 RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
@@ -95,11 +90,6 @@ pub fn claim_single_instance() {
 
 /// Windows keeps no language per app; the settings hold it.
 pub fn remember_language(_language: crate::i18n::Language) {}
-
-/// No app menu: Windows windows carry their own controls.
-pub fn configure(builder: Builder<Wry>) -> Builder<Wry> {
-    builder
-}
 
 /// Calls `on_change(reason, paused)` on sleep and resume, display off and on,
 /// and session lock, unlock and switching; the shell thread watches for them.
@@ -228,23 +218,5 @@ fn set_efficiency_mode(on: bool) {
     };
     if let Err(e) = result {
         log::debug!("efficiency mode unavailable: {e}");
-    }
-}
-
-/// After the last window: WebView2's processes exit on their own; hand the
-/// pages this process freed back, so its footprint returns to its baseline.
-fn release_free_memory() {
-    // SAFETY: compacts this process's default heap and trims its working set
-    // (-1, -1 means "as much as possible"); both are advisory.
-    unsafe {
-        if let Ok(heap) = GetProcessHeap() {
-            let _ = HeapCompact(heap, HEAP_FLAGS(0));
-        }
-        let _ = SetProcessWorkingSetSizeEx(
-            GetCurrentProcess(),
-            usize::MAX,
-            usize::MAX,
-            SETPROCESSWORKINGSETSIZEEX_FLAGS(0),
-        );
     }
 }

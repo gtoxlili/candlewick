@@ -1,64 +1,219 @@
-//! The settings, chart and holdings windows. Each exists only while open:
-//! closing one destroys its webview, so the always-on app carries no browser
-//! engine in between.
-//!
-//! They share one look, which `platform::window` gives them: the system's
-//! translucent material behind a transparent page, which draws its own title
-//! bar and marks it as the drag region.
+use std::{collections::HashMap, io};
 
-use std::time::Duration;
-
-use tauri::{
-    Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, webview::NewWindowResponse,
+use gpui_kit::{
+    AnyWindowHandle, AppContext, Global, TitlebarOptions, WindowBounds, WindowOptions, px, size,
 };
 
 use crate::{
     app::{App, Topic},
     market::{ProviderId, ths},
     model::Instrument,
-    net, platform,
+    platform, ui,
 };
 
-pub const SETTINGS: &str = "settings";
-pub const CHART: &str = "chart";
-pub const HOLDINGS: &str = "holdings";
-struct Spec {
-    label: &'static str,
-    url: String,
-    title: String,
-    size: (f64, f64),
-    min_size: (f64, f64),
-    resizable: bool,
+const SETTINGS: &str = "settings";
+const CHART: &str = "chart";
+const HOLDINGS: &str = "holdings";
+
+#[derive(Default)]
+struct Windows(HashMap<&'static str, AnyWindowHandle>);
+impl Global for Windows {}
+
+pub(crate) fn init(app: &App, cx: &mut gpui_kit::App) {
+    cx.set_global(Windows::default());
+    let app = app.clone();
+    cx.on_window_closed(move |cx, id| {
+        let label = cx
+            .global::<Windows>()
+            .0
+            .iter()
+            .find_map(|(label, window)| (window.window_id() == id).then_some(*label));
+        if let Some(label) = label {
+            cx.global_mut::<Windows>().0.remove(label);
+            app.set_window_count(cx.global::<Windows>().0.len());
+            on_destroyed(&app, label);
+            if cx.global::<Windows>().0.is_empty() {
+                platform::window::did_close_all(cx);
+            }
+        }
+    })
+    .detach();
 }
 
-pub fn open_settings(app: &App) -> tauri::Result<()> {
-    open(
-        app,
-        Spec {
-            label: SETTINGS,
-            url: "index.html".to_owned(),
-            title: t!("window.settings").to_owned(),
-            size: (460.0, 640.0),
-            min_size: (460.0, 640.0),
-            resizable: false,
-        },
-    )
+pub fn open_settings(app: &App) -> io::Result<()> {
+    enqueue_open(app, SETTINGS, t!("window.settings").to_owned())
 }
 
-/// Opens the holdings window; while it is open, holdings refresh often.
-pub fn open_holdings(app: &App) -> tauri::Result<()> {
-    set_holdings_open(app, true);
-    open(
-        app,
-        Spec {
-            label: HOLDINGS,
-            url: "holdings.html".to_owned(),
-            title: t!("window.holdings").to_owned(),
-            size: (980.0, 640.0),
-            min_size: (800.0, 500.0),
-            resizable: true,
-        },
-    )
+pub fn open_holdings(app: &App) -> io::Result<()> {
+    enqueue_open(app, HOLDINGS, t!("window.holdings").to_owned())
+}
+
+pub fn open_chart(app: &App, id: &str) -> io::Result<()> {
+    let Some(title) = retarget_chart(app, id) else { return Ok(()) };
+    enqueue_open(app, CHART, title)
+}
+
+fn retarget_chart(app: &App, id: &str) -> Option<String> {
+    let title = {
+        let mut model = app.shared().model();
+        let title = chart_title(model.instrument(id)?);
+        model.chart = Some(id.to_owned());
+        title
+    };
+    let updated = title.clone();
+    let handle = app.clone();
+    app.on_gpui(move |cx| {
+        if let Some(window) = cx.global::<Windows>().0.get(CHART).copied() {
+            let _ = window.update(cx, |_, window, _| {
+                window.set_window_title(&updated);
+                window.refresh();
+            });
+            handle.notify(Topic::ChartInstrument);
+        }
+    });
+    Some(title)
+}
+
+fn chart_title(instrument: &Instrument) -> String {
+    t!("window.chart", pair = instrument.pair_label())
+}
+
+pub fn relabel(app: &App) {
+    let handle = app.clone();
+    app.on_gpui(move |cx| {
+        let chart = {
+            let model = handle.shared().model();
+            model.chart.as_deref().and_then(|id| model.instrument(id)).map(chart_title)
+        };
+        for (label, title) in [
+            (SETTINGS, Some(t!("window.settings").to_owned())),
+            (CHART, chart),
+            (HOLDINGS, Some(t!("window.holdings").to_owned())),
+        ] {
+            if let Some(window) = cx.global::<Windows>().0.get(label).copied() {
+                let _ = window.update(cx, |_, window, _| {
+                    if let Some(title) = title {
+                        window.set_window_title(&title);
+                    }
+                    window.refresh();
+                });
+            }
+        }
+        handle.notify(Topic::Locale);
+        platform::window::relabel(cx);
+    });
+}
+
+pub fn reopen(app: &App) -> io::Result<()> {
+    let handle = app.clone();
+    dispatch(app, move |cx| {
+        let open: Vec<_> = [CHART, HOLDINGS, SETTINGS]
+            .into_iter()
+            .filter_map(|label| cx.global::<Windows>().0.get(label).copied())
+            .collect();
+        if open.is_empty() {
+            open_on_main(&handle, cx, SETTINGS, t!("window.settings").to_owned());
+        } else if !platform::window::ACTIVATION_RAISES_WINDOWS
+            || !open.iter().any(|window| {
+                window.update(cx, |_, w, _| platform::window::is_unminimized(w)).unwrap_or(false)
+            })
+        {
+            raise(cx, open[0]);
+        }
+    })
+}
+
+pub fn sync_chart(app: &App) {
+    let handle = app.clone();
+    app.on_gpui(move |cx| {
+        let Some(window) = cx.global::<Windows>().0.get(CHART).copied() else { return };
+        let replacement = {
+            let model = handle.shared().model();
+            if model.chart.as_deref().is_some_and(|id| model.instrument(id).is_some()) {
+                return;
+            }
+            model.settings.watchlist.first().map(|instrument| instrument.id())
+        };
+        if let Some(id) = replacement {
+            retarget_chart(&handle, &id);
+        } else {
+            let _ = window.update(cx, |_, window, _| window.remove_window());
+        }
+    });
+}
+
+fn dispatch(app: &App, f: impl FnOnce(&mut gpui_kit::App) + Send + 'static) -> io::Result<()> {
+    if app.on_gpui(f) { Ok(()) } else { Err(io::Error::other("main thread unavailable")) }
+}
+
+fn enqueue_open(app: &App, label: &'static str, title: String) -> io::Result<()> {
+    let handle = app.clone();
+    dispatch(app, move |cx| open_on_main(&handle, cx, label, title))
+}
+
+fn open_on_main(app: &App, cx: &mut gpui_kit::App, label: &'static str, title: String) {
+    platform::window::will_show(app, cx, label);
+    if let Some(window) = cx.global::<Windows>().0.get(label).copied() {
+        let _ = window.update(cx, |_, window, _| window.set_window_title(&title));
+        raise(cx, window);
+        return;
+    }
+    let (width, height, min_width, min_height, resizable) = match label {
+        SETTINGS => (460., 640., 460., 640., false),
+        HOLDINGS => (980., 640., 800., 500., true),
+        CHART => (980., 640., 760., 480., true),
+        _ => unreachable!(),
+    };
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(width), px(height)), cx)),
+        titlebar: Some(TitlebarOptions { title: Some(title.into()), ..Default::default() }),
+        window_min_size: Some(size(px(min_width), px(min_height))),
+        is_resizable: resizable,
+        ..Default::default()
+    };
+    let handle = app.clone();
+    let result = match label {
+        SETTINGS => gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|_| ui::settings::SettingsView::new(handle))
+        })
+        .map(|(w, _)| w),
+        HOLDINGS => gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|_| ui::holdings::HoldingsView::new(handle))
+        })
+        .map(|(w, _)| w),
+        CHART => gpui_kit::open_window(options, cx, |_, cx| {
+            cx.new(|_| ui::chart::ChartView::new(handle))
+        })
+        .map(|(w, _)| w),
+        _ => unreachable!(),
+    };
+    match result {
+        Ok(window) => {
+            cx.global_mut::<Windows>().0.insert(label, window);
+            app.set_window_count(cx.global::<Windows>().0.len());
+            if label == HOLDINGS {
+                set_holdings_open(app, true);
+            }
+            raise(cx, window);
+        }
+        Err(error) => {
+            log::error!("cannot open {label}: {error}");
+            if cx.global::<Windows>().0.is_empty() {
+                platform::window::did_close_all(cx);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn raise_label(cx: &mut gpui_kit::App, label: &str) {
+    if let Some(window) = cx.global::<Windows>().0.get(label).copied() {
+        raise(cx, window);
+    }
+}
+
+fn raise(cx: &mut gpui_kit::App, window: AnyWindowHandle) {
+    let _ = window.update(cx, |_, window, _| platform::window::bring_to_front(window));
 }
 
 fn set_holdings_open(app: &App, open: bool) {
@@ -69,224 +224,109 @@ fn set_holdings_open(app: &App, open: bool) {
     });
 }
 
-/// Opens the chart for the instrument `id`, or switches the open chart window to it.
-pub fn open_chart(app: &App, id: &str) -> tauri::Result<()> {
-    let Some(title) = retarget_chart(app, id)? else {
-        return Ok(());
-    };
-    open(
-        app,
-        Spec {
-            label: CHART,
-            url: format!("chart.html?id={}", net::percent_encode(id)),
-            title,
-            size: (980.0, 640.0),
-            min_size: (760.0, 480.0),
-            resizable: true,
-        },
-    )
-}
-
-/// Points the chart at the instrument `id` without bringing its window
-/// forward: records it (a page still loading reads it from there), retitles
-/// an open window and tells its page. Returns the title, or `None` for an
-/// instrument in neither the watchlist nor the synced one.
-fn retarget_chart(app: &App, id: &str) -> tauri::Result<Option<String>> {
-    let title = {
-        let shared = app.shared();
-        let mut model = shared.model();
-        let Some(instrument) = model.instrument(id) else {
-            return Ok(None);
-        };
-        let title = chart_title(instrument);
-        model.chart = Some(id.to_owned());
-        title
-    };
-    if let Some(window) = app.handle().get_webview_window(CHART) {
-        window.set_title(&title)?;
-        app.notify(Topic::ChartInstrument);
-    }
-    Ok(Some(title))
-}
-
-fn chart_title(instrument: &Instrument) -> String {
-    t!("window.chart", pair = instrument.pair_label())
-}
-
-/// The app speaks another language now: so do open windows' titles and
-/// pages, and the app menu.
-pub fn relabel(app: &App) {
-    let chart = {
-        let shared = app.shared();
-        let model = shared.model();
-        model.chart.as_deref().and_then(|id| model.instrument(id)).map(chart_title)
-    };
-    for (label, title) in [
-        (SETTINGS, Some(t!("window.settings").to_owned())),
-        (CHART, chart),
-        (HOLDINGS, Some(t!("window.holdings").to_owned())),
-    ] {
-        let Some(window) = app.handle().get_webview_window(label) else {
-            continue;
-        };
-        if let Some(title) = title
-            && let Err(e) = window.set_title(&title)
-        {
-            log::error!("cannot retitle {label}: {e}");
-        }
-        app.notify(Topic::Locale);
-    }
-    platform::window::relabel(app);
-}
-
-/// The Dock icon was clicked, or the app was launched again while running.
-/// On macOS activation already brings open windows forward (and unhides them
-/// after Cmd-H); one still loading shows itself once its page is ready. So
-/// only when every window is minimized is one restored, the chart first; on
-/// Windows, where a second launch activates nothing, it always is. Only with
-/// no window open does settings open: the status item can hide behind the
-/// notch or a crowded menu bar, the tray icon in the taskbar's overflow, so
-/// this is the way back in.
-pub fn reopen(app: &App) -> tauri::Result<()> {
-    let open: Vec<WebviewWindow> = [CHART, HOLDINGS, SETTINGS]
-        .into_iter()
-        .filter_map(|label| app.handle().get_webview_window(label))
-        .collect();
-    let Some(first) = open.first() else {
-        return open_settings(app);
-    };
-    if platform::window::ACTIVATION_RAISES_WINDOWS
-        && open.iter().any(|w| !w.is_minimized().unwrap_or(false))
-    {
-        return Ok(());
-    }
-    first.unminimize()?;
-    first.show()?;
-    platform::window::bring_to_front(first);
-    Ok(())
-}
-
-/// After settings change: an open chart whose instrument was removed moves to
-/// the first remaining one, or closes when none are left.
-pub fn sync_chart(app: &App) {
-    let Some(window) = app.handle().get_webview_window(CHART) else {
-        return;
-    };
-    let replacement = {
-        let shared = app.shared();
-        let model = shared.model();
-        if model.chart.as_deref().is_some_and(|id| model.instrument(id).is_some()) {
-            return;
-        }
-        model.settings.watchlist.first().map(|instrument| instrument.id())
-    };
-    let result = match replacement {
-        Some(id) => retarget_chart(app, &id).map(|_| ()),
-        None => window.close(),
-    };
-    if let Err(e) = result {
-        log::error!("cannot update the chart after a settings change: {e}");
-    }
-}
-
-fn open(app: &App, spec: Spec) -> tauri::Result<()> {
-    platform::window::will_show(app, spec.label)?;
-    if let Some(window) = app.handle().get_webview_window(spec.label) {
-        return raise(&window);
-    }
-    platform::window::create(app, move |app| match app.handle().get_webview_window(spec.label) {
-        // Opened again while its creation was queued.
-        Some(window) => raise(&window),
-        None => build(app, spec),
-    })
-}
-
-fn raise(window: &WebviewWindow) -> tauri::Result<()> {
-    window.unminimize()?;
-    window.show()?;
-    platform::window::bring_to_front(window);
-    Ok(())
-}
-
-fn build(app: &App, spec: Spec) -> tauri::Result<()> {
-    let label = spec.label;
-    let builder = WebviewWindowBuilder::new(app.handle(), label, WebviewUrl::App(spec.url.into()))
-        .title(spec.title)
-        .inner_size(spec.size.0, spec.size.1)
-        .min_inner_size(spec.min_size.0, spec.min_size.1)
-        .resizable(spec.resizable)
-        .maximizable(spec.resizable)
-        .center()
-        // The webview only ever shows the app's own pages; links out open
-        // in the browser.
-        .on_navigation(|url| {
-            let internal = is_app_url(url);
-            if !internal {
-                open_externally(url);
-            }
-            internal
-        })
-        .on_new_window(|url, _| {
-            open_externally(&url);
-            NewWindowResponse::Deny
-        })
-        // Show after the page has had time to load.
-        .visible(false);
-    platform::window::build(builder)?;
-    let handle = app.clone();
-    app.spawn(async move {
-        tokio::time::sleep(Duration::from_millis(800)).await;
-        let main = handle.clone();
-        handle.on_main(move || {
-            if let Some(window) = main.handle().get_webview_window(label)
-                && !window.is_visible().unwrap_or(true)
-            {
-                let _ = window.show();
-                platform::window::bring_to_front(&window);
-            }
-        });
-    });
-    Ok(())
-}
-
-/// The bundled frontend (`tauri://localhost` in WKWebView, a `tauri.localhost`
-/// host in WebView2), or the Vite dev server under `tauri dev`.
-fn is_app_url(url: &Url) -> bool {
-    let host = url.host_str();
-    match url.scheme() {
-        "tauri" => true,
-        "http" | "https" => {
-            host == Some("tauri.localhost") || (cfg!(dev) && host == Some("localhost"))
-        }
-        _ => false,
-    }
-}
-
-fn open_externally(url: &Url) {
-    if url.scheme() == "https" {
-        platform::open_url(url.as_str());
-    }
-}
-
-/// Stops what fed a closed window; back to a bar-only app once the last one
-/// is gone.
 pub fn on_destroyed(app: &App, label: &str) {
-    if label == CHART {
-        // Dropping the senders stops the streams feeding the page.
-        app.shared().streams.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    }
-    if label == SETTINGS {
-        for provider in ProviderId::ALL {
-            provider.provider().drop_search_cache();
+    match label {
+        CHART => app.shared().streams.lock().unwrap_or_else(|e| e.into_inner()).clear(),
+        SETTINGS => {
+            for provider in ProviderId::ALL {
+                provider.provider().drop_search_cache();
+            }
+            ths::cancel_sign_in();
         }
-        // Its QR code can't be scanned with the window gone.
-        ths::cancel_sign_in();
+        HOLDINGS => set_holdings_open(app, false),
+        _ => {}
     }
-    if label == HOLDINGS {
-        set_holdings_open(app, false);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{TestAppContext, VisualTestContext};
+
+    #[test]
+    fn windows_reuse_retarget_relabel_and_cleanup() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let cx = TestAppContext::single();
+        cx.update(gpui_kit::init);
+        let (shared, control) = crate::model::Shared::new(
+            crate::model::Settings::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
+        let app = cx.update(|cx| {
+            let app = App::new(cx, runtime.handle().clone(), shared);
+            init(&app, cx);
+            app
+        });
+        let initial_locale = crate::i18n::current();
+        let ids: Vec<_> = app.shared().model().settings.watchlist.iter().map(|i| i.id()).collect();
+        let background = app.clone();
+        std::thread::spawn(move || open_settings(&background).unwrap()).join().unwrap();
+        open_holdings(&app).unwrap();
+        open_chart(&app, &ids[0]).unwrap();
+        cx.run_until_parked();
+        let handles = cx.read(|cx| cx.global::<Windows>().0.clone());
+        assert_eq!(handles.len(), 3);
+        assert!(control.borrow().holdings_open);
+        assert!(app.windows_open());
+        open_settings(&app).unwrap();
+        open_holdings(&app).unwrap();
+        let chart_changes = app.subscribe(Topic::ChartInstrument);
+        open_chart(&app, &ids[1]).unwrap();
+        cx.run_until_parked();
+        assert!(chart_changes.has_changed().unwrap());
+        assert_eq!(cx.read(|cx| cx.global::<Windows>().0.clone()), handles);
+        assert_eq!(app.shared().model().chart.as_deref(), Some(ids[1].as_str()));
+        let chart = handles[CHART];
+        let mut chart_cx = VisualTestContext::from_window(chart, &cx);
+        let title = {
+            let model = app.shared().model();
+            chart_title(model.instrument(&ids[1]).unwrap())
+        };
+        assert_eq!(chart_cx.window_title().as_deref(), Some(title.as_str()));
+
+        let locale_changes = app.subscribe(Topic::Locale);
+        crate::i18n::set(crate::i18n::Locale::Ja);
+        relabel(&app);
+        cx.run_until_parked();
+        assert!(locale_changes.has_changed().unwrap());
+        let mut settings_cx = VisualTestContext::from_window(handles[SETTINGS], &cx);
+        assert_eq!(settings_cx.window_title().as_deref(), Some(t!("window.settings")));
+        let title = {
+            let model = app.shared().model();
+            chart_title(model.instrument(&ids[1]).unwrap())
+        };
+        assert_eq!(chart_cx.window_title().as_deref(), Some(title.as_str()));
+        crate::i18n::set(initial_locale);
+
+        let (sender, mut receiver) = tokio::sync::oneshot::channel();
+        app.shared().streams.lock().unwrap().insert(1, sender);
+        app.shared().model().settings.watchlist.retain(|item| item.id() != ids[1]);
+        sync_chart(&app);
+        cx.run_until_parked();
+        assert_eq!(app.shared().model().chart.as_deref(), Some(ids[0].as_str()));
+        app.shared().model().settings.watchlist.clear();
+        sync_chart(&app);
+        cx.run_until_parked();
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        ));
+        assert!(!cx.read(|cx| cx.global::<Windows>().0.contains_key(CHART)));
+        for label in [SETTINGS, HOLDINGS] {
+            cx.update(|cx| {
+                handles[label].update(cx, |_, window, _| window.remove_window()).unwrap()
+            });
+        }
+        assert!(!control.borrow().holdings_open);
+        assert!(!app.windows_open());
+        assert!(cx.read(|cx| cx.global::<Windows>().0.is_empty()));
+        reopen(&app).unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            cx.read(|cx| cx.global::<Windows>().0.keys().copied().collect::<Vec<_>>()),
+            [SETTINGS]
+        );
     }
-    if app.handle().webview_windows().keys().any(|other| other != label) {
-        return;
-    }
-    platform::window::did_close_all(app);
 }

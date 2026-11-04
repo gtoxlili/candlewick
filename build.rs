@@ -8,15 +8,61 @@ use std::{
 };
 
 fn main() {
-    // The Tauri config names thsdk's library and license as bundle inputs,
-    // so they must be in place before tauri-build checks it.
     thsdk::fetch();
     text::compile();
-    // The Windows manifest; ignored when building for macOS.
-    let windows =
-        tauri_build::WindowsAttributes::new().app_manifest(include_str!("windows/app.manifest"));
-    tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
-        .expect("failed to run tauri-build");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        let version = env::var("CARGO_PKG_VERSION").unwrap();
+        let parts: Vec<_> = version.split('.').collect();
+        let rc = format!(
+            r#"1 24 "{}"
+1 ICON "{}"
+1 VERSIONINFO
+ FILEVERSION {},{},{},0
+ PRODUCTVERSION {},{},{},0
+ FILEOS 0x40004
+ FILETYPE 1
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904b0"
+  BEGIN
+   VALUE "FileDescription", "Candlewick\0"
+   VALUE "ProductName", "Candlewick\0"
+   VALUE "FileVersion", "{}\0"
+   VALUE "ProductVersion", "{}\0"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x409, 1200
+ END
+END
+"#,
+            Path::new("windows/app.manifest")
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
+            Path::new("icons/icon.ico")
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
+            parts[0],
+            parts[1],
+            parts[2],
+            parts[0],
+            parts[1],
+            parts[2],
+            version,
+            version
+        );
+        let path = Path::new(&env::var("OUT_DIR").unwrap()).join("candlewick.rc");
+        fs::write(&path, rc).unwrap();
+        embed_resource::compile(path, embed_resource::NONE).manifest_required().unwrap();
+        println!("cargo:rerun-if-changed=windows/app.manifest");
+        println!("cargo:rerun-if-changed=icons/icon.ico");
+    }
 }
 
 /// Fetches thsdk's runtime, which signs in to a Tonghuashun account and reads

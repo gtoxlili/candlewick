@@ -286,7 +286,7 @@ pub fn perform(app: &App, action: Action) {
             Ok(())
         }
         Action::Quit => {
-            app.exit(0);
+            app.exit();
             Ok(())
         }
     };

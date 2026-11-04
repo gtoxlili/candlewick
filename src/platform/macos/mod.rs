@@ -15,7 +15,6 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSNotification, NSString, NSURL, NSUserDefaults, ns_string};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
-use tauri::{Builder, Wry};
 
 use super::Pause;
 use crate::i18n::{Language, Locale};
@@ -27,12 +26,6 @@ pub const SETTINGS_ON_FIRST_RUN: bool = false;
 /// LaunchServices keeps one instance and reports a second launch as a
 /// reopen, so there is nothing to claim.
 pub fn claim_single_instance() {}
-
-/// The app menu (see [`window::app_menu`]).
-pub fn configure(builder: Builder<Wry>) -> Builder<Wry> {
-    bar::install_event_handlers();
-    builder.menu(window::app_menu)
-}
 
 /// The settings picked another language. The app's own text follows at
 /// once; the system's text in it (a text field's context menu, the About

@@ -4,7 +4,7 @@ version = "0.8.12"
 description = "Live crypto and stock prices in the macOS menu bar and the Windows taskbar"
 repository = "https://github.com/gtoxlili/candlewick"
 homepage = "https://github.com/gtoxlili/candlewick"
-keywords = ["menu-bar", "taskbar", "crypto", "stocks", "tauri"]
+keywords = ["menu-bar", "taskbar", "crypto", "stocks"]
 edition = "2024"
 rust-version = "1.98"
 publish = false
@@ -16,18 +16,16 @@ path = "tests/macos_bar.rs"
 harness = false
 
 [build-dependencies]
-# build.rs fetches thsdk's runtime over HTTPS before tauri-build runs.
 ureq = "3"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 sha2 = "0.10"
 tar = "0.4"
 serde_json = "1"
-tauri-build = { version = "2.7", features = [] }
+embed-resource = "3"
 
 [dependencies]
-# `macos-private-api` matches `app.macOSPrivateApi`, which tauri-build checks on
-# every platform; it does nothing on Windows.
-tauri = { version = "2.12", features = ["macos-private-api"] }
+gpui-kit = { version = "0.9", default-features = false, features = ["gpui-fast", "component", "assets"] }
+raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 thiserror = "2"
@@ -81,9 +79,6 @@ objc2-system-configuration = { version = "0.3", default-features = false, featur
     "std", "SCDynamicStore", "SCDynamicStoreCopySpecific", "SCSchemaDefinitions",
 ] }
 
-# The versions Tauri's wry is built on (windows, webview2-com, and the
-# windows-numerics that windows uses), so window handles, WebView2 interfaces
-# and Direct2D's vectors are the same types.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Foundation",
@@ -98,16 +93,10 @@ windows = { version = "0.62", features = [
 ] }
 windows-numerics = "0.3"
 windows-version = "0.100"
-webview2-com = "0.39"
 
-# Measured on this app: opt-level 3 grew the binary 20% (4.0 → 4.8 MB) with the
-# same 15 MB footprint and no CPU difference, so optimize for size. trim-paths and
-# panic = "immediate-abort" would help further but are nightly-only in Cargo 1.98.
 [profile.release]
-opt-level = "s"
-lto = "fat"
-codegen-units = 1
-panic = "abort"
+opt-level = 3
+lto = "thin"
 strip = "symbols"
 debug = false
 incremental = false
@@ -118,3 +107,6 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 1
 debug = false
+
+[dev-dependencies]
+gpui-kit = { version = "0.9", default-features = false, features = ["gpui-fast", "component", "assets", "test-support"] }

@@ -7,7 +7,7 @@ use super::shell;
 
 /// Starts the shell thread, which shows the tray icon and ticker. The app
 /// begins in efficiency mode: no window is open yet.
-pub fn create(app: &App) -> tauri::Result<()> {
+pub fn create(app: &App) -> std::io::Result<()> {
     super::set_efficiency_mode(true);
     shell::start(app)?;
     Ok(())

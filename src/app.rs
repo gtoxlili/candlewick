@@ -1,10 +1,11 @@
 use std::{
     future::Future,
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
-
-use tauri::Manager;
 
 use tokio::{runtime::Handle, sync::watch, task::JoinHandle};
 
@@ -15,8 +16,12 @@ const IDENTIFIER: &str = "com.influo.candlewick";
 #[derive(Clone)]
 pub struct App(Arc<Inner>);
 
+type MainTask = Box<dyn FnOnce(&mut gpui_kit::App) + Send>;
+
 struct Inner {
-    handle: tauri::AppHandle,
+    main: tokio::sync::mpsc::UnboundedSender<MainTask>,
+    windows: AtomicUsize,
+    main_thread: std::thread::ThreadId,
     runtime: Handle,
     shared: Shared,
     agent: Agent,
@@ -35,9 +40,18 @@ pub enum Topic {
 }
 
 impl App {
-    pub(crate) fn new(handle: tauri::AppHandle, runtime: Handle, shared: Shared) -> Self {
+    pub(crate) fn new(cx: &mut gpui_kit::App, runtime: Handle, shared: Shared) -> Self {
+        let (main, mut receiver) = tokio::sync::mpsc::unbounded_channel::<MainTask>();
+        cx.spawn(async move |cx| {
+            while let Some(task) = receiver.recv().await {
+                cx.update(task);
+            }
+        })
+        .detach();
         Self(Arc::new(Inner {
-            handle,
+            main,
+            windows: AtomicUsize::new(0),
+            main_thread: std::thread::current().id(),
             runtime,
             shared,
             agent: Agent::default(),
@@ -79,17 +93,20 @@ impl App {
     }
 
     pub fn on_main(&self, f: impl FnOnce() + Send + 'static) -> bool {
-        match self.0.handle.run_on_main_thread(f) {
-            Ok(()) => true,
-            Err(error) => {
-                log::error!("cannot reach the main thread: {error}");
-                false
-            }
+        if std::thread::current().id() == self.0.main_thread {
+            f();
+            true
+        } else {
+            self.on_gpui(move |_| f())
         }
     }
 
-    pub fn exit(&self, code: i32) {
-        self.0.handle.exit(code);
+    pub(crate) fn on_gpui(&self, f: impl FnOnce(&mut gpui_kit::App) + Send + 'static) -> bool {
+        self.0.main.send(Box::new(f)).is_ok()
+    }
+
+    pub fn exit(&self) {
+        self.on_gpui(|cx| cx.quit());
     }
 
     pub(crate) fn set_updater(&self, updater: Arc<crate::update::Updater>) {
@@ -101,16 +118,15 @@ impl App {
     }
 
     pub(crate) fn windows_open(&self) -> bool {
-        !self.0.handle.webview_windows().is_empty()
+        self.0.windows.load(Ordering::Acquire) != 0
+    }
+
+    pub(crate) fn set_window_count(&self, count: usize) {
+        self.0.windows.store(count, Ordering::Release);
     }
 
     pub(crate) fn request_restart(&self) {
-        self.0.handle.request_restart();
-    }
-
-    /// Shell access for windows, tray, and updater.
-    pub(crate) fn handle(&self) -> &tauri::AppHandle {
-        &self.0.handle
+        self.on_gpui(|cx| cx.restart());
     }
 }
 
