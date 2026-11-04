@@ -3,8 +3,17 @@
 
 pub mod summary;
 
+mod allocation;
+mod aside;
+mod assets;
 mod hero;
 mod tiles;
+
+#[cfg(test)]
+pub mod fixtures;
+
+#[cfg(test)]
+mod tests;
 
 use crate::{
     api,
@@ -13,7 +22,7 @@ use crate::{
     portfolio::{self, Portfolio},
 };
 use gpui_kit::{
-    Context, Hsla, IntoElement, ParentElement, Render, Styled, Task, Window,
+    Context, Hsla, IntoElement, ParentElement, Render, SharedString, Styled, Task, Window,
     component::{Sizable as _, TitleBar, button::Button, button::ButtonVariants as _},
     div, px,
 };
@@ -24,16 +33,39 @@ use super::{observe, observe_title, setup, theme::Palette, widgets};
 /// the allocation bar stays lit.
 const LIVE_MS: f64 = 20_000.;
 
-/// Everything the window draws that only changes when the portfolio or the
-/// language changes, laid out ahead of rendering.
+/// Which list the aside shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Accounts,
+    Positions,
+}
+
+/// Everything the window draws that only changes when the portfolio, the
+/// language or the list controls change, laid out ahead of rendering.
 struct Derived {
+    shares: Vec<summary::Share>,
     figures: summary::Figures,
     insight: Option<Vec<summary::InsightPart>>,
+    rows: std::sync::Arc<Vec<assets::Row>>,
+    /// Any asset reports a cost, so the list has a cost column.
+    costed: bool,
+    small: SmallAssets,
+    several: bool,
+}
+
+/// The assets folded away under the list.
+#[derive(Clone, Copy, Default)]
+struct SmallAssets {
+    count: usize,
+    value: f64,
 }
 
 pub struct HoldingsView {
     app: App,
     portfolio: Portfolio,
+    sort: summary::Sort,
+    show_small: bool,
+    tab: Tab,
     derived: Derived,
     /// The hero number flashes on every new total; `generation` remounts the
     /// animation, `down` picks its color.
@@ -73,7 +105,11 @@ impl HoldingsView {
         });
         let mut view = Self {
             portfolio: api::get_portfolio(&app),
+            sort: summary::Sort::Value,
+            show_small: false,
+            tab: Tab::Accounts,
             derived: Derived {
+                shares: Vec::new(),
                 figures: summary::Figures {
                     risk: 0.,
                     cash: 0.,
@@ -81,6 +117,10 @@ impl HoldingsView {
                     positions_change: 0.,
                 },
                 insight: None,
+                rows: std::sync::Arc::new(Vec::new()),
+                costed: false,
+                small: SmallAssets::default(),
+                several: false,
             },
             flash: (0, None),
             app,
@@ -91,13 +131,44 @@ impl HoldingsView {
         view
     }
 
-    /// Lays out what rendering only reads. Runs when the portfolio or the
-    /// language changes.
+    /// Lays out what rendering only reads. Runs when the portfolio changes,
+    /// when the language does, or when the list controls move.
     fn recompute(&mut self) {
         let portfolio = &self.portfolio;
+        let total = portfolio.total.unwrap_or(0.);
+        let listed = summary::listed(&portfolio.assets, self.sort, self.show_small);
+        let several = portfolio.accounts.len() > 1;
+        let series: std::collections::HashMap<&str, summary::Series> =
+            summary::series(&portfolio.assets)
+                .into_iter()
+                .zip(portfolio.assets.iter())
+                .map(|(series, asset)| (asset.asset.as_str(), series))
+                .collect();
+        let widest_move = portfolio
+            .assets
+            .iter()
+            .map(|asset| asset.change.unwrap_or(0.).abs())
+            .fold(0., f64::max)
+            .max(1.);
+        let mut rows = Vec::with_capacity(listed.shown.len());
+        for asset in &listed.shown {
+            let series = series.get(asset.asset.as_str()).copied().unwrap_or(summary::Series::Rest);
+            rows.push(assets::Row::new(asset, series, total, widest_move, self.sort, several));
+        }
         self.derived = Derived {
+            shares: summary::allocation(&portfolio.assets, total),
             figures: summary::figures(portfolio),
             insight: summary::insight(portfolio),
+            rows: std::sync::Arc::new(rows),
+            costed: portfolio
+                .assets
+                .iter()
+                .any(|asset| asset.cost.is_some() || asset.pnl.is_some()),
+            small: SmallAssets {
+                count: listed.small.len(),
+                value: listed.small.iter().map(|asset| asset.value.unwrap_or(0.)).sum(),
+            },
+            several,
         };
     }
 
@@ -112,7 +183,7 @@ impl HoldingsView {
             accounts.iter().any(|account| account.updated.is_none() && account.error.is_none());
         let latest = accounts.iter().filter_map(|account| account.updated).fold(0., f64::max);
         if let Some(failed) = failed {
-            let exchange = provider_name(failed.exchange);
+            let exchange = aside::provider_name(failed.exchange);
             return (widgets::Status::Error, t!("common.holdings.readFailed", exchange = exchange));
         }
         if loading {
@@ -172,19 +243,78 @@ impl Render for HoldingsView {
         let body = if self.portfolio.accounts.is_empty() {
             no_keys(self.app.clone(), palette)
         } else {
-            div().flex().flex_1().min_h_0().flex_col().gap(px(12.)).pb(px(16.)).child(
-                hero::hero(&self.portfolio, &self.derived.insight, self.flash, palette),
-            ).child(div().flex_1()).child(tiles::tiles(&self.portfolio, &self.derived.figures, palette))
+            let view = cx.entity();
+            let toggle_small = {
+                let view = view.clone();
+                move |cx: &mut gpui_kit::App| {
+                    view.update(cx, |view, cx| {
+                        view.show_small = !view.show_small;
+                        view.recompute();
+                        cx.notify();
+                    });
+                }
+            };
+            let flash = self.flash;
+            let derived = &self.derived;
+            let live = self
+                .portfolio
+                .accounts
+                .iter()
+                .filter_map(|account| account.updated)
+                .fold(0., f64::max);
+            let live = live > 0. && now - live < LIVE_MS;
+            div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .child(
+                    div()
+                        .flex()
+                        .flex_1()
+                        .min_w_0()
+                        .flex_col()
+                        .gap(px(12.))
+                        .pb(px(16.))
+                        .child(hero::hero(&self.portfolio, &derived.insight, flash, palette))
+                        .child(allocation::allocation(&derived.shares, live, palette))
+                        .child(sort_tabs(self.sort, view.clone(), palette))
+                        .child(assets::panel(
+                            &derived.rows,
+                            derived.costed,
+                            derived.small.count,
+                            derived.small.value,
+                            self.show_small,
+                            palette,
+                            toggle_small,
+                        ))
+                        .child(tiles::tiles(&self.portfolio, &derived.figures, palette)),
+                )
+                .child(aside::aside(&self.portfolio, self.tab, derived.several, view, palette))
         };
 
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .text_color(palette.foreground)
-            .child(bar)
-            .child(body)
+        div().size_full().flex().flex_col().text_color(palette.foreground).child(bar).child(body)
     }
+}
+
+/// The sort control above the list.
+fn sort_tabs(
+    sort: summary::Sort,
+    view: gpui_kit::Entity<HoldingsView>,
+    palette: Palette,
+) -> gpui_kit::Div {
+    let _ = palette;
+    div().h(px(28.)).flex().items_center().gap(px(8.)).px(px(16.)).child(widgets::pill_tabs(
+        "sort",
+        [SharedString::from(t!("holdings.byValue")), SharedString::from(t!("holdings.byChange"))],
+        if sort == summary::Sort::Value { 0 } else { 1 },
+        move |index, _, cx| {
+            view.update(cx, |view, cx| {
+                view.sort = if *index == 0 { summary::Sort::Value } else { summary::Sort::Change };
+                view.recompute();
+                cx.notify();
+            });
+        },
+    ))
 }
 
 /// Nothing to show because no exchange has a key yet.
@@ -226,18 +356,19 @@ fn no_keys(app: App, palette: Palette) -> gpui_kit::Div {
         ))
 }
 
-/// The exchange's name in the language the app speaks.
-fn provider_name(provider: crate::market::ProviderId) -> gpui_kit::SharedString {
-    use crate::market::ProviderId;
-    match provider {
-        ProviderId::Binance => t!("common.provider.binance"),
-        ProviderId::Bybit => t!("common.provider.bybit"),
-        ProviderId::Okx => t!("common.provider.okx"),
-        ProviderId::Longbridge => t!("common.provider.longbridge"),
-        ProviderId::Ths => t!("common.provider.ths"),
-        ProviderId::DexScreener => t!("common.provider.dexscreener"),
-    }
-    .into()
+/// The color a series of the allocation is drawn with, in the list's share
+/// bars and the legend alike.
+pub(crate) fn series_color(series: summary::Series, palette: Palette) -> Hsla {
+    let index = match series {
+        summary::Series::One => 0,
+        summary::Series::Two => 1,
+        summary::Series::Three => 2,
+        summary::Series::Four => 3,
+        summary::Series::Five => 4,
+        summary::Series::Rest => 5,
+        summary::Series::Cash => 6,
+    };
+    palette.series[index]
 }
 
 /// Linear blend between two colors, for the hero number's flash fading back
