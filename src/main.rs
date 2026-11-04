@@ -19,7 +19,7 @@ pub mod app;
 mod bar;
 mod calendar;
 mod credentials;
-mod format;
+pub mod format;
 mod http;
 mod market;
 mod model;
