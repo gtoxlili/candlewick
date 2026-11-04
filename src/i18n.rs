@@ -2,9 +2,9 @@
 //! the system's preferred languages it has text in, else English.
 //!
 //! Rust's own text (the bar and its menus, window titles, errors) is
-//! `t!("tray.quit")`, compiled by `build.rs` from `locales/<tag>.json`: a key
-//! or placeholder that isn't there doesn't compile, and every language has
-//! every message.
+//! `t!("tray.quit")`, compiled by `build.rs` from `locales/<tag>/*.json`: a
+//! key or placeholder that isn't there doesn't compile, and every language
+//! has every message.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -147,17 +147,16 @@ mod tests {
         }
     }
 
-    // Common messages also name values in the app's windows.
+    // `APP_MESSAGES` leaves out the surfaces whose windows aren't built yet
+    // (build.rs keeps that list).
     #[test]
     fn app_messages_are_used() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut rust = String::new();
         sources(&root.join("src"), &["rs"], &mut rust);
         let rust: String = rust.split_whitespace().collect();
-        let unsaid: Vec<&&str> = APP_MESSAGES
-            .iter()
-            .filter(|key| !key.starts_with("common.") && !rust.contains(&format!("t!(\"{key}\"")))
-            .collect();
+        let unsaid: Vec<&&str> =
+            APP_MESSAGES.iter().filter(|key| !rust.contains(&format!("t!(\"{key}\""))).collect();
         assert!(unsaid.is_empty(), "locales: nothing says {unsaid:?}");
     }
 }

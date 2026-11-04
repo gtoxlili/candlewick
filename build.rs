@@ -15,51 +15,73 @@ fn main() {
         .expect("failed to run tauri-build");
 }
 
-/// Compiles the catalogs into `t!` and checks keys and placeholders across languages.
+/// Compiles the catalogs into `t!` and checks keys and placeholders across
+/// languages.
 mod text {
     use super::*;
 
     /// The language every other is checked against.
     const SOURCE: &str = "en";
+    /// The surfaces a language's catalog is split into, one file each: `app`
+    /// is the bar and its menus, `common` what the windows share, the rest
+    /// one window each.
+    const SURFACES: [&str; 5] = ["app", "common", "settings", "chart", "holdings"];
     /// A key's Windows wording, where the platforms differ ("menu bar",
     /// "taskbar"): `onePinned_windows` beside `onePinned`.
     const WINDOWS: &str = "_windows";
-    /// The CLDR plural categories, as i18next suffixes them. English has
-    /// `_one` and `_other`; a language without a plural only `_other`.
+    /// i18next-style plural suffixes; a catalog with one in a key is an
+    /// error, since `t!` picks no plural form.
     const PLURALS: [&str; 6] = ["_zero", "_one", "_two", "_few", "_many", "_other"];
+    /// Key prefixes of messages nothing says yet: the windows that will say
+    /// them don't exist. Each window's task shortens this list; when it is
+    /// empty, every message is said somewhere.
+    const UNSAID: [&str; 8] = [
+        "common.",
+        "loading",
+        "market.",
+        "interval.",
+        "windowControls.",
+        "settings.",
+        "chart.",
+        "holdings.",
+    ];
 
     /// A language's messages by dotted key.
     type Catalog = BTreeMap<String, String>;
 
     pub fn compile() {
         let manifest = env::var("CARGO_MANIFEST_DIR").unwrap();
-        let app = Catalogs::read(&Path::new(&manifest).join("locales"), "locales");
-        app.check(false);
+        let app = Catalogs::read(&Path::new(&manifest).join("locales"));
+        app.check();
 
         let windows = env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows");
         let app = app.on_platform(windows);
         let mut code = app.code();
         // What the code names to say each message, for the test that every
         // message is said somewhere.
-        let named = |keys: BTreeSet<&str>| -> String {
-            keys.into_iter().fold(String::new(), |mut list, key| {
-                write!(list, "{key:?}, ").unwrap();
-                list
-            })
-        };
+        let said: BTreeSet<&str> = app
+            .source()
+            .keys()
+            .map(String::as_str)
+            .filter(|key| !UNSAID.iter().any(|prefix| key.starts_with(prefix)))
+            .collect();
+        let named = said.into_iter().fold(String::new(), |mut list, key| {
+            write!(list, "{key:?}, ").unwrap();
+            list
+        });
         write!(
             code,
             "\n/// The app's messages, as `t!` names them.\n\
              #[cfg(test)]\n\
              const APP_MESSAGES: &[&str] = &[{}];\n",
-            named(app.source().keys().map(String::as_str).collect()),
+            named,
         )
         .unwrap();
         let out = Path::new(&env::var("OUT_DIR").unwrap()).join("text.rs");
         fs::write(out, code).expect("write the generated text");
     }
 
-    /// One directory's catalogs, the source language first.
+    /// The merged catalogs, the source language first.
     struct Catalogs {
         /// The directory, as messages about it name it.
         name: &'static str,
@@ -67,30 +89,26 @@ mod text {
     }
 
     impl Catalogs {
-        fn read(dir: &Path, name: &'static str) -> Self {
+        fn read(dir: &Path) -> Self {
             // A directory reruns this when anything in it changes.
             println!("cargo:rerun-if-changed={}", dir.display());
             let mut by_tag: Vec<(String, Catalog)> = fs::read_dir(dir)
-                .unwrap_or_else(|e| panic!("{name}: {e}"))
+                .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
                 .map(|entry| entry.unwrap().path())
-                .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
-                .map(|path| {
-                    let tag = path.file_stem().unwrap().to_string_lossy().into_owned();
-                    let json = fs::read_to_string(&path)
-                        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-                    let json: serde_json::Value = serde_json::from_str(&json)
-                        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-                    let mut catalog = Catalog::new();
-                    flatten("", &json, &mut catalog);
+                .filter(|path| path.is_dir())
+                .map(|dir| {
+                    let tag = dir.file_name().unwrap().to_string_lossy().into_owned();
+                    let catalog = catalog(&dir, &tag);
                     (tag, catalog)
                 })
                 .collect();
             by_tag.sort_by_key(|(tag, _)| (tag != SOURCE, tag.clone()));
             assert!(
                 by_tag.first().is_some_and(|(tag, _)| tag == SOURCE),
-                "{name}/{SOURCE}.json is missing"
+                "{}/{SOURCE} is missing",
+                dir.display()
             );
-            Self { name, by_tag }
+            Self { name: "locales", by_tag }
         }
 
         fn source(&self) -> &Catalog {
@@ -98,39 +116,28 @@ mod text {
         }
 
         /// Every language says every message, with the source's placeholders.
-        /// With `plurals`, a message may come in the plural forms its
-        /// language has (the pages': i18next picks one by `count`, which a
-        /// form may leave out, "1 more"); without, in none (the app's: `t!`
-        /// can't pick).
-        fn check(&self, plurals: bool) {
+        fn check(&self) {
             let name = self.name;
-            let message = |key: &str| -> String {
-                let form = PLURALS.iter().find_map(|suffix| key.strip_suffix(suffix));
-                assert!(plurals || form.is_none(), "{name}: {key} is a plural form; `t!` has none");
-                form.unwrap_or(key).to_owned()
-            };
             let source = self.source();
-            let messages: BTreeSet<String> = source.keys().map(|key| message(key)).collect();
             for (tag, catalog) in &self.by_tag {
-                let theirs: BTreeSet<String> = catalog.keys().map(|key| message(key)).collect();
-                let missing: Vec<&String> = messages.difference(&theirs).collect();
-                let extra: Vec<&String> = theirs.difference(&messages).collect();
-                assert!(missing.is_empty(), "{name}/{tag}.json lacks {missing:?}");
-                assert!(extra.is_empty(), "{name}/{tag}.json has {extra:?}; {SOURCE}.json doesn't");
+                for key in catalog.keys() {
+                    assert!(
+                        !PLURALS.iter().any(|suffix| key.ends_with(suffix)),
+                        "{name}/{tag}: {key} is a plural form; `t!` picks none"
+                    );
+                }
+                let missing: Vec<&String> =
+                    source.keys().filter(|k| !catalog.contains_key(*k)).collect();
+                let extra: Vec<&String> =
+                    catalog.keys().filter(|k| !source.contains_key(*k)).collect();
+                assert!(missing.is_empty(), "{name}/{tag} lacks {missing:?}");
+                assert!(extra.is_empty(), "{name}/{tag} has {extra:?}; {SOURCE} doesn't");
                 for (key, text) in catalog {
-                    let base = message(key);
-                    let said = source
-                        .get(key)
-                        .or_else(|| source.get(&format!("{base}_other")))
-                        .unwrap_or_else(|| panic!("{name}/{tag}.json: {key} has no {SOURCE} form"));
+                    let said = &source[key];
                     let named = |text: &str| -> BTreeSet<String> {
-                        let mut names: BTreeSet<String> = placeholders(text).into_iter().collect();
-                        if *key != base {
-                            names.remove("count");
-                        }
-                        names
+                        placeholders(text).into_iter().collect()
                     };
-                    assert_eq!(named(text), named(said), "{name}/{tag}.json: {key}'s placeholders");
+                    assert_eq!(named(text), named(said), "{name}/{tag}: {key}'s placeholders");
                 }
             }
         }
@@ -147,11 +154,11 @@ mod text {
                     let key = variant.strip_suffix(WINDOWS).unwrap();
                     let other = catalog
                         .get_mut(key)
-                        .unwrap_or_else(|| panic!("{name}/{tag}.json: {variant} without {key}"));
+                        .unwrap_or_else(|| panic!("{name}/{tag}: {variant} without {key}"));
                     assert_eq!(
                         placeholders(&text),
                         placeholders(other),
-                        "{name}/{tag}.json: {variant}'s placeholders"
+                        "{name}/{tag}: {variant}'s placeholders"
                     );
                     if windows {
                         *other = text;
@@ -212,13 +219,13 @@ mod text {
                 }
             }
             format!(
-                "// Generated by build.rs from locales/*.json.\n\n\
+                "// Generated by build.rs from locales/.\n\n\
                  /// A message in the app's language: `t!(\"tray.quit\")` is a\n\
                  /// `&'static str`; with placeholders, named in the order English\n\
                  /// has them, `t!(\"tray.update\", version = v)` is a `String`.\n\
                  macro_rules! t {{\n{rules}    \
                  ($key:literal $($rest:tt)*) => {{\n        \
-                 compile_error!(concat!(\"locales/{SOURCE}.json has no message \\\"\", $key, \"\\\" with these placeholders\"))\n    \
+                 compile_error!(concat!(\"locales/{SOURCE} has no message \\\"\", $key, \"\\\" with these placeholders\"))\n    \
                  }};\n}}\n\n\
                  /// What `t!` calls: a function per message.\n\
                  #[allow(dead_code)]\n\
@@ -227,6 +234,35 @@ mod text {
                  use super::Locale;\n\n{functions}}}\n"
             )
         }
+    }
+
+    /// One language's catalog: every surface file it has, merged. A key in
+    /// two surfaces is a mistake — nothing resolves by priority.
+    fn catalog(dir: &Path, tag: &str) -> Catalog {
+        let mut merged = Catalog::new();
+        for surface in SURFACES {
+            let path = dir.join(format!("{surface}.json"));
+            if !path.exists() {
+                // Only the app's own surface has to be there; a window's
+                // surface may still be empty.
+                assert!(surface == "app", "locales/{tag}: {} is missing", path.display());
+                continue;
+            }
+            let json =
+                fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let json: serde_json::Value =
+                serde_json::from_str(&json).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let mut one = Catalog::new();
+            flatten("", &json, &mut one);
+            for (key, text) in one {
+                let repeat = merged.insert(key.clone(), text).is_none();
+                assert!(
+                    repeat,
+                    "locales/{tag}: {surface}.json repeats a key another surface has: {key}"
+                );
+            }
+        }
+        merged
     }
 
     /// `zh-CN` as `i18n::Locale` names it: `ZhCn`.

@@ -1,0 +1,21 @@
+{
+  "loading": "Loading",
+  "market": {
+    "US": "US",
+    "HK": "HK",
+    "CN": "A-shares"
+  },
+  "interval": {
+    "second": "%{n}s",
+    "minute": "%{n}m",
+    "hour": "%{n}h",
+    "day": "%{n}D",
+    "week": "%{n}W"
+  },
+  "windowControls": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close"
+  }
+}
