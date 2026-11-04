@@ -3,16 +3,111 @@ use std::{
     env,
     fmt::Write as _,
     fs,
+    io::Read as _,
     path::Path,
 };
 
 fn main() {
+    // The Tauri config names thsdk's library and license as bundle inputs,
+    // so they must be in place before tauri-build checks it.
+    thsdk::fetch();
     text::compile();
     // The Windows manifest; ignored when building for macOS.
     let windows =
         tauri_build::WindowsAttributes::new().app_manifest(include_str!("windows/app.manifest"));
     tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
         .expect("failed to run tauri-build");
+}
+
+/// Fetches thsdk's runtime, which signs in to a Tonghuashun account and reads
+/// its watchlist (`src/market/ths/thsdk.rs`), into `thsdk/`: the library for
+/// the platform being built and its license. Both come from thsdk's release
+/// on PyPI, pinned by hash; nothing is fetched once the files are there.
+mod thsdk {
+    use super::*;
+    use flate2::read::GzDecoder;
+    use sha2::{Digest as _, Sha256};
+
+    const VERSION: &str = "2.0.2";
+    const URL: &str = "https://files.pythonhosted.org/packages/e4/54/53227fca0b82e93e6292e0703ab412e517c87c632f744e82977738da23f3/thsdk-2.0.2.tar.gz";
+    const SHA256: &str = "12b950a81df0ddc80f577dca3aed11660e8f0c5ef59b5ef4a21846ae3915f40a";
+
+    /// The library inside the archive for each platform the app ships for,
+    /// and the file it becomes in `thsdk/`.
+    fn library() -> Option<(&'static str, &'static str)> {
+        match (
+            env::var("CARGO_CFG_TARGET_OS").as_deref(),
+            env::var("CARGO_CFG_TARGET_ARCH").as_deref(),
+        ) {
+            (Ok("macos"), Ok("aarch64")) => Some(("libs/darwin/arm64/hq.dylib", "hq.dylib")),
+            (Ok("windows"), Ok("x86_64")) => Some(("libs/windows/amd64/hq.dll", "hq.dll")),
+            _ => None,
+        }
+    }
+
+    pub fn fetch() {
+        println!("cargo:rerun-if-changed=build.rs");
+        let Some((inside, name)) = library() else { return };
+        let out = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("thsdk");
+        let wanted = [
+            (format!("thsdk-{VERSION}/thsdk/{inside}"), name),
+            (format!("thsdk-{VERSION}/LICENSE"), "LICENSE"),
+        ];
+        // The stamp carries the hash: a new pin refetches, an interrupted
+        // fetch (stamp written last) refetches too.
+        let current = fs::read_to_string(out.join("VERSION")).is_ok_and(|s| s.trim() == SHA256)
+            && wanted.iter().all(|(_, file)| out.join(file).exists());
+        if current {
+            return;
+        }
+
+        let archive = download();
+        let hash = Sha256::digest(&archive);
+        assert_eq!(format!("{hash:x}"), SHA256, "thsdk {VERSION}: sha256 of {URL}");
+
+        fs::create_dir_all(&out).expect("create thsdk/");
+        let tar = GzDecoder::new(&archive[..]);
+        let mut tar = tar::Archive::new(tar);
+        let mut found = 0;
+        for entry in tar.entries().expect("thsdk: read the archive") {
+            let mut entry = entry.expect("thsdk: read the archive");
+            let path = entry.path().unwrap().to_string_lossy().into_owned();
+            let Some((_, file)) = wanted.iter().find(|(inside, _)| *inside == path) else {
+                continue;
+            };
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data).expect("thsdk: read the archive");
+            let file = out.join(file);
+            fs::write(&file, data).expect("write the library");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                let mode = if file == out.join("LICENSE") { 0o644 } else { 0o755 };
+                fs::set_permissions(&file, fs::Permissions::from_mode(mode))
+                    .expect("set the library's permissions");
+            }
+            found += 1;
+        }
+        assert!(
+            found == wanted.len(),
+            "thsdk: {URL} lacks {}",
+            wanted.iter().map(|(inside, _)| inside.as_str()).collect::<Vec<_>>().join(" or ")
+        );
+        fs::write(out.join("VERSION"), format!("{SHA256}\n")).expect("write thsdk/VERSION");
+    }
+
+    fn download() -> Vec<u8> {
+        let agent = ureq::config::Config::builder().build().new_agent();
+        let mut response =
+            agent.get(URL).call().unwrap_or_else(|e| panic!("thsdk: {URL} answered {e}"));
+        // The archive is bigger than the 10 MB the shorthand readers allow.
+        response
+            .body_mut()
+            .with_config()
+            .limit(256 * 1024 * 1024)
+            .read_to_vec()
+            .unwrap_or_else(|e| panic!("thsdk: reading {URL}: {e}"))
+    }
 }
 
 /// Compiles the catalogs into `t!` and checks keys and placeholders across
