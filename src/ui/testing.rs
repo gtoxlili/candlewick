@@ -132,7 +132,21 @@ pub fn run() {
             }
             "chart" => {
                 gpui_kit::open_window(options, cx, |window, cx| {
-                    let view = cx.new(|cx| ui::chart::ChartView::new(handle.clone(), window, cx));
+                    let id = crate::api::get_chart_instrument(&handle).unwrap();
+                    let instrument = crate::api::chart_instrument(&handle, id.clone()).unwrap();
+                    let spec = crate::api::chart_spec(&handle, id).unwrap();
+                    let market = ui::chart::market::Market::new(spec.intervals[0]);
+                    let model = cx.new(|_| {
+                        ui::chart::model_state::ChartModel::with_market(
+                            handle.clone(),
+                            Some(instrument),
+                            spec,
+                            market,
+                        )
+                    });
+                    let view = cx.new(|cx| {
+                        ui::chart::ChartView::with_model(handle.clone(), model, window, cx)
+                    });
                     backdrop(view, &handle, cx)
                 })
                 .unwrap()
@@ -168,6 +182,17 @@ pub fn run() {
             render_png(&mut cx, *window, &format!("{kind}-{name}"));
         }
     }
+    let locale = crate::i18n::current();
+    crate::i18n::set(crate::i18n::Locale::Ja);
+    app.notify(crate::app::Topic::Locale);
+    cx.run_until_parked();
+    let chart = windows.iter().find(|(kind, _)| *kind == "chart").unwrap().1;
+    for (name, dark) in [("light", false), ("dark", true)] {
+        cx.update(|cx| ui::theme::apply(&app, dark, cx));
+        render_png(&mut cx, chart, &format!("chart-ja-{name}"));
+    }
+    crate::i18n::set(locale);
+
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);
     cx.run_until_parked();
