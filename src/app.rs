@@ -1,4 +1,10 @@
-use std::{future::Future, path::PathBuf, sync::Arc};
+use std::{
+    future::Future,
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
+
+use tauri::Manager;
 
 use tokio::{runtime::Handle, sync::watch, task::JoinHandle};
 
@@ -15,6 +21,7 @@ struct Inner {
     shared: Shared,
     agent: Agent,
     topics: [watch::Sender<u64>; 6],
+    updater: OnceLock<Arc<crate::update::Updater>>,
 }
 
 #[derive(Clone, Copy)]
@@ -35,6 +42,7 @@ impl App {
             shared,
             agent: Agent::default(),
             topics: std::array::from_fn(|_| watch::channel(0).0),
+            updater: OnceLock::new(),
         }))
     }
 
@@ -78,6 +86,22 @@ impl App {
 
     pub fn exit(&self, code: i32) {
         self.0.handle.exit(code);
+    }
+
+    pub(crate) fn set_updater(&self, updater: Arc<crate::update::Updater>) {
+        assert!(self.0.updater.set(updater).is_ok(), "updater already started");
+    }
+
+    pub(crate) fn updater(&self) -> Option<Arc<crate::update::Updater>> {
+        self.0.updater.get().cloned()
+    }
+
+    pub(crate) fn windows_open(&self) -> bool {
+        !self.0.handle.webview_windows().is_empty()
+    }
+
+    pub(crate) fn request_restart(&self) {
+        self.0.handle.request_restart();
     }
 
     /// Shell access for windows, tray, and updater.
