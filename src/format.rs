@@ -67,10 +67,21 @@ pub fn clock(ms: f64) -> String {
     format!("{hour:02}:{minute:02}:{second:02}")
 }
 
-/// The C runtime's local time: `(hour, minute, second)` of `secs` since the
-/// epoch. `struct tm` starts with seconds, minutes and hours as ints on both
+/// A local wall-clock time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalTime {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+}
+
+/// The C runtime's local time of `secs` since the epoch. `struct tm` starts
+/// with seconds, minutes, hours, day, month and year as ints on both
 /// platforms; the buffer leaves room for the rest of it.
-fn local_time(secs: i64) -> (i32, i32, i32) {
+pub fn local_time_parts(secs: i64) -> LocalTime {
     let mut tm = [0i32; 16];
     let ok = {
         #[cfg(unix)]
@@ -90,7 +101,24 @@ fn local_time(secs: i64) -> (i32, i32, i32) {
             unsafe { _localtime64_s(tm.as_mut_ptr(), &secs) == 0 }
         }
     };
-    if ok { (tm[2], tm[1], tm[0]) } else { (0, 0, 0) }
+    if ok {
+        LocalTime {
+            year: tm[5] + 1900,
+            month: (tm[4] + 1) as u32,
+            day: tm[3] as u32,
+            hour: tm[2] as u32,
+            minute: tm[1] as u32,
+            second: tm[0] as u32,
+        }
+    } else {
+        LocalTime { year: 1970, month: 1, day: 1, hour: 0, minute: 0, second: 0 }
+    }
+}
+
+/// `(hour, minute, second)` of `secs` since the epoch, in local time.
+fn local_time(secs: i64) -> (i32, i32, i32) {
+    let time = local_time_parts(secs);
+    (time.hour as i32, time.minute as i32, time.second as i32)
 }
 
 /// 24h change in percent, or `None` when the open price is unusable.
