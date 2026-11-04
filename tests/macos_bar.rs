@@ -10,6 +10,9 @@ mod i18n;
 #[path = "../src/agent/mod.rs"]
 mod agent;
 #[cfg(target_os = "macos")]
+#[path = "../src/api.rs"]
+mod api;
+#[cfg(target_os = "macos")]
 #[path = "../src/app.rs"]
 mod app;
 #[cfg(target_os = "macos")]

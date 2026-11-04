@@ -6,6 +6,7 @@ pub mod indicators;
 pub mod labels;
 pub mod market;
 pub mod model;
+pub mod model_state;
 pub mod viewport;
 
 use crate::app::App;
