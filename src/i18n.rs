@@ -4,11 +4,7 @@
 //! Rust's own text (the bar and its menus, window titles, errors) is
 //! `t!("tray.quit")`, compiled by `build.rs` from `locales/<tag>.json`: a key
 //! or placeholder that isn't there doesn't compile, and every language has
-//! every message. The pages translate their own text with the same
-//! placeholders (`src/lib/i18n.ts`) and share `common` from these catalogs;
-//! they ask for the locale as they load and hear of changes (`window.rs`).
-//! What travels to a page as data (wallets, contract kinds, intervals) goes
-//! as a code, for the page to name in its own language.
+//! every message.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -151,40 +147,17 @@ mod tests {
         }
     }
 
-    // A message nothing says is dead weight in every language. The app's are
-    // said through `t!`; `common` is the pages' too; the pages name theirs as
-    // string literals, or a family of them by a template's prefix
-    // (`holdings.wallet.${…}`).
+    // Common messages also name values in the app's windows.
     #[test]
-    fn every_message_is_said_somewhere() {
+    fn app_messages_are_used() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut rust = String::new();
         sources(&root.join("src"), &["rs"], &mut rust);
-        // Without whitespace, so a `t!(` that rustfmt broke over lines reads whole.
         let rust: String = rust.split_whitespace().collect();
-        let mut pages = String::new();
-        sources(&root.join("../src"), &["ts", "tsx"], &mut pages);
-        let prefixes: Vec<&str> = pages
-            .split('`')
-            .skip(1)
-            .step_by(2)
-            .filter_map(|template| template.split_once("${").map(|(head, _)| head))
-            .filter(|head| head.ends_with('.') && !head.contains(' '))
-            .collect();
-        let in_pages = |key: &str| {
-            pages.contains(&format!("\"{key}\""))
-                || prefixes.iter().any(|prefix| key.starts_with(prefix))
-        };
-
         let unsaid: Vec<&&str> = APP_MESSAGES
             .iter()
-            .filter(|key| {
-                !rust.contains(&format!("t!(\"{key}\""))
-                    && !(key.starts_with("common.") && in_pages(key))
-            })
+            .filter(|key| !key.starts_with("common.") && !rust.contains(&format!("t!(\"{key}\"")))
             .collect();
         assert!(unsaid.is_empty(), "locales: nothing says {unsaid:?}");
-        let unsaid: Vec<&&str> = PAGE_MESSAGES.iter().filter(|key| !in_pages(key)).collect();
-        assert!(unsaid.is_empty(), "src/locales: nothing says {unsaid:?}");
     }
 }

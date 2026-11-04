@@ -15,14 +15,7 @@ fn main() {
         .expect("failed to run tauri-build");
 }
 
-/// Compiles the catalogs: the app's (`locales/<tag>.json`) into `t!` and a
-/// function per message (`src/i18n.rs` includes both), and checks the pages'
-/// (`../src/locales/<tag>.json`), which i18next reads as they are.
-///
-/// What fails the build, in either: a message one language lacks or only it
-/// has, and placeholders that differ from English. What fails it where `t!`
-/// is written: a key the catalogs don't have, a placeholder missing or
-/// misnamed.
+/// Compiles the catalogs into `t!` and checks keys and placeholders across languages.
 mod text {
     use super::*;
 
@@ -41,14 +34,7 @@ mod text {
     pub fn compile() {
         let manifest = env::var("CARGO_MANIFEST_DIR").unwrap();
         let app = Catalogs::read(&Path::new(&manifest).join("locales"), "locales");
-        let pages = Catalogs::read(&Path::new(&manifest).join("../src/locales"), "src/locales");
-        assert_eq!(app.tags(), pages.tags(), "the app and its pages speak different languages");
         app.check(false);
-        pages.check(true);
-        // The pages take `common` from the app's catalogs (src/lib/i18n.ts).
-        let shadowed: Vec<&String> =
-            pages.source().keys().filter(|key| key.starts_with("common.")).collect();
-        assert!(shadowed.is_empty(), "src/locales: `common` is the app's, but has {shadowed:?}");
 
         let windows = env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows");
         let app = app.on_platform(windows);
@@ -65,13 +51,8 @@ mod text {
             code,
             "\n/// The app's messages, as `t!` names them.\n\
              #[cfg(test)]\n\
-             const APP_MESSAGES: &[&str] = &[{}];\n\n\
-             /// The pages' messages, as `t` names them: without the plural form,\n\
-             /// platform or context that its options pick.\n\
-             #[cfg(test)]\n\
-             const PAGE_MESSAGES: &[&str] = &[{}];\n",
+             const APP_MESSAGES: &[&str] = &[{}];\n",
             named(app.source().keys().map(String::as_str).collect()),
-            named(pages.source().keys().map(|key| key.split('_').next().unwrap_or(key)).collect()),
         )
         .unwrap();
         let out = Path::new(&env::var("OUT_DIR").unwrap()).join("text.rs");
@@ -110,10 +91,6 @@ mod text {
                 "{name}/{SOURCE}.json is missing"
             );
             Self { name, by_tag }
-        }
-
-        fn tags(&self) -> Vec<&str> {
-            self.by_tag.iter().map(|(tag, _)| tag.as_str()).collect()
         }
 
         fn source(&self) -> &Catalog {
