@@ -16,6 +16,11 @@ path = "tests/macos_bar.rs"
 harness = false
 
 [build-dependencies]
+# build.rs fetches thsdk's runtime over HTTPS before tauri-build runs.
+ureq = "3"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+sha2 = "0.10"
+tar = "0.4"
 serde_json = "1"
 tauri-build = { version = "2.7", features = [] }
 

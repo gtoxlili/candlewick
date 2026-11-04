@@ -73,10 +73,12 @@ Tonghuashun's quotes refresh every few seconds while the market trades, and its 
 You need Rust 1.98+, Node.js and pnpm, plus macOS 15 or later on a Mac, or the Visual Studio C++ build tools on Windows.
 
 ```sh
-pnpm install       # also fetches thsdk's runtime, for Tonghuashun sign-in
+pnpm install
 pnpm tauri dev     # run in development
 pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
 ```
+
+The first build downloads thsdk's runtime (for Tonghuashun sign-in) into `thsdk/`, pinned by hash.
 
 [docs/windows.md](docs/windows.md) explains how the Windows version works. Every push to main that changes the app becomes a release, and [docs/release.md](docs/release.md) has the details.
 
@@ -88,8 +90,7 @@ pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
 - `src-tauri/src/portfolio.rs`: what holdings are worth
 - `src-tauri/src/agent/`: AI access, a local read-only API and its skill; see [docs/agent-access.md](docs/agent-access.md)
 - `src/settings/`, `src/chart/` and `src/holdings/`: the settings, chart and holdings windows, the chart built on [Liveline](https://github.com/benjitaylor/liveline)
-- `src-tauri/locales/` and `src/locales/`: every word in English, Chinese and Japanese, for the app and for its pages; see [docs/i18n.md](docs/i18n.md)
-- `patches/liveline@0.0.7.patch`: dragging, zooming and the color setting for Liveline
+- `locales/`: every word in English, Chinese and Japanese, one file per window surface; see [docs/i18n.md](docs/i18n.md)- `patches/liveline@0.0.7.patch`: dragging, zooming and the color setting for Liveline
 
 Built with [Tauri 2](https://tauri.app), Rust, React 19 and Tailwind CSS.
 

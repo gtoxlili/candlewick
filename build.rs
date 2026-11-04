@@ -3,10 +3,14 @@ use std::{
     env,
     fmt::Write as _,
     fs,
+    io::Read as _,
     path::Path,
 };
 
 fn main() {
+    // The Tauri config names thsdk's library and license as bundle inputs,
+    // so they must be in place before tauri-build checks it.
+    thsdk::fetch();
     text::compile();
     // The Windows manifest; ignored when building for macOS.
     let windows =
@@ -15,51 +19,164 @@ fn main() {
         .expect("failed to run tauri-build");
 }
 
-/// Compiles the catalogs into `t!` and checks keys and placeholders across languages.
+/// Fetches thsdk's runtime, which signs in to a Tonghuashun account and reads
+/// its watchlist (`src/market/ths/thsdk.rs`), into `thsdk/`: the library for
+/// the platform being built and its license. Both come from thsdk's release
+/// on PyPI, pinned by hash; nothing is fetched once the files are there.
+mod thsdk {
+    use super::*;
+    use flate2::read::GzDecoder;
+    use sha2::{Digest as _, Sha256};
+
+    const VERSION: &str = "2.0.2";
+    const URL: &str = "https://files.pythonhosted.org/packages/e4/54/53227fca0b82e93e6292e0703ab412e517c87c632f744e82977738da23f3/thsdk-2.0.2.tar.gz";
+    const SHA256: &str = "12b950a81df0ddc80f577dca3aed11660e8f0c5ef59b5ef4a21846ae3915f40a";
+
+    /// The library inside the archive for each platform the app ships for,
+    /// and the file it becomes in `thsdk/`.
+    fn library() -> Option<(&'static str, &'static str)> {
+        match (
+            env::var("CARGO_CFG_TARGET_OS").as_deref(),
+            env::var("CARGO_CFG_TARGET_ARCH").as_deref(),
+        ) {
+            (Ok("macos"), Ok("aarch64")) => Some(("libs/darwin/arm64/hq.dylib", "hq.dylib")),
+            (Ok("windows"), Ok("x86_64")) => Some(("libs/windows/amd64/hq.dll", "hq.dll")),
+            _ => None,
+        }
+    }
+
+    pub fn fetch() {
+        println!("cargo:rerun-if-changed=build.rs");
+        let Some((inside, name)) = library() else { return };
+        let out = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("thsdk");
+        let wanted = [
+            (format!("thsdk-{VERSION}/thsdk/{inside}"), name),
+            (format!("thsdk-{VERSION}/LICENSE"), "LICENSE"),
+        ];
+        // The stamp carries the hash: a new pin refetches, an interrupted
+        // fetch (stamp written last) refetches too.
+        let current = fs::read_to_string(out.join("VERSION")).is_ok_and(|s| s.trim() == SHA256)
+            && wanted.iter().all(|(_, file)| out.join(file).exists());
+        if current {
+            return;
+        }
+
+        let archive = download();
+        let hash = Sha256::digest(&archive);
+        assert_eq!(format!("{hash:x}"), SHA256, "thsdk {VERSION}: sha256 of {URL}");
+
+        fs::create_dir_all(&out).expect("create thsdk/");
+        let tar = GzDecoder::new(&archive[..]);
+        let mut tar = tar::Archive::new(tar);
+        let mut found = 0;
+        for entry in tar.entries().expect("thsdk: read the archive") {
+            let mut entry = entry.expect("thsdk: read the archive");
+            let path = entry.path().unwrap().to_string_lossy().into_owned();
+            let Some((_, file)) = wanted.iter().find(|(inside, _)| *inside == path) else {
+                continue;
+            };
+            let mut data = Vec::new();
+            entry.read_to_end(&mut data).expect("thsdk: read the archive");
+            let file = out.join(file);
+            fs::write(&file, data).expect("write the library");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                let mode = if file == out.join("LICENSE") { 0o644 } else { 0o755 };
+                fs::set_permissions(&file, fs::Permissions::from_mode(mode))
+                    .expect("set the library's permissions");
+            }
+            found += 1;
+        }
+        assert!(
+            found == wanted.len(),
+            "thsdk: {URL} lacks {}",
+            wanted.iter().map(|(inside, _)| inside.as_str()).collect::<Vec<_>>().join(" or ")
+        );
+        fs::write(out.join("VERSION"), format!("{SHA256}\n")).expect("write thsdk/VERSION");
+    }
+
+    fn download() -> Vec<u8> {
+        let agent = ureq::config::Config::builder().build().new_agent();
+        let mut response =
+            agent.get(URL).call().unwrap_or_else(|e| panic!("thsdk: {URL} answered {e}"));
+        // The archive is bigger than the 10 MB the shorthand readers allow.
+        response
+            .body_mut()
+            .with_config()
+            .limit(256 * 1024 * 1024)
+            .read_to_vec()
+            .unwrap_or_else(|e| panic!("thsdk: reading {URL}: {e}"))
+    }
+}
+
+/// Compiles the catalogs into `t!` and checks keys and placeholders across
+/// languages.
 mod text {
     use super::*;
 
     /// The language every other is checked against.
     const SOURCE: &str = "en";
+    /// The surfaces a language's catalog is split into, one file each: `app`
+    /// is the bar and its menus, `common` what the windows share, the rest
+    /// one window each.
+    const SURFACES: [&str; 5] = ["app", "common", "settings", "chart", "holdings"];
     /// A key's Windows wording, where the platforms differ ("menu bar",
     /// "taskbar"): `onePinned_windows` beside `onePinned`.
     const WINDOWS: &str = "_windows";
-    /// The CLDR plural categories, as i18next suffixes them. English has
-    /// `_one` and `_other`; a language without a plural only `_other`.
+    /// i18next-style plural suffixes; a catalog with one in a key is an
+    /// error, since `t!` picks no plural form.
     const PLURALS: [&str; 6] = ["_zero", "_one", "_two", "_few", "_many", "_other"];
+    /// Key prefixes of messages nothing says yet: the windows that will say
+    /// them don't exist. Each window's task shortens this list; when it is
+    /// empty, every message is said somewhere.
+    const UNSAID: [&str; 8] = [
+        "common.",
+        "loading",
+        "market.",
+        "interval.",
+        "windowControls.",
+        "settings.",
+        "chart.",
+        "holdings.",
+    ];
 
     /// A language's messages by dotted key.
     type Catalog = BTreeMap<String, String>;
 
     pub fn compile() {
         let manifest = env::var("CARGO_MANIFEST_DIR").unwrap();
-        let app = Catalogs::read(&Path::new(&manifest).join("locales"), "locales");
-        app.check(false);
+        let app = Catalogs::read(&Path::new(&manifest).join("locales"));
+        app.check();
 
         let windows = env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows");
         let app = app.on_platform(windows);
         let mut code = app.code();
         // What the code names to say each message, for the test that every
         // message is said somewhere.
-        let named = |keys: BTreeSet<&str>| -> String {
-            keys.into_iter().fold(String::new(), |mut list, key| {
-                write!(list, "{key:?}, ").unwrap();
-                list
-            })
-        };
+        let said: BTreeSet<&str> = app
+            .source()
+            .keys()
+            .map(String::as_str)
+            .filter(|key| !UNSAID.iter().any(|prefix| key.starts_with(prefix)))
+            .collect();
+        let named = said.into_iter().fold(String::new(), |mut list, key| {
+            write!(list, "{key:?}, ").unwrap();
+            list
+        });
         write!(
             code,
             "\n/// The app's messages, as `t!` names them.\n\
              #[cfg(test)]\n\
              const APP_MESSAGES: &[&str] = &[{}];\n",
-            named(app.source().keys().map(String::as_str).collect()),
+            named,
         )
         .unwrap();
         let out = Path::new(&env::var("OUT_DIR").unwrap()).join("text.rs");
         fs::write(out, code).expect("write the generated text");
     }
 
-    /// One directory's catalogs, the source language first.
+    /// The merged catalogs, the source language first.
     struct Catalogs {
         /// The directory, as messages about it name it.
         name: &'static str,
@@ -67,30 +184,26 @@ mod text {
     }
 
     impl Catalogs {
-        fn read(dir: &Path, name: &'static str) -> Self {
+        fn read(dir: &Path) -> Self {
             // A directory reruns this when anything in it changes.
             println!("cargo:rerun-if-changed={}", dir.display());
             let mut by_tag: Vec<(String, Catalog)> = fs::read_dir(dir)
-                .unwrap_or_else(|e| panic!("{name}: {e}"))
+                .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
                 .map(|entry| entry.unwrap().path())
-                .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
-                .map(|path| {
-                    let tag = path.file_stem().unwrap().to_string_lossy().into_owned();
-                    let json = fs::read_to_string(&path)
-                        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-                    let json: serde_json::Value = serde_json::from_str(&json)
-                        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-                    let mut catalog = Catalog::new();
-                    flatten("", &json, &mut catalog);
+                .filter(|path| path.is_dir())
+                .map(|dir| {
+                    let tag = dir.file_name().unwrap().to_string_lossy().into_owned();
+                    let catalog = catalog(&dir, &tag);
                     (tag, catalog)
                 })
                 .collect();
             by_tag.sort_by_key(|(tag, _)| (tag != SOURCE, tag.clone()));
             assert!(
                 by_tag.first().is_some_and(|(tag, _)| tag == SOURCE),
-                "{name}/{SOURCE}.json is missing"
+                "{}/{SOURCE} is missing",
+                dir.display()
             );
-            Self { name, by_tag }
+            Self { name: "locales", by_tag }
         }
 
         fn source(&self) -> &Catalog {
@@ -98,39 +211,28 @@ mod text {
         }
 
         /// Every language says every message, with the source's placeholders.
-        /// With `plurals`, a message may come in the plural forms its
-        /// language has (the pages': i18next picks one by `count`, which a
-        /// form may leave out, "1 more"); without, in none (the app's: `t!`
-        /// can't pick).
-        fn check(&self, plurals: bool) {
+        fn check(&self) {
             let name = self.name;
-            let message = |key: &str| -> String {
-                let form = PLURALS.iter().find_map(|suffix| key.strip_suffix(suffix));
-                assert!(plurals || form.is_none(), "{name}: {key} is a plural form; `t!` has none");
-                form.unwrap_or(key).to_owned()
-            };
             let source = self.source();
-            let messages: BTreeSet<String> = source.keys().map(|key| message(key)).collect();
             for (tag, catalog) in &self.by_tag {
-                let theirs: BTreeSet<String> = catalog.keys().map(|key| message(key)).collect();
-                let missing: Vec<&String> = messages.difference(&theirs).collect();
-                let extra: Vec<&String> = theirs.difference(&messages).collect();
-                assert!(missing.is_empty(), "{name}/{tag}.json lacks {missing:?}");
-                assert!(extra.is_empty(), "{name}/{tag}.json has {extra:?}; {SOURCE}.json doesn't");
+                for key in catalog.keys() {
+                    assert!(
+                        !PLURALS.iter().any(|suffix| key.ends_with(suffix)),
+                        "{name}/{tag}: {key} is a plural form; `t!` picks none"
+                    );
+                }
+                let missing: Vec<&String> =
+                    source.keys().filter(|k| !catalog.contains_key(*k)).collect();
+                let extra: Vec<&String> =
+                    catalog.keys().filter(|k| !source.contains_key(*k)).collect();
+                assert!(missing.is_empty(), "{name}/{tag} lacks {missing:?}");
+                assert!(extra.is_empty(), "{name}/{tag} has {extra:?}; {SOURCE} doesn't");
                 for (key, text) in catalog {
-                    let base = message(key);
-                    let said = source
-                        .get(key)
-                        .or_else(|| source.get(&format!("{base}_other")))
-                        .unwrap_or_else(|| panic!("{name}/{tag}.json: {key} has no {SOURCE} form"));
+                    let said = &source[key];
                     let named = |text: &str| -> BTreeSet<String> {
-                        let mut names: BTreeSet<String> = placeholders(text).into_iter().collect();
-                        if *key != base {
-                            names.remove("count");
-                        }
-                        names
+                        placeholders(text).into_iter().collect()
                     };
-                    assert_eq!(named(text), named(said), "{name}/{tag}.json: {key}'s placeholders");
+                    assert_eq!(named(text), named(said), "{name}/{tag}: {key}'s placeholders");
                 }
             }
         }
@@ -147,11 +249,11 @@ mod text {
                     let key = variant.strip_suffix(WINDOWS).unwrap();
                     let other = catalog
                         .get_mut(key)
-                        .unwrap_or_else(|| panic!("{name}/{tag}.json: {variant} without {key}"));
+                        .unwrap_or_else(|| panic!("{name}/{tag}: {variant} without {key}"));
                     assert_eq!(
                         placeholders(&text),
                         placeholders(other),
-                        "{name}/{tag}.json: {variant}'s placeholders"
+                        "{name}/{tag}: {variant}'s placeholders"
                     );
                     if windows {
                         *other = text;
@@ -212,13 +314,13 @@ mod text {
                 }
             }
             format!(
-                "// Generated by build.rs from locales/*.json.\n\n\
+                "// Generated by build.rs from locales/.\n\n\
                  /// A message in the app's language: `t!(\"tray.quit\")` is a\n\
                  /// `&'static str`; with placeholders, named in the order English\n\
                  /// has them, `t!(\"tray.update\", version = v)` is a `String`.\n\
                  macro_rules! t {{\n{rules}    \
                  ($key:literal $($rest:tt)*) => {{\n        \
-                 compile_error!(concat!(\"locales/{SOURCE}.json has no message \\\"\", $key, \"\\\" with these placeholders\"))\n    \
+                 compile_error!(concat!(\"locales/{SOURCE} has no message \\\"\", $key, \"\\\" with these placeholders\"))\n    \
                  }};\n}}\n\n\
                  /// What `t!` calls: a function per message.\n\
                  #[allow(dead_code)]\n\
@@ -227,6 +329,35 @@ mod text {
                  use super::Locale;\n\n{functions}}}\n"
             )
         }
+    }
+
+    /// One language's catalog: every surface file it has, merged. A key in
+    /// two surfaces is a mistake — nothing resolves by priority.
+    fn catalog(dir: &Path, tag: &str) -> Catalog {
+        let mut merged = Catalog::new();
+        for surface in SURFACES {
+            let path = dir.join(format!("{surface}.json"));
+            if !path.exists() {
+                // Only the app's own surface has to be there; a window's
+                // surface may still be empty.
+                assert!(surface == "app", "locales/{tag}: {} is missing", path.display());
+                continue;
+            }
+            let json =
+                fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let json: serde_json::Value =
+                serde_json::from_str(&json).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let mut one = Catalog::new();
+            flatten("", &json, &mut one);
+            for (key, text) in one {
+                let repeat = merged.insert(key.clone(), text).is_none();
+                assert!(
+                    repeat,
+                    "locales/{tag}: {surface}.json repeats a key another surface has: {key}"
+                );
+            }
+        }
+        merged
     }
 
     /// `zh-CN` as `i18n::Locale` names it: `ZhCn`.

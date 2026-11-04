@@ -1,0 +1,21 @@
+{
+  "loading": "読み込み中",
+  "market": {
+    "US": "米国株",
+    "HK": "香港株",
+    "CN": "中国 A 株"
+  },
+  "interval": {
+    "second": "%{n}秒",
+    "minute": "%{n}分",
+    "hour": "%{n}時間",
+    "day": "%{n}日",
+    "week": "%{n}週"
+  },
+  "windowControls": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "元に戻す",
+    "close": "閉じる"
+  }
+}

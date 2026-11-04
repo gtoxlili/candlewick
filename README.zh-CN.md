@@ -73,10 +73,12 @@
 需要 Rust 1.98+、Node.js 和 pnpm。在 Mac 上还需要 macOS 15 或更高，在 Windows 上还需要 Visual Studio 的 C++ 生成工具。
 
 ```sh
-pnpm install       # 同时下载同花顺账号登录用的 thsdk 运行组件
+pnpm install
 pnpm tauri dev     # 开发
 pnpm tauri build   # 安装包在 src-tauri/target/release/bundle/
 ```
+
+第一次构建会按哈希校验，把同花顺账号登录用的 thsdk 运行组件下载到 `thsdk/`。
 
 Windows 版是怎么实现的，见 [docs/windows.md](docs/windows.md)。main 上每次改动应用的推送都会自动发布新版本，流程见 [docs/release.md](docs/release.md)。
 
@@ -88,7 +90,7 @@ Windows 版是怎么实现的，见 [docs/windows.md](docs/windows.md)。main �
 - `src-tauri/src/portfolio.rs`：持仓估值
 - `src-tauri/src/agent/`：AI 助手接入，本机只读接口和 skill，见 [docs/agent-access.md](docs/agent-access.md)
 - `src/settings/`、`src/chart/` 与 `src/holdings/`：设置、行情和持仓窗口，图表基于 [Liveline](https://github.com/benjitaylor/liveline)
-- `src-tauri/locales/` 与 `src/locales/`：应用和页面的全部文字，英文、中文、日文各一份，见 [docs/i18n.md](docs/i18n.md)
+- `locales/`：全部文字，英文、中文、日文各一份，每个窗口一个文件，见 [docs/i18n.md](docs/i18n.md)
 - `patches/liveline@0.0.7.patch`：给 Liveline 加上拖动、缩放和涨跌配色
 
 基于 [Tauri 2](https://tauri.app)、Rust、React 19 和 Tailwind CSS 构建。

@@ -1,6 +1,6 @@
 //! thsdk's runtime: Tonghuashun's own client protocol, as the thsdk Python
 //! package (MIT) carries it in a closed-source library (`hq.dylib`,
-//! `hq.dll`; `scripts/fetch-thsdk.mjs` fetches it, the bundle ships it). It
+//! `hq.dll`; the build fetches it, the bundle ships it). It
 //! signs in with a QR code confirmed in the Tonghuashun app and reads the
 //! account's watchlist.
 //!
