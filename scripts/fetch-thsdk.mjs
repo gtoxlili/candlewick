@@ -1,5 +1,5 @@
 // Fetches thsdk's runtime, which signs in to a Tonghuashun account and reads
-// its watchlist (src-tauri/src/market/ths/thsdk.rs), into src-tauri/thsdk/:
+// its watchlist (src/market/ths/thsdk.rs), into thsdk/:
 // the library for this platform and its license. It comes from thsdk's
 // release on PyPI, pinned by hash. Runs after `pnpm install`, since building
 // the app (even `cargo check`) needs the library where the Tauri config
@@ -22,7 +22,7 @@ const LIBRARIES = {
   "win32-x64": ["libs/windows/amd64/hq.dll", "hq.dll"],
 };
 
-const out = join(dirname(fileURLToPath(import.meta.url)), "..", "src-tauri", "thsdk");
+const out = join(dirname(fileURLToPath(import.meta.url)), "..", "thsdk");
 const stamp = join(out, "VERSION");
 const library = LIBRARIES[`${process.platform}-${process.arch}`];
 
