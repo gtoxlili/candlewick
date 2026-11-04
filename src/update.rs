@@ -18,16 +18,13 @@ use std::{
     time::Duration,
 };
 
-use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use crate::app::{App, Topic};
+use tauri::Manager;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::{
-    agent, bar, http,
-    model::Shared,
-    net,
+    agent, bar, http, net,
     platform::{self, Pause},
-    window,
 };
 
 /// The feeds and the first render come first.
@@ -42,11 +39,8 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 /// download must not hold the updater for good. Plenty for a few megabytes.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
-const EVENT: &str = "update";
-
 /// What the settings show beside the version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateState {
     /// Not an installed copy.
     Disabled,
@@ -73,8 +67,7 @@ pub enum UpdateState {
     },
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct UpdateView {
     /// The running version.
     pub current: String,
@@ -92,7 +85,7 @@ pub struct Updater {
 }
 
 /// Starts checking for updates, if this copy is installed.
-pub fn start(app: &AppHandle) {
+pub fn start(app: &App) {
     let enabled = !cfg!(debug_assertions) && platform::is_installed();
     let updater = Arc::new(Updater {
         state: Mutex::new(if enabled {
@@ -103,19 +96,19 @@ pub fn start(app: &AppHandle) {
         busy: tokio::sync::Mutex::new(()),
         pending: Mutex::new(None),
     });
-    app.manage(updater.clone());
+    app.handle().manage(updater.clone());
     if enabled {
         let app = app.clone();
-        tauri::async_runtime::spawn(async move { updater.run(&app).await });
+        app.clone().spawn(async move { updater.run(&app).await });
     }
 }
 
-pub fn view(app: &AppHandle) -> UpdateView {
-    UpdateView { current: app.package_info().version.to_string(), state: state(app) }
+pub fn view(app: &App) -> UpdateView {
+    UpdateView { current: app.handle().package_info().version.to_string(), state: state(app) }
 }
 
 /// The version a restart would run, if one is ready.
-pub fn ready(app: &AppHandle) -> Option<String> {
+pub fn ready(app: &App) -> Option<String> {
     match state(app) {
         UpdateState::Ready { version } => Some(version),
         _ => None,
@@ -123,26 +116,26 @@ pub fn ready(app: &AppHandle) -> Option<String> {
 }
 
 /// Checks now, whether or not automatic updates are on.
-pub fn check_now(app: &AppHandle) {
+pub fn check_now(app: &App) {
     if let Some(updater) = updater(app) {
         let app = app.clone();
-        tauri::async_runtime::spawn(async move { updater.check(&app).await });
+        app.clone().spawn(async move { updater.check(&app).await });
     }
 }
 
 /// Restarts into the ready update.
-pub fn restart_now(app: &AppHandle) {
+pub fn restart_now(app: &App) {
     if let Some(updater) = updater(app) {
         let app = app.clone();
-        tauri::async_runtime::spawn(async move { updater.restart(&app).await });
+        app.clone().spawn(async move { updater.restart(&app).await });
     }
 }
 
-fn updater(app: &AppHandle) -> Option<Arc<Updater>> {
-    app.try_state::<Arc<Updater>>().map(|updater| updater.inner().clone())
+fn updater(app: &App) -> Option<Arc<Updater>> {
+    app.handle().try_state::<Arc<Updater>>().map(|updater| updater.inner().clone())
 }
 
-fn state(app: &AppHandle) -> UpdateState {
+fn state(app: &App) -> UpdateState {
     updater(app).map_or(UpdateState::Disabled, |updater| updater.state())
 }
 
@@ -158,7 +151,7 @@ impl Updater {
         lock(&self.state).clone()
     }
 
-    fn set(&self, app: &AppHandle, state: UpdateState) {
+    fn set(&self, app: &App, state: UpdateState) {
         let was_ready = matches!(
             std::mem::replace(&mut *lock(&self.state), state.clone()),
             UpdateState::Ready { .. }
@@ -167,17 +160,15 @@ impl Updater {
         if was_ready != matches!(state, UpdateState::Ready { .. }) {
             bar::request_render(app);
         }
-        if app.get_webview_window(window::SETTINGS).is_some() {
-            let _ = app.emit_to(window::SETTINGS, EVENT, view(app));
-        }
+        app.notify(Topic::Update);
     }
 
-    async fn run(&self, app: &AppHandle) {
-        let mut control = app.state::<Shared>().control.subscribe();
+    async fn run(&self, app: &App) {
+        let mut control = app.shared().control.subscribe();
         tokio::time::sleep(FIRST_CHECK).await;
         let mut next_check = tokio::time::Instant::now();
         loop {
-            let automatic = app.state::<Shared>().model().settings.auto_update;
+            let automatic = app.shared().model().settings.auto_update;
             if automatic && tokio::time::Instant::now() >= next_check {
                 self.check(app).await;
                 next_check = tokio::time::Instant::now() + CHECK_EVERY;
@@ -186,7 +177,7 @@ impl Updater {
             if automatic
                 && matches!(self.state(), UpdateState::Ready { .. })
                 && self.restarts_quietly()
-                && unnoticed(paused, !app.webview_windows().is_empty())
+                && unnoticed(paused, !app.handle().webview_windows().is_empty())
             {
                 self.restart(app).await;
             }
@@ -208,7 +199,7 @@ impl Updater {
         cfg!(windows) || lock(&self.pending).is_none()
     }
 
-    async fn check(&self, app: &AppHandle) {
+    async fn check(&self, app: &App) {
         let Ok(_busy) = self.busy.try_lock() else {
             return;
         };
@@ -258,14 +249,14 @@ impl Updater {
     /// Swaps the bundle now if that needs nobody's password: the running
     /// process keeps its mapped binary, and the next launch is the new one.
     #[cfg(target_os = "macos")]
-    async fn stage(&self, app: &AppHandle, update: Update, bytes: Vec<u8>) {
+    async fn stage(&self, app: &App, update: Update, bytes: Vec<u8>) {
         let version = update.version.clone();
         if !bundle_is_writable() {
             *lock(&self.pending) = Some((update, bytes));
             self.set(app, UpdateState::Ready { version });
             return;
         }
-        match tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await {
+        match app.spawn_blocking(move || update.install(bytes)).await {
             Ok(Ok(())) => {
                 log::info!("update {version} installed; a restart runs it");
                 self.set(app, UpdateState::Ready { version });
@@ -283,13 +274,13 @@ impl Updater {
 
     /// Running the installer ends the process, so it waits for the restart.
     #[cfg(windows)]
-    async fn stage(&self, app: &AppHandle, update: Update, bytes: Vec<u8>) {
+    async fn stage(&self, app: &App, update: Update, bytes: Vec<u8>) {
         let version = update.version.clone();
         *lock(&self.pending) = Some((update, bytes));
         self.set(app, UpdateState::Ready { version });
     }
 
-    async fn restart(&self, app: &AppHandle) {
+    async fn restart(&self, app: &App) {
         let Ok(_busy) = self.busy.try_lock() else {
             return;
         };
@@ -302,7 +293,7 @@ impl Updater {
             // Windows: the installer takes over and this process exits inside
             // `install` (after `on_before_exit`); it only returns on failure.
             // macOS: the swap, with the administrator's prompt it needs.
-            match tauri::async_runtime::spawn_blocking(move || update.install(bytes)).await {
+            match app.spawn_blocking(move || update.install(bytes)).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     log::warn!("update {version} did not install: {e}");
@@ -317,14 +308,15 @@ impl Updater {
             }
         }
         log::info!("restarting into {version}");
-        app.request_restart();
+        app.handle().request_restart();
     }
 }
 
 /// The updater for one check, on the route and TLS setup of every other
 /// request (`http.rs`).
-fn client(app: &AppHandle) -> tauri_plugin_updater::Result<tauri_plugin_updater::Updater> {
-    app.updater_builder()
+fn client(app: &App) -> tauri_plugin_updater::Result<tauri_plugin_updater::Updater> {
+    app.handle()
+        .updater_builder()
         .timeout(CHECK_TIMEOUT)
         .configure_client(|client| {
             client.use_preconfigured_tls(net::tls_client_config()).proxy(http::system_proxy())

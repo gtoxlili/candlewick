@@ -27,7 +27,7 @@ mod thsdk;
 
 use std::time::Duration;
 
-use tauri::{AppHandle, ipc::Channel};
+use crate::app::App;
 use tokio::sync::{oneshot, watch};
 
 use super::{
@@ -56,7 +56,7 @@ pub use self::{
 };
 
 /// Keeps the user's Tonghuashun watchlist current while signed in there.
-pub async fn sync_watchlist(app: AppHandle, control: watch::Receiver<FeedControl>) {
+pub async fn sync_watchlist(app: App, control: watch::Receiver<FeedControl>) {
     account::run(app, control).await;
 }
 
@@ -155,11 +155,7 @@ impl Provider for Ths {
         Box::pin(search(query))
     }
 
-    fn watch(
-        &self,
-        app: AppHandle,
-        control: watch::Receiver<FeedControl>,
-    ) -> BoxFuture<'static, ()> {
+    fn watch(&self, app: App, control: watch::Receiver<FeedControl>) -> BoxFuture<'static, ()> {
         Box::pin(quotes::run(app, control))
     }
 
@@ -209,9 +205,17 @@ impl Provider for Ths {
         &self,
         instrument: Instrument,
         stop: oneshot::Receiver<()>,
-        events: Channel<LiveEvent>,
+        events: tokio::sync::mpsc::UnboundedSender<LiveEvent>,
     ) -> BoxFuture<'static, ()> {
-        Box::pin(stream::run(instrument, stop, events))
+        Box::pin(async move {
+            let closed = events.clone();
+            let (_keep, inner_stop) = oneshot::channel();
+            tokio::select! {
+                _ = stop => {},
+                () = closed.closed() => {},
+                () = stream::run(instrument, inner_stop, events) => {},
+            }
+        })
     }
 }
 

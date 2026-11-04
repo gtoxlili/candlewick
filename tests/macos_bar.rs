@@ -10,6 +10,9 @@ mod i18n;
 #[path = "../src/agent/mod.rs"]
 mod agent;
 #[cfg(target_os = "macos")]
+#[path = "../src/app.rs"]
+mod app;
+#[cfg(target_os = "macos")]
 #[path = "../src/bar.rs"]
 mod bar;
 #[cfg(target_os = "macos")]
@@ -53,23 +56,27 @@ mod window;
 fn main() {
     use tauri::Manager;
 
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let runtime_handle = runtime.handle().clone();
     tauri::Builder::default()
-        .setup(|app| {
+        .setup(move |app| {
             let (shared, _) = model::Shared::new(
                 model::Settings::default(),
                 Default::default(),
                 Default::default(),
                 Default::default(),
             );
-            app.manage(shared);
-            platform::bar::create(app.handle())?;
+            let handle = app::App::new(app.handle().clone(), runtime_handle.clone(), shared);
+            app.manage(handle.clone());
+            verify_topics(&handle);
+            platform::bar::create(&handle)?;
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("build native regression app")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Ready) {
-                platform::bar::tests::verify_closed_menu_refresh(app);
+                platform::bar::tests::verify_closed_menu_refresh(&app.state::<app::App>());
                 println!("macos_bar: prices, settings and menu rows refresh without a click");
                 app.exit(0);
             }
@@ -78,3 +85,25 @@ fn main() {
 
 #[cfg(not(target_os = "macos"))]
 fn main() {}
+
+#[cfg(target_os = "macos")]
+fn verify_topics(app: &app::App) {
+    use app::Topic;
+
+    let topics = [
+        Topic::Settings,
+        Topic::Locale,
+        Topic::Portfolio,
+        Topic::Ths,
+        Topic::Update,
+        Topic::ChartInstrument,
+    ];
+    for topic in topics {
+        app.notify(topic);
+        let mut receiver = app.subscribe(topic);
+        assert_eq!(*receiver.borrow_and_update(), 1);
+        app.clone().notify(topic);
+        assert!(receiver.has_changed().unwrap());
+        assert_eq!(*receiver.borrow_and_update(), 2);
+    }
+}

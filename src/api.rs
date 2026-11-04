@@ -1,13 +1,12 @@
-//! IPC surface for the settings and chart windows.
+//! Operations for the settings and chart windows.
 
 use std::sync::atomic::Ordering;
 
-use serde::{Serialize, Serializer};
-use tauri::{AppHandle, Manager, State, WebviewWindow, ipc::Channel};
-use tokio::sync::oneshot;
+use crate::app::{App, Topic};
+use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 use crate::{
-    agent::{self, Agent, AgentStatus},
+    agent::{self, AgentStatus},
     bar,
     credentials::{self, ApiKey, CoinGeckoKey, LongbridgeKeys, ThsKey},
     i18n::{self, Locale},
@@ -31,35 +30,24 @@ pub enum CommandError {
     LoginItem(String),
     #[error(transparent)]
     Market(#[from] market::Error),
-    #[error(transparent)]
-    Tauri(#[from] tauri::Error),
+    #[error("{0}")]
+    Window(String),
 }
 
 fn save_failed(error: &std::io::Error) -> String {
     t!("error.saveFailed", error = error)
 }
 
-// The webview only needs a readable message.
-impl Serialize for CommandError {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
 type CmdResult<T> = Result<T, CommandError>;
 
-#[tauri::command]
-pub fn get_settings(shared: State<'_, Shared>) -> Settings {
+pub fn get_settings(app: &App) -> Settings {
+    let shared = app.shared();
     shared.model().settings.clone()
 }
 
 /// Validates, persists and applies settings; returns them normalized.
-#[tauri::command]
-pub fn save_settings(
-    app: AppHandle,
-    shared: State<'_, Shared>,
-    settings: Settings,
-) -> CmdResult<Settings> {
+pub fn save_settings(app: &App, settings: Settings) -> CmdResult<Settings> {
+    let shared = app.shared();
     let settings = settings.validated().map_err(CommandError::Invalid)?;
     model::save(&shared.settings_path, &settings)?;
     let before = {
@@ -71,12 +59,12 @@ pub fn save_settings(
         before
     };
     if settings.agent_access != before.agent_access {
-        agent::sync(&app);
+        agent::sync(app);
     }
     if settings.language != before.language {
         platform::remember_language(settings.language);
         i18n::set(settings.language.locale());
-        window::relabel(&app);
+        window::relabel(app);
     }
     let symbols = settings.symbols();
     shared.control.send_if_modified(|control| {
@@ -84,91 +72,69 @@ pub fn save_settings(
         control.symbols = symbols;
         changed
     });
-    bar::request_render(&app);
-    window::emit_settings(&app, &settings);
-    window::sync_chart(&app);
+    bar::request_render(app);
+    app.notify(Topic::Settings);
+    window::sync_chart(app);
     Ok(settings)
 }
 
 /// The language the app speaks now, for a page as it loads; `locale` events
 /// tell it of changes (`window::relabel`).
-#[tauri::command]
 pub fn get_locale() -> Locale {
     i18n::current()
 }
 
 /// Whether agents have the skill, as the settings window shows it.
-#[tauri::command]
-pub fn get_agent(agent: State<'_, Agent>) -> AgentStatus {
-    agent.status()
+pub fn get_agent(app: &App) -> AgentStatus {
+    app.agent().status()
 }
 
-#[tauri::command]
 pub fn get_login_item() -> bool {
     platform::login_item_enabled()
 }
 
-#[tauri::command]
 pub fn set_login_item(enabled: bool) -> CmdResult<bool> {
     platform::set_login_item(enabled).map_err(CommandError::LoginItem)?;
     Ok(platform::login_item_enabled())
 }
 
-#[tauri::command]
-pub fn get_update(app: AppHandle) -> UpdateView {
-    update::view(&app)
+pub fn get_update(app: &App) -> UpdateView {
+    update::view(app)
 }
 
 /// Starts a check; the result arrives as `update` events.
-#[tauri::command]
-pub fn check_update(app: AppHandle) {
-    update::check_now(&app);
+pub fn check_update(app: &App) {
+    update::check_now(app);
 }
 
-#[tauri::command]
-pub fn restart_to_update(app: AppHandle) {
-    update::restart_now(&app);
-}
-
-/// The page has content; now its window can appear without a blank flash.
-#[tauri::command]
-pub fn window_ready(window: WebviewWindow) -> CmdResult<()> {
-    window.show()?;
-    platform::window::bring_to_front(&window);
-    Ok(())
+pub fn restart_to_update(app: &App) {
+    update::restart_now(app);
 }
 
 /// Instruments matching the query: pairs on the exchange picked, stocks,
 /// and pools.
-#[tauri::command]
-pub async fn search_instruments(app: AppHandle, query: String) -> Search {
-    let exchange = app.state::<Shared>().model().settings.exchange;
+pub async fn search_instruments(app: &App, query: String) -> Search {
+    let exchange = app.shared().model().settings.exchange;
     market::search(exchange, &query).await
 }
 
 /// The Longbridge credentials as the settings window shows them.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LongbridgeView {
     /// The app key's ends, enough to recognize it; the secrets never leave.
-    app_key: Option<String>,
-    account: Option<longbridge::Account>,
+    pub app_key: Option<String>,
+    pub account: Option<longbridge::Account>,
 }
 
-#[tauri::command]
-pub fn get_longbridge(shared: State<'_, Shared>) -> LongbridgeView {
+pub fn get_longbridge(app: &App) -> LongbridgeView {
+    let shared = app.shared();
     let keys = shared.credentials().longbridge.clone();
     let account = keys.as_ref().and_then(|_| longbridge::last_account());
     LongbridgeView { app_key: keys.map(|keys| masked(&keys.app_key)), account }
 }
 
 /// Saves (or with `None`, removes) the Longbridge credentials.
-#[tauri::command]
-pub fn set_longbridge(
-    app: AppHandle,
-    shared: State<'_, Shared>,
-    keys: Option<LongbridgeKeys>,
-) -> CmdResult<LongbridgeView> {
+pub fn set_longbridge(app: &App, keys: Option<LongbridgeKeys>) -> CmdResult<LongbridgeView> {
+    let shared = app.shared();
     let keys = keys
         .map(|keys| {
             let clean = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
@@ -195,30 +161,27 @@ pub fn set_longbridge(
     };
     longbridge::forget_account();
     shared.control.send_modify(|control| control.credentials = credentials);
-    bar::request_render(&app);
-    Ok(get_longbridge(shared))
+    bar::request_render(app);
+    Ok(get_longbridge(app))
 }
 
 /// Logs in with the saved credentials (unless already logged in) and
 /// returns what the account may see.
-#[tauri::command]
 pub async fn check_longbridge() -> CmdResult<longbridge::Account> {
     Ok(longbridge::account().await?)
 }
 
 /// Tonghuashun as the settings window shows it: the key, the account whose
 /// watchlist the dropdown shows, and a QR sign-in under way.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ThsView {
     /// The key's ends, enough to recognize it; the key never leaves.
-    key: Option<String>,
-    account: Option<ths::AccountView>,
-    sign_in: Option<ths::SignIn>,
+    pub key: Option<String>,
+    pub account: Option<ths::AccountView>,
+    pub sign_in: Option<ths::SignIn>,
 }
 
-#[tauri::command]
-pub fn get_ths(shared: State<'_, Shared>) -> ThsView {
+pub fn get_ths(app: &App) -> ThsView {
+    let shared = app.shared();
     let credentials = shared.credentials().clone();
     let model = shared.model();
     ThsView {
@@ -229,34 +192,30 @@ pub fn get_ths(shared: State<'_, Shared>) -> ThsView {
 }
 
 /// Starts a QR sign-in; its code and how it ends arrive as `ths` events.
-#[tauri::command]
-pub fn ths_sign_in(app: AppHandle) {
-    ths::sign_in(&app);
+pub fn ths_sign_in(app: &App) {
+    ths::sign_in(app);
 }
 
-#[tauri::command]
-pub fn ths_sign_in_cancel(app: AppHandle) {
+pub fn ths_sign_in_cancel(app: &App) {
     ths::cancel_sign_in();
-    window::emit_ths(&app);
+    app.notify(Topic::Ths);
 }
 
-#[tauri::command]
-pub fn ths_sign_out(app: AppHandle) -> ThsView {
-    ths::sign_out(&app);
-    get_ths(app.state::<Shared>())
+pub fn ths_sign_out(app: &App) -> ThsView {
+    ths::sign_out(app);
+    get_ths(app)
 }
 
 /// Saves (or with `None`, removes) the Tonghuashun key, once Tonghuashun
 /// takes it.
-#[tauri::command]
-pub async fn set_ths(app: AppHandle, key: Option<String>) -> CmdResult<ThsView> {
+pub async fn set_ths(app: &App, key: Option<String>) -> CmdResult<ThsView> {
     let key = key
         .map(|key| key.chars().filter(|c| !c.is_whitespace()).collect::<String>())
         .filter(|key| !key.is_empty());
     if let Some(key) = &key {
         ths::check(key).await?;
     }
-    let shared = app.state::<Shared>();
+    let shared = app.shared();
     {
         let mut stored = shared.credentials();
         stored.ths = key.clone().map(|key| ThsKey { key });
@@ -265,22 +224,20 @@ pub async fn set_ths(app: AppHandle, key: Option<String>) -> CmdResult<ThsView> 
         shared.control.send_modify(|control| control.credentials = credentials);
     }
     ths::configure(key.clone());
-    bar::request_render(&app);
-    Ok(get_ths(shared))
+    bar::request_render(app);
+    Ok(get_ths(app))
 }
 
 /// The CoinGecko key as the settings window shows it.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CoinGeckoView {
     /// The key's ends, enough to recognize it; the key never leaves.
-    key: Option<String>,
+    pub key: Option<String>,
     /// What the key is, once probed.
-    access: Option<dexscreener::Access>,
+    pub access: Option<dexscreener::Access>,
 }
 
-#[tauri::command]
-pub fn get_coingecko(shared: State<'_, Shared>) -> CoinGeckoView {
+pub fn get_coingecko(app: &App) -> CoinGeckoView {
+    let shared = app.shared();
     let key = shared.credentials().coingecko.clone();
     CoinGeckoView {
         access: key.as_ref().and_then(|_| dexscreener::coingecko_access()),
@@ -290,8 +247,7 @@ pub fn get_coingecko(shared: State<'_, Shared>) -> CoinGeckoView {
 
 /// Saves (or with `None`, removes) the CoinGecko key, once CoinGecko says
 /// what it is.
-#[tauri::command]
-pub async fn set_coingecko(app: AppHandle, key: Option<String>) -> CmdResult<CoinGeckoView> {
+pub async fn set_coingecko(app: &App, key: Option<String>) -> CmdResult<CoinGeckoView> {
     let key = key
         .map(|key| key.chars().filter(|c| !c.is_whitespace()).collect::<String>())
         .filter(|key| !key.is_empty());
@@ -299,7 +255,7 @@ pub async fn set_coingecko(app: AppHandle, key: Option<String>) -> CmdResult<Coi
         Some(key) => Some(dexscreener::coingecko_check(key).await?),
         None => None,
     };
-    let shared = app.state::<Shared>();
+    let shared = app.shared();
     {
         let mut stored = shared.credentials();
         stored.coingecko = key.clone().map(|key| CoinGeckoKey { key });
@@ -312,8 +268,8 @@ pub async fn set_coingecko(app: AppHandle, key: Option<String>) -> CmdResult<Coi
 }
 
 /// Asks CoinGecko again what the saved key is (its plan's usage moves).
-#[tauri::command]
-pub async fn check_coingecko(shared: State<'_, Shared>) -> CmdResult<dexscreener::Access> {
+pub async fn check_coingecko(app: &App) -> CmdResult<dexscreener::Access> {
+    let shared = app.shared();
     let key = shared.credentials().coingecko.clone();
     let key =
         key.ok_or_else(|| CommandError::Invalid(t!("error.coingeckoKeyMissing").to_owned()))?;
@@ -321,17 +277,15 @@ pub async fn check_coingecko(shared: State<'_, Shared>) -> CmdResult<dexscreener
 }
 
 /// An exchange's API key as the settings window shows it.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ExchangeKey {
-    exchange: ProviderId,
+    pub exchange: ProviderId,
     /// The key's ends, enough to recognize it, when one is saved; the secrets
     /// never leave.
-    key: Option<String>,
+    pub key: Option<String>,
 }
 
-#[tauri::command]
-pub fn get_exchange_keys(shared: State<'_, Shared>) -> Vec<ExchangeKey> {
+pub fn get_exchange_keys(app: &App) -> Vec<ExchangeKey> {
+    let shared = app.shared();
     let credentials = shared.credentials();
     ProviderId::EXCHANGES
         .map(|exchange| ExchangeKey {
@@ -343,9 +297,8 @@ pub fn get_exchange_keys(shared: State<'_, Shared>) -> Vec<ExchangeKey> {
 
 /// Saves (or with `None`, removes) an exchange's API key, once the exchange
 /// confirms it works.
-#[tauri::command]
 pub async fn set_exchange_key(
-    app: AppHandle,
+    app: &App,
     exchange: ProviderId,
     key: Option<ApiKey>,
 ) -> CmdResult<Vec<ExchangeKey>> {
@@ -379,7 +332,7 @@ pub async fn set_exchange_key(
     if let Some(key) = &key {
         market::check_key(exchange, key).await?;
     }
-    let shared = app.state::<Shared>();
+    let shared = app.shared();
     let credentials = {
         let mut stored = shared.credentials();
         match key {
@@ -390,23 +343,21 @@ pub async fn set_exchange_key(
         stored.clone()
     };
     shared.control.send_modify(|control| control.credentials = credentials);
-    Ok(get_exchange_keys(shared))
+    Ok(get_exchange_keys(app))
 }
 
-#[tauri::command]
-pub fn get_portfolio(shared: State<'_, Shared>) -> Portfolio {
+pub fn get_portfolio(app: &App) -> Portfolio {
+    let shared = app.shared();
     Portfolio::of(&shared.model().accounts)
 }
 
-#[tauri::command]
-pub fn open_holdings(app: AppHandle) -> CmdResult<()> {
-    window::open_holdings(&app)?;
+pub fn open_holdings(app: &App) -> CmdResult<()> {
+    window::open_holdings(app).map_err(|e| CommandError::Window(e.to_string()))?;
     Ok(())
 }
 
-#[tauri::command]
-pub fn open_settings(app: AppHandle) -> CmdResult<()> {
-    window::open_settings(&app)?;
+pub fn open_settings(app: &App) -> CmdResult<()> {
+    window::open_settings(app).map_err(|e| CommandError::Window(e.to_string()))?;
     Ok(())
 }
 
@@ -422,83 +373,75 @@ fn masked(key: &str) -> String {
 }
 
 /// The instrument id the chart window should show.
-#[tauri::command]
-pub fn get_chart_instrument(shared: State<'_, Shared>) -> Option<String> {
+pub fn get_chart_instrument(app: &App) -> Option<String> {
+    let shared = app.shared();
     shared.model().chart.clone()
 }
 
 /// Shows the instrument `id` in the chart window (switching it if already open).
-#[tauri::command]
-pub fn open_chart(app: AppHandle, id: String) -> CmdResult<()> {
-    window::open_chart(&app, &id)?;
+pub fn open_chart(app: &App, id: String) -> CmdResult<()> {
+    window::open_chart(app, &id).map_err(|e| CommandError::Window(e.to_string()))?;
     Ok(())
 }
 
 /// The instrument `id` names, for a chart of one outside the watchlist (the
 /// synced Tonghuashun watchlist's).
-#[tauri::command]
-pub fn chart_instrument(shared: State<'_, Shared>, id: String) -> CmdResult<Instrument> {
-    instrument(&shared, &id)
+pub fn chart_instrument(app: &App, id: String) -> CmdResult<Instrument> {
+    let shared = app.shared();
+    instrument(shared, &id)
 }
 
-#[tauri::command]
-pub fn chart_spec(shared: State<'_, Shared>, id: String) -> CmdResult<ChartSpec> {
-    let instrument = instrument(&shared, &id)?;
+pub fn chart_spec(app: &App, id: String) -> CmdResult<ChartSpec> {
+    let shared = app.shared();
+    let instrument = instrument(shared, &id)?;
     Ok(instrument.provider.provider().chart_spec(&instrument))
 }
 
-#[tauri::command]
 pub async fn chart_history(
-    shared: State<'_, Shared>,
+    app: &App,
     id: String,
     interval: u32,
     end: Option<f64>,
     limit: usize,
 ) -> CmdResult<Vec<Candle>> {
-    let instrument = instrument(&shared, &id)?;
+    let shared = app.shared();
+    let instrument = instrument(shared, &id)?;
     Ok(instrument.provider.provider().history(&instrument, interval, end, limit).await?)
 }
 
-#[tauri::command]
-pub async fn chart_trades(
-    shared: State<'_, Shared>,
-    id: String,
-    limit: usize,
-) -> CmdResult<Vec<Trade>> {
-    let instrument = instrument(&shared, &id)?;
+pub async fn chart_trades(app: &App, id: String, limit: usize) -> CmdResult<Vec<Trade>> {
+    let shared = app.shared();
+    let instrument = instrument(shared, &id)?;
     Ok(instrument.provider.provider().recent_trades(&instrument, limit).await?)
 }
 
 /// Starts streaming `id` into `events`; returns a handle for `chart_stream_stop`.
-#[tauri::command]
-pub fn chart_stream(
-    app: AppHandle,
-    shared: State<'_, Shared>,
-    id: String,
-    events: Channel<LiveEvent>,
-) -> CmdResult<u32> {
-    let instrument = instrument(&shared, &id)?;
+pub fn chart_stream(app: &App, id: String, events: UnboundedSender<LiveEvent>) -> CmdResult<u32> {
+    let shared = app.shared();
+    let instrument = instrument(shared, &id)?;
     let (stop, stopped) = oneshot::channel();
     let handle = shared.next_stream.fetch_add(1, Ordering::Relaxed);
     shared.streams.lock().unwrap_or_else(|e| e.into_inner()).insert(handle, stop);
     let stream = instrument.provider.provider().stream(instrument, stopped, events);
-    tauri::async_runtime::spawn(async move {
+    let app = app.clone();
+    let task_app = app.clone();
+    app.spawn(async move {
         stream.await;
         // A stream also ends on its own once its page is gone.
-        app.state::<Shared>().streams.lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
+        task_app.shared().streams.lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
     });
     Ok(handle)
 }
 
-#[tauri::command]
-pub fn chart_stream_stop(shared: State<'_, Shared>, handle: u32) {
+pub fn chart_stream_stop(app: &App, handle: u32) {
+    let shared = app.shared();
     shared.streams.lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
 }
 
 /// Opens the instrument's page on its provider's website in the browser.
-#[tauri::command]
-pub fn open_link(shared: State<'_, Shared>, id: String) -> CmdResult<()> {
-    let instrument = instrument(&shared, &id)?;
+pub fn open_link(app: &App, id: String) -> CmdResult<()> {
+    let shared = app.shared();
+    let instrument = instrument(shared, &id)?;
     if let Some(link) = instrument.provider.provider().chart_spec(&instrument).link {
         platform::open_url(&link);
     }

@@ -1,15 +1,16 @@
 //! Repro from the 0.7.0 macOS tray freeze, 2026-09-27.
 
+use crate::app::App;
+
 use super::*;
 
-pub(crate) fn verify_closed_menu_refresh(app: &AppHandle) {
-    use crate::model::{Quote, Shared};
-    use tauri::Manager;
+pub(crate) fn verify_closed_menu_refresh(app: &App) {
+    use crate::model::Quote;
 
     // Repro: 0.7.0 froze prices and display settings until the tray was
     // clicked. All assertions inspect AppKit while its menu is detached.
     let mtm = MainThreadMarker::new().unwrap();
-    let shared = app.state::<Shared>();
+    let shared = app.shared();
     let button = UI.with_borrow(|ui| {
         // UX contract: the update entry exists before any update is found.
         let menu = ui.as_ref().unwrap().menu.as_ref().unwrap();
@@ -81,19 +82,17 @@ pub(crate) fn verify_closed_menu_refresh(app: &AppHandle) {
 
 /// An exchange account leads the menu with the total and a submenu of what
 /// it holds; both update in place, and the total can take the bar.
-fn verify_holdings_menu(app: &AppHandle) {
+fn verify_holdings_menu(app: &App) {
     use crate::{
         format,
         i18n::{self, Locale},
         market::ProviderId,
-        model::Shared,
         portfolio::{self, Balance, Price, Wallet},
     };
     use std::collections::HashMap;
-    use tauri::Manager;
 
     let mtm = MainThreadMarker::new().unwrap();
-    let shared = app.state::<Shared>();
+    let shared = app.shared();
     let button = UI
         .with_borrow(|ui| ui.as_ref().unwrap().status_item.as_ref().unwrap().button(mtm).unwrap());
     let holdings = |btc: f64| {
@@ -195,15 +194,14 @@ fn verify_holdings_menu(app: &AppHandle) {
 /// Signed in to a Tonghuashun account: a row after the watchlist whose
 /// submenu is the watchlist there, then a submenu per group of the user's,
 /// all with quotes that update in place.
-fn verify_synced_menu(app: &AppHandle) {
+fn verify_synced_menu(app: &App) {
     use crate::{
         format,
         market::ProviderId,
-        model::{Quote, Shared, SyncStatus, Synced, SyncedGroup},
+        model::{Quote, SyncStatus, Synced, SyncedGroup},
     };
-    use tauri::Manager;
 
-    let shared = app.state::<Shared>();
+    let shared = app.shared();
     let moutai = Instrument {
         provider: ProviderId::Ths,
         symbol: "600519.SH".into(),

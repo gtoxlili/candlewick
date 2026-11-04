@@ -20,10 +20,10 @@ use std::{
     time::Duration,
 };
 
+use crate::app::App;
 use flate2::read::GzDecoder;
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as _;
-use tauri::{AppHandle, Manager};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     time::{Instant, sleep, timeout},
@@ -39,7 +39,7 @@ use crate::{
     bar,
     credentials::{self, LongbridgeKeys},
     market::{self, Error, ProviderId},
-    model::{FeedControl, Quote, Session, Shared, Status},
+    model::{FeedControl, Quote, Session, Status},
     net,
 };
 
@@ -89,7 +89,7 @@ static COMMANDS: LazyLock<Commands> = LazyLock::new(|| {
 });
 static ACCOUNT: Mutex<Option<Account>> = Mutex::new(None);
 
-pub(super) async fn run(app: AppHandle, control: watch::Receiver<FeedControl>) {
+pub(super) async fn run(app: App, control: watch::Receiver<FeedControl>) {
     let Some(rx) = COMMANDS.rx.lock().unwrap_or_else(|e| e.into_inner()).take() else {
         return;
     };
@@ -200,7 +200,7 @@ struct Tracked {
 }
 
 struct Service {
-    app: AppHandle,
+    app: App,
     control: watch::Receiver<FeedControl>,
     commands: mpsc::UnboundedReceiver<Command>,
     watchers: HashMap<u64, (String, mpsc::UnboundedSender<Push>)>,
@@ -438,7 +438,7 @@ impl Service {
         match api::refresh_token(keys, api::now() + TOKEN_LIFETIME).await {
             Ok(token) => {
                 let renewed = LongbridgeKeys { access_token: token, ..keys.clone() };
-                let shared = self.app.state::<Shared>();
+                let shared = self.app.shared();
                 let mut stored = shared.credentials();
                 stored.longbridge = Some(renewed.clone());
                 if let Err(e) = credentials::save(&shared.credentials_path, &stored) {
@@ -762,7 +762,7 @@ impl Service {
     fn store(&self, symbol: &str, last: f64, reference: f64, session: i32) -> bool {
         let quote = Quote { last, open: reference, session: session_of(session) };
         let id = market::instrument_id(PROVIDER, symbol);
-        let shared = self.app.state::<Shared>();
+        let shared = self.app.shared();
         let mut model = shared.model();
         if !model.settings.watchlist.iter().any(|i| i.provider == PROVIDER && i.symbol == symbol) {
             return false;

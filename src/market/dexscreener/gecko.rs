@@ -22,7 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::{
     calendar, http,
@@ -54,8 +54,7 @@ const PLAN_RESTRICTED: u32 = 10005;
 const PRO_KEY_ON_DEMO_HOST: u32 = 10010;
 
 /// What a CoinGecko key turned out to be.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase", tag = "tier")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Access {
     /// A Demo key: 100 calls a minute and 10,000 a month, which it can't report.
     Demo,
@@ -63,7 +62,7 @@ pub enum Access {
     Paid(Plan),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Plan {
     /// `Basic`, `Analyst`, `Lite`, `Pro`…
@@ -645,7 +644,6 @@ mod tests {
             (refusal.status.error_code, refusal.status.error_message.as_str()),
             (10011, "wrong host")
         );
-        assert_eq!(serde_json::to_string(&Access::Demo).unwrap(), r#"{"tier":"demo"}"#);
     }
 
     // A key goes its way once known; a paid plan near its credit's end polls the public way.

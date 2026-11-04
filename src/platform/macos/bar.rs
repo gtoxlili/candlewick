@@ -4,6 +4,8 @@
 //! one pass there per burst of updates, and that pass only touches AppKit for
 //! strings that changed.
 
+use crate::app::App;
+
 use std::cell::RefCell;
 
 use objc2::{AnyThread, MainThreadMarker, rc::Retained};
@@ -14,7 +16,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSDictionary, NSMutableAttributedString, NSRange, NSString};
 use tauri::{
-    ActivationPolicy, AppHandle, Wry,
+    ActivationPolicy, Manager, Wry,
     image::Image,
     menu::MenuEvent,
     tray::{MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
@@ -161,21 +163,21 @@ struct Columns {
 
 /// Creates the status item and makes this a menu bar app: no Dock icon or app
 /// menu until a window opens. Must run on the main thread (Tauri's `setup`).
-pub fn create(app: &AppHandle) -> tauri::Result<()> {
-    app.set_activation_policy(ActivationPolicy::Accessory)?;
+pub fn create(app: &App) -> tauri::Result<()> {
+    app.handle().set_activation_policy(ActivationPolicy::Accessory)?;
     let tray = TrayIconBuilder::new()
         .icon(template_icon())
         .icon_as_template(true)
         .tooltip("Candlewick")
         .show_menu_on_left_click(true)
-        .on_menu_event(on_menu_event)
+        .on_menu_event(|handle, event| on_menu_event(&handle.state::<App>(), event))
         // The dropdown opens on the press.
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button_state: MouseButtonState::Down, .. } = event {
-                bar::menu_opening(tray.app_handle());
+                bar::menu_opening(&tray.app_handle().state::<App>());
             }
         })
-        .build(app)?;
+        .build(app.handle())?;
 
     // This callback runs inline on the main thread. Both handles refer to
     // the same tray; native menu ownership stays on this thread.
@@ -213,15 +215,15 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// Queues a render on the main thread; false if the event loop is gone.
-pub fn schedule_render(app: &AppHandle) -> bool {
+pub fn schedule_render(app: &App) -> bool {
     let handle = app.clone();
-    app.run_on_main_thread(move || render(&handle)).is_ok()
+    app.handle().run_on_main_thread(move || render(&handle)).is_ok()
 }
 
 /// Nothing to tear down: the status item goes with the process.
 pub fn shutdown() {}
 
-fn render(app: &AppHandle) {
+fn render(app: &App) {
     let view = bar::view(app);
     UI.with_borrow_mut(|ui| {
         if let Some(ui) = ui
@@ -706,7 +708,7 @@ fn add_headers(submenu: &NSMenu, holdings: &Holdings, mtm: MainThreadMarker) {
     }
 }
 
-fn on_menu_event(app: &AppHandle, event: MenuEvent) {
+fn on_menu_event(app: &App, event: MenuEvent) {
     let action = match event.id().as_ref() {
         ID_HOLDINGS | ID_HOLDINGS_ROW => Action::Holdings,
         ID_SETTINGS => Action::Settings,

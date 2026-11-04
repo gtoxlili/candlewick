@@ -18,8 +18,8 @@ pub mod ths;
 
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
+use crate::app::App;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, ipc::Channel};
 use tokio::sync::{oneshot, watch};
 
 use self::crypto::account::Account;
@@ -27,7 +27,7 @@ use crate::{
     bar,
     credentials::ApiKey,
     http,
-    model::{FeedControl, Instrument, Shared, Status},
+    model::{FeedControl, Instrument, Status},
 };
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -108,14 +108,11 @@ pub async fn search(exchange: ProviderId, query: &str) -> Search {
 
 /// Keeps the holdings of each exchange with an API key current, for as
 /// long as the app runs.
-pub fn watch_accounts(app: &AppHandle, control: &watch::Receiver<FeedControl>) {
+pub fn watch_accounts(app: &App, control: &watch::Receiver<FeedControl>) {
     let (app, control) = (app.clone(), control.clone());
-    tauri::async_runtime::spawn(crypto::account::run::<binance::Binance>(
-        app.clone(),
-        control.clone(),
-    ));
-    tauri::async_runtime::spawn(crypto::account::run::<bybit::Bybit>(app.clone(), control.clone()));
-    tauri::async_runtime::spawn(crypto::account::run::<okx::Okx>(app, control));
+    app.spawn(crypto::account::run::<binance::Binance>(app.clone(), control.clone()));
+    app.spawn(crypto::account::run::<bybit::Bybit>(app.clone(), control.clone()));
+    app.spawn(crypto::account::run::<okx::Okx>(app.clone(), control));
 }
 
 /// Asks `exchange` whether `key` works.
@@ -160,11 +157,7 @@ pub trait Provider: Send + Sync {
 
     /// Keeps the quotes and feed status of this provider's watchlist entries
     /// current for as long as the app runs, following `control`.
-    fn watch(
-        &self,
-        app: AppHandle,
-        control: watch::Receiver<FeedControl>,
-    ) -> BoxFuture<'static, ()>;
+    fn watch(&self, app: App, control: watch::Receiver<FeedControl>) -> BoxFuture<'static, ()>;
 
     /// What the chart window offers for `instrument`.
     fn chart_spec(&self, instrument: &Instrument) -> ChartSpec;
@@ -193,7 +186,7 @@ pub trait Provider: Send + Sync {
         &self,
         instrument: Instrument,
         stop: oneshot::Receiver<()>,
-        events: Channel<LiveEvent>,
+        events: tokio::sync::mpsc::UnboundedSender<LiveEvent>,
     ) -> BoxFuture<'static, ()>;
 }
 
@@ -220,8 +213,7 @@ impl Error {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default)]
 pub struct Search {
     pub candidates: Vec<Candidate>,
     /// Why results may be missing, e.g. a list that could not be loaded.
@@ -229,10 +221,8 @@ pub struct Search {
 }
 
 /// A search result: a watchlist entry, not yet pinned.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct Candidate {
-    #[serde(flatten)]
     pub instrument: Instrument,
     /// Taken from the typed text because the instrument list was unavailable.
     pub manual: bool,
@@ -242,8 +232,7 @@ pub struct Candidate {
 
 /// What the chart window offers for an instrument: data, not text; the page
 /// names it in its own language.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ChartSpec {
     pub source: ProviderId,
     pub intervals: Vec<IntervalSpec>,
@@ -267,8 +256,7 @@ pub struct ChartSpec {
     pub link: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy)]
 pub enum StatsSpan {
     /// The last 24 hours, as crypto counts a day.
     Rolling24h,
@@ -276,8 +264,7 @@ pub enum StatsSpan {
     Today,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy)]
 pub struct IntervalSpec {
     pub secs: u32,
     /// How the chart first shows it.
@@ -289,8 +276,7 @@ pub struct IntervalSpec {
     pub regular_only: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy)]
 pub enum ChartMode {
     Line,
     Candle,
@@ -365,16 +351,14 @@ pub struct Trade {
     pub extended: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedState {
     Connecting,
     Live,
     Offline,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub enum LiveEvent {
     State {
         state: FeedState,
@@ -421,9 +405,9 @@ pub async fn changed(
 }
 
 /// Records a provider's feed status for the bar.
-pub fn set_status(app: &AppHandle, provider: ProviderId, status: Status) {
+pub fn set_status(app: &App, provider: ProviderId, status: Status) {
     {
-        let shared = app.state::<Shared>();
+        let shared = app.shared();
         let mut model = shared.model();
         let feed = model.feeds.entry(provider).or_default();
         if feed.status == status {

@@ -15,25 +15,23 @@ use std::{
     sync::Mutex,
 };
 
+use crate::app::{App, Topic};
 use ring::rand::{SecureRandom, SystemRandom};
-use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
 use tokio::{net::TcpListener, sync::oneshot};
 
-use crate::{credentials, model::Shared, sign, window};
+use crate::{credentials, sign};
 
 /// Where the API listens unless another program holds it.
 const PORT: u16 = 52733;
-const STATUS_EVENT: &str = "agent";
 
 /// What the settings window shows under the switch.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct AgentStatus {
     /// Access has been turned on (the switch may lead it by a moment).
-    on: bool,
+    pub on: bool,
     /// The agents that have the skill.
-    agents: Vec<&'static str>,
-    error: Option<String>,
+    pub agents: Vec<&'static str>,
+    pub error: Option<String>,
 }
 
 #[derive(Default)]
@@ -59,28 +57,26 @@ impl Agent {
 }
 
 /// Starts or stops access to follow the settings.
-pub fn sync(app: &AppHandle) {
+pub fn sync(app: &App) {
     let app = app.clone();
-    tauri::async_runtime::spawn(async move { apply(&app).await });
+    app.clone().spawn(async move { apply(&app).await });
 }
 
-async fn apply(app: &AppHandle) {
-    let agent = app.state::<Agent>();
+async fn apply(app: &App) {
+    let agent = app.agent();
     let _applying = agent.applying.lock().await;
-    let on = app.state::<Shared>().model().settings.agent_access;
-    let status = if on { start(app, &agent).await } else { stop(app, &agent) };
-    *agent.status.lock().unwrap_or_else(|e| e.into_inner()) = status.clone();
-    if app.get_webview_window(window::SETTINGS).is_some() {
-        let _ = app.emit_to(window::SETTINGS, STATUS_EVENT, &status);
-    }
+    let on = app.shared().model().settings.agent_access;
+    let status = if on { start(app, agent).await } else { stop(agent) };
+    *agent.status.lock().unwrap_or_else(|e| e.into_inner()) = status;
+    app.notify(Topic::Settings);
 }
 
-async fn start(app: &AppHandle, agent: &Agent) -> AgentStatus {
+async fn start(app: &App, agent: &Agent) -> AgentStatus {
     let failed = |error: String| AgentStatus { on: true, agents: Vec::new(), error: Some(error) };
-    let (Ok(config), Ok(home)) = (app.path().app_config_dir(), app.path().home_dir()) else {
+    let Some(home) = dirs::home_dir() else {
         return failed(t!("error.noConfigDir").to_owned());
     };
-    let token_path = config.join("agent-token");
+    let token_path = crate::app::config_dir().join("agent-token");
     let running = agent
         .server
         .lock()
@@ -109,7 +105,7 @@ async fn start(app: &AppHandle, agent: &Agent) -> AgentStatus {
 
 /// A server with a token of its own (one taken from an earlier run is
 /// worthless), on the usual port or any free one. Returns its port.
-async fn start_server(app: &AppHandle, agent: &Agent, token_path: &Path) -> io::Result<u16> {
+async fn start_server(app: &App, agent: &Agent, token_path: &Path) -> io::Result<u16> {
     let mut bytes = [0u8; 32];
     SystemRandom::new().fill(&mut bytes).map_err(|_| io::Error::other("no randomness"))?;
     let token = sign::hex(&bytes);
@@ -118,10 +114,10 @@ async fn start_server(app: &AppHandle, agent: &Agent, token_path: &Path) -> io::
     Ok(serve(app, agent, listener, token))
 }
 
-fn stop(app: &AppHandle, agent: &Agent) -> AgentStatus {
+fn stop(agent: &Agent) -> AgentStatus {
     // Dropping the sender stops the server.
     agent.server.lock().unwrap_or_else(|e| e.into_inner()).take();
-    if let Ok(home) = app.path().home_dir() {
+    if let Some(home) = dirs::home_dir() {
         skill::uninstall(&home);
     }
     AgentStatus::default()
@@ -129,10 +125,10 @@ fn stop(app: &AppHandle, agent: &Agent) -> AgentStatus {
 
 /// The app is quitting: the skill goes with the API, so agents only ever
 /// see it while it can be called. The next launch puts it back.
-pub fn shutdown(app: &AppHandle) {
-    let running = app.state::<Agent>().server.lock().unwrap_or_else(|e| e.into_inner()).take();
+pub fn shutdown(app: &App) {
+    let running = app.agent().server.lock().unwrap_or_else(|e| e.into_inner()).take();
     if running.is_some()
-        && let Ok(home) = app.path().home_dir()
+        && let Some(home) = dirs::home_dir()
     {
         skill::uninstall(&home);
     }
@@ -151,11 +147,11 @@ async fn listen() -> io::Result<TcpListener> {
 }
 
 /// Serves the API on `listener` until stopped; returns its port.
-fn serve(app: &AppHandle, agent: &Agent, listener: TcpListener, token: String) -> u16 {
+fn serve(app: &App, agent: &Agent, listener: TcpListener, token: String) -> u16 {
     let port = listener.local_addr().map_or(PORT, |a| a.port());
     let router = api::router(app.clone(), port, &token);
     let (stop, stopped) = oneshot::channel::<()>();
-    tauri::async_runtime::spawn(async move {
+    app.clone().spawn(async move {
         let serving = axum::serve(listener, router).with_graceful_shutdown(async {
             let _ = stopped.await;
         });

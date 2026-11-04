@@ -21,7 +21,7 @@ mod quotes;
 mod screener;
 mod stream;
 
-use tauri::{AppHandle, ipc::Channel};
+use crate::app::App;
 use tokio::sync::{oneshot, watch};
 
 pub use self::gecko::Access;
@@ -110,11 +110,7 @@ impl Provider for DexScreener {
         Box::pin(search(query))
     }
 
-    fn watch(
-        &self,
-        app: AppHandle,
-        control: watch::Receiver<FeedControl>,
-    ) -> BoxFuture<'static, ()> {
+    fn watch(&self, app: App, control: watch::Receiver<FeedControl>) -> BoxFuture<'static, ()> {
         Box::pin(quotes::run(app, control))
     }
 
@@ -185,9 +181,17 @@ impl Provider for DexScreener {
         &self,
         instrument: Instrument,
         stop: oneshot::Receiver<()>,
-        events: Channel<LiveEvent>,
+        events: tokio::sync::mpsc::UnboundedSender<LiveEvent>,
     ) -> BoxFuture<'static, ()> {
-        Box::pin(stream::run(instrument, stop, events))
+        Box::pin(async move {
+            let closed = events.clone();
+            let (_keep, inner_stop) = oneshot::channel();
+            tokio::select! {
+                _ = stop => {},
+                () = closed.closed() => {},
+                () = stream::run(instrument, inner_stop, events) => {},
+            }
+        })
     }
 }
 

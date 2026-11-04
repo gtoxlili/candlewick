@@ -7,7 +7,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tauri::ipc::Channel;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::{sync::oneshot, time::sleep};
 
 use super::{POLL, api, session};
@@ -27,7 +27,7 @@ const NEW_DAY: f64 = 0.5;
 pub(super) async fn run(
     instrument: Instrument,
     mut stop: oneshot::Receiver<()>,
-    events: Channel<LiveEvent>,
+    events: UnboundedSender<LiveEvent>,
 ) {
     let symbol = instrument.symbol;
     if !send(&events, LiveEvent::State { state: FeedState::Connecting }) {
@@ -150,7 +150,7 @@ fn now_secs() -> f64 {
 }
 
 /// False once the window is gone.
-fn send(events: &Channel<LiveEvent>, event: LiveEvent) -> bool {
+fn send(events: &UnboundedSender<LiveEvent>, event: LiveEvent) -> bool {
     events.send(event).is_ok()
 }
 

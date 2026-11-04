@@ -24,7 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tauri::AppHandle;
+use crate::app::App;
 use windows::{
     Win32::{
         Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
@@ -109,7 +109,7 @@ thread_local! {
 }
 
 struct Shell {
-    app: AppHandle,
+    app: App,
     window: HWND,
     notify: NotifyIcon,
     ticker: TaskbarTicker,
@@ -126,7 +126,7 @@ struct Shell {
 }
 
 /// Starts the shell thread and waits until its window exists.
-pub fn start(app: &AppHandle) -> io::Result<()> {
+pub fn start(app: &App) -> io::Result<()> {
     let (ready, created) = mpsc::sync_channel(1);
     let app = app.clone();
     let handle = thread::Builder::new().name("candlewick-shell".to_owned()).spawn(move || {
@@ -185,7 +185,7 @@ pub fn on_pause(on_change: Box<dyn Fn(Pause, bool) + Send + Sync>) {
     let _ = ON_PAUSE.set(on_change);
 }
 
-fn create(app: AppHandle) -> io::Result<()> {
+fn create(app: App) -> io::Result<()> {
     // SAFETY: registers our classes and creates a hidden top-level window
     // (not message-only: those miss broadcasts such as TaskbarCreated).
     let (instance, window) = unsafe {
@@ -445,10 +445,8 @@ fn open_menu(at: POINT, exclude: Option<RECT>, from_ticker: bool) -> bool {
 }
 
 /// Window work belongs to the main thread; this one never waits for it.
-fn on_main(app: &AppHandle, task: impl FnOnce() + Send + 'static) {
-    if let Err(e) = app.run_on_main_thread(task) {
-        log::error!("cannot reach the main thread: {e}");
-    }
+fn on_main(app: &App, task: impl FnOnce() + Send + 'static) {
+    app.on_main(task);
 }
 
 fn power(event: u32, lparam: LPARAM) {
@@ -623,7 +621,7 @@ impl Shell {
         Some((handle, self.window))
     }
 
-    fn menu_closed(&mut self, command: u32) -> Option<(AppHandle, Action)> {
+    fn menu_closed(&mut self, command: u32) -> Option<(App, Action)> {
         let open = self.menu.take()?;
         self.ticker.set_open(false);
         self.refresh_ticker();

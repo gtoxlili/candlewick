@@ -7,7 +7,7 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use tauri::{AppHandle, Manager};
+use crate::app::App;
 use tokio::{
     sync::watch,
     time::{Instant, sleep},
@@ -17,7 +17,7 @@ use super::{ID, Kind, POLL, api, session};
 use crate::{
     bar,
     market::{self, Error},
-    model::{FeedControl, Quote, Shared, Status},
+    model::{FeedControl, Quote, Status},
 };
 
 const MAX_BACKOFF_SECS: u64 = 60;
@@ -65,7 +65,7 @@ async fn changed(
     }
 }
 
-pub async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
+pub async fn run(app: App, mut control: watch::Receiver<FeedControl>) {
     let mut failures: u32 = 0;
     let mut live = false;
     // The prices have been read since the market last closed.
@@ -157,7 +157,7 @@ pub async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
 /// One round over every watched code. Quotes already in the model stay
 /// when a code is missing from the answer; a kind that fails fails the
 /// round, after the others have been applied.
-async fn refresh(app: &AppHandle, symbols: &[String]) -> Result<(), Error> {
+async fn refresh(app: &App, symbols: &[String]) -> Result<(), Error> {
     let mut by_kind: BTreeMap<Kind, Vec<String>> = BTreeMap::new();
     for symbol in symbols {
         if let Some(kind) = api::kind(symbol).await? {
@@ -174,8 +174,8 @@ async fn refresh(app: &AppHandle, symbols: &[String]) -> Result<(), Error> {
     failure.map_or(Ok(()), Err)
 }
 
-fn apply(app: &AppHandle, found: &[(String, api::Snapshot)]) {
-    let shared = app.state::<Shared>();
+fn apply(app: &App, found: &[(String, api::Snapshot)]) {
+    let shared = app.shared();
     let mut model = shared.model();
     let mut changed = false;
     for (symbol, snapshot) in found {

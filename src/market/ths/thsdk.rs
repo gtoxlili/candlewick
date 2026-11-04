@@ -41,7 +41,7 @@ const MAX_RETRY_WAIT_MS: u64 = 1000;
 const SLACK: Duration = Duration::from_secs(10);
 
 /// Where the bundle keeps the library: the app's `Frameworks` on macOS (as
-/// `tauri dev` does beside the build), beside the executable on Windows.
+/// the development build does), beside the executable on Windows.
 fn library() -> Result<PathBuf, Error> {
     let exe = std::env::current_exe().map_err(|_| missing())?;
     let dir = exe.parent().ok_or_else(missing)?;

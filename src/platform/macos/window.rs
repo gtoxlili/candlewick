@@ -3,17 +3,19 @@
 //! which draws its own title bar under the traffic lights. The app turns
 //! regular (Dock icon, Cmd-Tab, app menu) while a window is open.
 
+use crate::app::App;
+
 use std::time::Duration;
 
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSWindow};
 use tauri::{
-    ActivationPolicy, AppHandle, Manager, TitleBarStyle, WebviewWindow, WebviewWindowBuilder, Wry,
+    ActivationPolicy, Manager, TitleBarStyle, WebviewWindow, WebviewWindowBuilder, Wry,
     menu::{AboutMetadata, Menu, PredefinedMenuItem, Submenu},
     window::{Effect, EffectState, EffectsBuilder},
 };
 
-pub type Builder<'a> = WebviewWindowBuilder<'a, Wry, AppHandle>;
+pub type Builder<'a> = WebviewWindowBuilder<'a, Wry, tauri::AppHandle>;
 
 /// Activating the app (a Dock click, a second launch) brings its open windows
 /// forward by itself.
@@ -41,26 +43,26 @@ fn decorate(builder: Builder<'_>) -> Builder<'_> {
 
 /// Builds a window right away: AppKit has no reentrancy trap here.
 pub fn create(
-    app: &AppHandle,
-    build: impl FnOnce(&AppHandle) -> tauri::Result<()> + Send + 'static,
+    app: &App,
+    build: impl FnOnce(&App) -> tauri::Result<()> + Send + 'static,
 ) -> tauri::Result<()> {
     build(app)
 }
 
 /// A window with `label` is about to show: become a regular app, and ask to
 /// be the active one.
-pub fn will_show(app: &AppHandle, label: &'static str) -> tauri::Result<()> {
-    app.set_activation_policy(ActivationPolicy::Regular)?;
+pub fn will_show(app: &App, label: &'static str) -> tauri::Result<()> {
+    app.handle().set_activation_policy(ActivationPolicy::Regular)?;
     // macOS ignores activation requested in the same turn as the policy
     // switch, and one requested much later (after the page loads) no longer
     // counts as a response to the click. ~100 ms after the click works.
     let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
+    app.clone().spawn(async move {
         tokio::time::sleep(Duration::from_millis(100)).await;
         let main = handle.clone();
-        let _ = handle.run_on_main_thread(move || {
+        handle.on_main(move || {
             activate_app();
-            if let Some(window) = main.get_webview_window(label)
+            if let Some(window) = main.handle().get_webview_window(label)
                 && window.is_visible().unwrap_or(false)
             {
                 bring_to_front(&window);
@@ -82,16 +84,16 @@ pub fn bring_to_front(window: &WebviewWindow) {
 }
 
 /// WKWebView hides a minimized page by itself.
-pub fn resized(_app: &AppHandle, _label: &str) {}
+pub fn resized(_app: &App, _label: &str) {}
 
 /// Back to a menu-bar-only app once the last window is gone.
-pub fn did_close_all(app: &AppHandle) {
-    if let Err(e) = app.set_activation_policy(ActivationPolicy::Accessory) {
+pub fn did_close_all(app: &App) {
+    if let Err(e) = app.handle().set_activation_policy(ActivationPolicy::Accessory) {
         log::error!("cannot restore accessory policy: {e}");
     }
     // WebKit tears down asynchronously and malloc keeps the freed pages
     // dirty; hand them back so the idle footprint returns to its baseline.
-    tauri::async_runtime::spawn(async {
+    app.clone().spawn(async {
         tokio::time::sleep(Duration::from_secs(3)).await;
         release_free_memory();
     });
@@ -130,8 +132,9 @@ fn release_free_memory() {
 }
 
 /// The app speaks another language: so does its menu.
-pub fn relabel(app: &AppHandle) {
-    if let Err(e) = app_menu(app).and_then(|menu| app.set_menu(menu).map(|_| ())) {
+pub fn relabel(app: &App) {
+    if let Err(e) = app_menu(app.handle()).and_then(|menu| app.handle().set_menu(menu).map(|_| ()))
+    {
         log::error!("cannot relabel the app menu: {e}");
     }
 }
@@ -139,7 +142,7 @@ pub fn relabel(app: &AppHandle) {
 /// The app menu shown while a window makes this a regular app, in the
 /// app's language. Edit items matter: without them Cmd-C/V/A do nothing in
 /// the text field.
-pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+pub fn app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<Wry>> {
     let about = AboutMetadata {
         name: Some("Candlewick".to_owned()),
         version: Some(app.package_info().version.to_string()),

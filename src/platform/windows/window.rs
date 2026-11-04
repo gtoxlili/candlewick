@@ -6,10 +6,12 @@
 //! its resizable frame and shadow, so it has rounded corners and resizes from
 //! its edges.
 
+use crate::app::App;
+
 use std::time::Duration;
 
 use tauri::{
-    AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, Wry,
+    Manager, WebviewWindow, WebviewWindowBuilder, Wry,
     webview::ScrollBarStyle,
     window::{Color, Effect, EffectsBuilder},
 };
@@ -21,7 +23,7 @@ use windows::core::{BOOL, Interface};
 
 use super::{portable::color::Tone, theme::Look};
 
-pub type Builder<'a> = WebviewWindowBuilder<'a, Wry, AppHandle>;
+pub type Builder<'a> = WebviewWindowBuilder<'a, Wry, tauri::AppHandle>;
 
 /// A second launch activates nothing by itself; `reopen` raises windows.
 pub const ACTIVATION_RAISES_WINDOWS: bool = false;
@@ -33,7 +35,7 @@ fn mica() -> bool {
 }
 
 /// No app menu to relabel: the tray's menu is built each time it opens.
-pub fn relabel(_app: &AppHandle) {}
+pub fn relabel(_app: &App) {}
 
 pub fn build(builder: Builder<'_>) -> tauri::Result<()> {
     let mica = mica();
@@ -94,26 +96,23 @@ fn lock_browser_keys(window: &WebviewWindow) {
 /// Builds a window in a fresh main-thread turn: WebView2 can't create a
 /// webview inside one of its own callbacks, which is where IPC commands run.
 pub fn create(
-    app: &AppHandle,
-    build: impl FnOnce(&AppHandle) -> tauri::Result<()> + Send + 'static,
+    app: &App,
+    build: impl FnOnce(&App) -> tauri::Result<()> + Send + 'static,
 ) -> tauri::Result<()> {
     let app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    app.clone().spawn(async move {
         let handle = app.clone();
-        let queued = app.run_on_main_thread(move || {
+        app.on_main(move || {
             if let Err(e) = build(&handle) {
                 log::error!("cannot open a window: {e}");
             }
         });
-        if let Err(e) = queued {
-            log::error!("cannot reach the main thread: {e}");
-        }
     });
     Ok(())
 }
 
 /// A window is about to show: full speed while the user is looking.
-pub fn will_show(_app: &AppHandle, _label: &'static str) -> tauri::Result<()> {
+pub fn will_show(_app: &App, _label: &'static str) -> tauri::Result<()> {
     super::set_efficiency_mode(false);
     Ok(())
 }
@@ -130,8 +129,8 @@ pub fn bring_to_front(window: &WebviewWindow) {
 /// otherwise. Hidden while minimized, it stops, and the page reads as hidden
 /// (the chart pauses its stream after a minute), as WKWebView does by itself.
 /// Its memory target drops meanwhile, so WebView2 trims what it can.
-pub fn resized(app: &AppHandle, label: &str) {
-    let Some(window) = app.get_webview_window(label) else {
+pub fn resized(app: &App, label: &str) {
+    let Some(window) = app.handle().get_webview_window(label) else {
         return;
     };
     let visible = !window.is_minimized().unwrap_or(false);
@@ -162,10 +161,10 @@ pub fn resized(app: &AppHandle, label: &str) {
 }
 
 /// Back to the taskbar alone once the last window is gone.
-pub fn did_close_all(_app: &AppHandle) {
+pub fn did_close_all(app: &App) {
     super::set_efficiency_mode(true);
     // WebView2 winds down over a few seconds.
-    tauri::async_runtime::spawn(async {
+    app.clone().spawn(async {
         tokio::time::sleep(Duration::from_secs(3)).await;
         super::release_free_memory();
     });

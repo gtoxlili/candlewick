@@ -4,6 +4,7 @@
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
+use crate::app::App;
 use axum::{
     Json, Router,
     extract::{Query, Request, State, rejection::QueryRejection},
@@ -15,10 +16,6 @@ use axum::{
 use ring::{hmac, rand::SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tauri::{
-    AppHandle, Manager,
-    ipc::{Channel, InvokeResponseBody},
-};
 use tokio::{
     sync::{mpsc, oneshot},
     time::{Instant, sleep, timeout},
@@ -42,7 +39,7 @@ const MAX_CANDLES: usize = 1000;
 
 #[derive(Clone)]
 struct Api {
-    app: AppHandle,
+    app: App,
     port: u16,
     /// The token as a MAC under a key of this run's own: comparing MACs takes
     /// the same time however much of a guess is right.
@@ -56,7 +53,7 @@ impl Api {
     }
 }
 
-pub fn router(app: AppHandle, port: u16, token: &str) -> Router {
+pub fn router(app: App, port: u16, token: &str) -> Router {
     let key = hmac::Key::generate(hmac::HMAC_SHA256, &SystemRandom::new())
         .expect("the system's random number generator");
     let tag = hmac::sign(&key, token.as_bytes());
@@ -133,7 +130,7 @@ struct Index {
 }
 
 async fn index(State(api): State<Api>) -> Json<Index> {
-    let shared = api.app.state::<Shared>();
+    let shared = api.app.shared();
     let exchange = shared.model().settings.exchange;
     let (holdings, stocks) = {
         let credentials = shared.credentials();
@@ -153,7 +150,7 @@ async fn index(State(api): State<Api>) -> Json<Index> {
         .collect();
     Json(Index {
         app: "Candlewick",
-        version: api.app.package_info().version.to_string(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
         exchange,
         holdings,
         stocks,
@@ -168,13 +165,13 @@ async fn portfolio(State(api): State<Api>) -> Json<Portfolio> {
         account.updated.is_some_and(|at| asked - at < FRESH_MS)
             || account.checked.is_some_and(|at| at >= asked)
     };
-    let shared = api.app.state::<Shared>();
+    let shared = api.app.shared();
     let ready = |shared: &Shared| shared.model().accounts.values().all(current);
-    if !ready(&shared) {
+    if !ready(shared) {
         // As the dropdown opening would.
         bar::menu_opening(&api.app);
         let deadline = Instant::now() + REFRESH_WAIT;
-        while !ready(&shared) && Instant::now() < deadline {
+        while !ready(shared) && Instant::now() < deadline {
             sleep(Duration::from_millis(200)).await;
         }
     }
@@ -200,7 +197,7 @@ struct WatchlistEntry {
 }
 
 async fn watchlist(State(api): State<Api>) -> Json<Vec<WatchlistEntry>> {
-    let shared = api.app.state::<Shared>();
+    let shared = api.app.shared();
     let model = shared.model();
     let entries = model
         .settings
@@ -255,7 +252,7 @@ async fn search(
     query: Result<Query<SearchQuery>, QueryRejection>,
 ) -> Answer<Searched> {
     let Query(SearchQuery { q }) = query.map_err(bad_query)?;
-    let exchange = api.app.state::<Shared>().model().settings.exchange;
+    let exchange = api.app.shared().model().settings.exchange;
     let searched = market::search(exchange, &q).await;
     let found = searched
         .candidates
@@ -325,26 +322,16 @@ async fn market_now(
     let instrument = resolve(&api.app, &id)?;
     let provider = instrument.provider.provider();
     let wants_book = provider.chart_spec(&instrument).book;
-    let (events, mut received) = mpsc::unbounded_channel::<Value>();
-    // The live stream speaks to the chart window's channel; here it is a
-    // closure that keeps what it says.
-    let channel = Channel::<LiveEvent>::new(move |body| {
-        if let InvokeResponseBody::Json(text) = body
-            && let Ok(event) = serde_json::from_str::<Value>(&text)
-        {
-            let _ = events.send(event);
-        }
-        Ok(())
-    });
+    let (events, mut received) = mpsc::unbounded_channel::<LiveEvent>();
     let (stop, stopped) = oneshot::channel();
-    let stream = provider.stream(instrument, stopped, channel);
-    tauri::async_runtime::spawn(stream);
+    let stream = provider.stream(instrument, stopped, events);
+    api.app.spawn(stream);
     let (mut stats, mut book) = (Value::Null, Value::Null);
     let _ = timeout(MARKET_WAIT, async {
         while let Some(event) = received.recv().await {
-            match event["kind"].as_str() {
-                Some("stats") => stats = event["stats"].clone(),
-                Some("book") => book = event["books"][0].clone(),
+            match event {
+                LiveEvent::Stats { stats: value } => stats = json!(value),
+                LiveEvent::Book { books } => book = json!(books.first()),
                 _ => {}
             }
             if !stats.is_null() && (!wants_book || !book.is_null()) {
@@ -359,7 +346,7 @@ async fn market_now(
 
 /// The instrument an id names: the watchlist's entry when it is one, else
 /// just the source and symbol, which is all reading data takes.
-fn resolve(app: &AppHandle, id: &str) -> Result<Instrument, Failure> {
+fn resolve(app: &App, id: &str) -> Result<Instrument, Failure> {
     let invalid = || {
         failure(
             StatusCode::BAD_REQUEST,
@@ -369,7 +356,7 @@ fn resolve(app: &AppHandle, id: &str) -> Result<Instrument, Failure> {
     let (source, symbol) = id.split_once(':').ok_or_else(invalid)?;
     let provider = ProviderId::ALL.into_iter().find(|p| p.key() == source).ok_or_else(invalid)?;
     let bare = provider.provider().bare(symbol).ok_or_else(invalid)?;
-    let shared = app.state::<Shared>();
+    let shared = app.shared();
     let model = shared.model();
     let known =
         model.settings.watchlist.iter().find(|i| i.provider == provider && i.symbol == bare.symbol);

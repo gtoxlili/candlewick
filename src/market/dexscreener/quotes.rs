@@ -4,13 +4,13 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use tauri::{AppHandle, Manager};
+use crate::app::App;
 use tokio::{sync::watch, time::sleep};
 
 use super::{ID, gecko, parse, screener};
 use crate::{
     bar, market,
-    model::{FeedControl, Quote, Shared, Status},
+    model::{FeedControl, Quote, Status},
 };
 
 /// DEX Screener's edge turns a response over every 30 seconds; twice that
@@ -18,7 +18,7 @@ use crate::{
 const POLL: Duration = Duration::from_secs(15);
 const MAX_BACKOFF_SECS: u64 = 60;
 
-pub async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
+pub async fn run(app: App, mut control: watch::Receiver<FeedControl>) {
     // The key as saved; the settings command hands over changes directly.
     gecko::configure(control.borrow().credentials.coingecko.clone().map(|k| k.key));
     let mut failures: u32 = 0;
@@ -72,7 +72,7 @@ pub async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
 /// One round over every chain's pools. Quotes already in the model stay
 /// when a pool is missing from the answer; a chain that fails fails the
 /// round, after the others have been applied.
-async fn refresh(app: &AppHandle, symbols: &[String]) -> Result<(), market::Error> {
+async fn refresh(app: &App, symbols: &[String]) -> Result<(), market::Error> {
     let mut by_chain: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for symbol in symbols {
         if let Some((chain, address)) = parse(symbol) {
@@ -89,8 +89,8 @@ async fn refresh(app: &AppHandle, symbols: &[String]) -> Result<(), market::Erro
     failure.map_or(Ok(()), Err)
 }
 
-fn apply(app: &AppHandle, pairs: &[screener::Pair]) {
-    let shared = app.state::<Shared>();
+fn apply(app: &App, pairs: &[screener::Pair]) {
+    let shared = app.shared();
     let mut model = shared.model();
     let mut changed = false;
     for pair in pairs {

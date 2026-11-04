@@ -12,7 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use tauri::ipc::Channel;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::{
     sync::oneshot,
     time::{Instant, MissedTickBehavior, interval, sleep},
@@ -33,7 +33,7 @@ const REMEMBERED: usize = 1200;
 pub(super) async fn run(
     instrument: Instrument,
     mut stop: oneshot::Receiver<()>,
-    events: Channel<LiveEvent>,
+    events: UnboundedSender<LiveEvent>,
 ) {
     let Some((chain, address)) = parse(&instrument.symbol) else {
         send(&events, LiveEvent::State { state: FeedState::Offline });
@@ -165,7 +165,7 @@ impl Feed {
         Some(stats)
     }
 
-    fn send_stats(&self, events: &Channel<LiveEvent>) -> bool {
+    fn send_stats(&self, events: &UnboundedSender<LiveEvent>) -> bool {
         self.stats().is_none_or(|stats| send(events, LiveEvent::Stats { stats }))
     }
 
@@ -239,7 +239,7 @@ fn now_secs() -> f64 {
 }
 
 /// False once the window is gone.
-fn send(events: &Channel<LiveEvent>, event: LiveEvent) -> bool {
+fn send(events: &UnboundedSender<LiveEvent>, event: LiveEvent) -> bool {
     events.send(event).is_ok()
 }
 

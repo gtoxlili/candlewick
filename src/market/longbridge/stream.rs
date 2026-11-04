@@ -5,7 +5,7 @@
 
 use std::{collections::BTreeMap, future::Future, pin::Pin};
 
-use tauri::ipc::Channel;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use super::{
@@ -23,7 +23,7 @@ type Snapshot = Pin<Box<dyn Future<Output = Result<(Day, Depth), Error>> + Send>
 pub(super) async fn run(
     instrument: Instrument,
     mut stop: oneshot::Receiver<()>,
-    events: Channel<LiveEvent>,
+    events: UnboundedSender<LiveEvent>,
 ) {
     let symbol = instrument.symbol;
     if !send(&events, LiveEvent::State { state: FeedState::Connecting }) {
@@ -266,7 +266,7 @@ pub(super) fn trade(trade: &proto::Trade) -> Trade {
 }
 
 /// False once the window is gone.
-fn send(events: &Channel<LiveEvent>, event: LiveEvent) -> bool {
+fn send(events: &UnboundedSender<LiveEvent>, event: LiveEvent) -> bool {
     events.send(event).is_ok()
 }
 

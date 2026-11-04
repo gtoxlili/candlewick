@@ -47,6 +47,7 @@ tauri-plugin-updater = "2"
 # come with reqwest.
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 sys-locale = "0.3"
+dirs = "6"
 
 # The status item is Tauri's tray icon; Windows draws its own (platform/windows).
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -7,8 +7,7 @@ mod proto;
 mod service;
 mod stream;
 
-use serde::Serialize;
-use tauri::{AppHandle, ipc::Channel};
+use crate::app::App;
 use tokio::sync::{oneshot, watch};
 
 use self::{
@@ -79,11 +78,7 @@ impl Provider for Longbridge {
         Box::pin(search(query))
     }
 
-    fn watch(
-        &self,
-        app: AppHandle,
-        control: watch::Receiver<FeedControl>,
-    ) -> BoxFuture<'static, ()> {
+    fn watch(&self, app: App, control: watch::Receiver<FeedControl>) -> BoxFuture<'static, ()> {
         Box::pin(service::run(app, control))
     }
 
@@ -149,20 +144,27 @@ impl Provider for Longbridge {
         &self,
         instrument: Instrument,
         stop: oneshot::Receiver<()>,
-        events: Channel<LiveEvent>,
+        events: tokio::sync::mpsc::UnboundedSender<LiveEvent>,
     ) -> BoxFuture<'static, ()> {
-        Box::pin(stream::run(instrument, stop, events))
+        Box::pin(async move {
+            let closed = events.clone();
+            let (_keep, inner_stop) = oneshot::channel();
+            tokio::select! {
+                _ = stop => {},
+                () = closed.closed() => {},
+                () = stream::run(instrument, inner_stop, events) => {},
+            }
+        })
     }
 }
 
 /// What the account may see, from the last login.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct Account {
     pub markets: Vec<MarketAccess>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct MarketAccess {
     /// `US`, `HK` or `CN`.
     pub market: &'static str,

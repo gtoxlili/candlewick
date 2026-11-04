@@ -17,9 +17,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::app::App;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Client, RequestBuilder, StatusCode};
-use tauri::{AppHandle, Manager};
 use tokio::{
     sync::watch,
     time::{Instant, Interval, MissedTickBehavior, interval_at, sleep, sleep_until},
@@ -32,10 +32,9 @@ use crate::{
     credentials::ApiKey,
     http,
     market::{Error, ProviderId},
-    model::{FeedControl, Shared},
+    model::FeedControl,
     net,
     portfolio::{self, Balance, Position, Price, now_ms},
-    window,
 };
 
 /// What an exchange needs to read an account.
@@ -159,7 +158,7 @@ impl Kept {
     }
 }
 
-pub async fn run<E: Account>(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
+pub async fn run<E: Account>(app: App, mut control: watch::Receiver<FeedControl>) {
     let mut kept = Kept::default();
     let mut refreshed: Option<Instant> = None;
     let mut nudged = control.borrow().holdings_wanted;
@@ -245,7 +244,7 @@ pub async fn run<E: Account>(app: AppHandle, mut control: watch::Receiver<FeedCo
     }
 }
 
-async fn refresh<E: Account>(app: &AppHandle, key: &ApiKey, kept: &mut Kept, live: Option<&Live>) {
+async fn refresh<E: Account>(app: &App, key: &ApiKey, kept: &mut Kept, live: Option<&Live>) {
     let savings_due = kept.savings.as_ref().is_none_or(|(at, _)| at.elapsed() >= SAVINGS);
     let savings = async { if savings_due { Some(E::savings(key).await) } else { None } };
     let (trading, savings) = tokio::join!(E::trading(key), savings);
@@ -308,7 +307,7 @@ async fn refresh<E: Account>(app: &AppHandle, key: &ApiKey, kept: &mut Kept, liv
 }
 
 /// Prices moved: the same balances, valued again.
-fn revalue<E: Account>(app: &AppHandle, kept: &Kept) {
+fn revalue<E: Account>(app: &App, kept: &Kept) {
     let holdings = portfolio::value(E::ID, &kept.balances, &kept.positions, &kept.prices);
     portfolio_changed(app, |accounts| match accounts.get_mut(&E::ID) {
         Some(account) if account.holdings.is_some() => {
@@ -391,19 +390,18 @@ impl Live {
 /// Applies `change` to the accounts; when it says something changed, the bar
 /// and the holdings window follow.
 fn portfolio_changed(
-    app: &AppHandle,
+    app: &App,
     change: impl FnOnce(&mut BTreeMap<ProviderId, portfolio::Account>) -> bool,
 ) {
-    let shared = app.state::<Shared>();
-    let portfolio = {
+    let shared = app.shared();
+    {
         let mut model = shared.model();
         if !change(&mut model.accounts) {
             return;
         }
-        portfolio::Portfolio::of(&model.accounts)
-    };
+    }
     bar::request_render(app);
-    window::emit_portfolio(app, &portfolio);
+    app.notify(crate::app::Topic::Portfolio);
 }
 
 /// Milliseconds on the exchange's clock, as far as it is known: requests

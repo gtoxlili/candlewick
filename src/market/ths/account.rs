@@ -18,10 +18,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::app::App;
 use base64::Engine as _;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-use tauri::{AppHandle, Manager};
 use tokio::{
     sync::{oneshot, watch},
     time::sleep,
@@ -35,8 +35,7 @@ use super::{
 use crate::{
     bar, credentials, http,
     market::Error,
-    model::{FeedControl, Instrument, Shared, SyncStatus, Synced, SyncedGroup},
-    window,
+    model::{FeedControl, Instrument, SyncStatus, Synced, SyncedGroup},
 };
 
 /// The watchlist changes when the user edits it in Tonghuashun's apps.
@@ -53,12 +52,8 @@ static HELPER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Where thsdk's runtime keeps the session: the config folder's `thsdk`,
 /// readable by the user only.
-fn session_dir(app: &AppHandle) -> Result<PathBuf, Error> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|_| Error::Message(t!("error.noConfigDir").to_owned()))?
-        .join("thsdk");
+fn session_dir(_app: &App) -> Result<PathBuf, Error> {
+    let dir = crate::app::config_dir().join("thsdk");
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -142,7 +137,7 @@ impl From<Failure> for Read {
 }
 
 /// The watchlist and its groups, as the account has them.
-async fn read(app: &AppHandle) -> Result<(Vec<Entry>, Vec<Group>), Read> {
+async fn read(app: &App) -> Result<(Vec<Entry>, Vec<Group>), Read> {
     let dir = session_dir(app).map_err(Read::Failed)?;
     let _helper = HELPER.lock().await;
     let mut runtime = Runtime::start().map_err(Read::Failed)?;
@@ -278,7 +273,7 @@ impl Wanted {
 /// Keeps the user's Tonghuashun watchlist current while signed in there:
 /// read every [`SYNC_EVERY`], not at all while nobody can see it, and no
 /// more once the session has run out.
-pub async fn run(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
+pub async fn run(app: App, mut control: watch::Receiver<FeedControl>) {
     let mut resolved = Resolved::default();
     let mut failures: u32 = 0;
     loop {
@@ -339,8 +334,8 @@ async fn changed(
     }
 }
 
-async fn sync(app: &AppHandle, resolved: &mut Resolved) -> Result<(), Read> {
-    if app.state::<Shared>().model().synced.is_none() {
+async fn sync(app: &App, resolved: &mut Resolved) -> Result<(), Read> {
+    if app.shared().model().synced.is_none() {
         publish(app, |synced| *synced = Some(Synced::default()));
     }
     let (list, groups) = read(app).await?;
@@ -364,14 +359,14 @@ async fn sync(app: &AppHandle, resolved: &mut Resolved) -> Result<(), Read> {
     Ok(())
 }
 
-fn status(app: &AppHandle, status: SyncStatus) {
+fn status(app: &App, status: SyncStatus) {
     publish(app, |synced| synced.get_or_insert_with(Synced::default).status = status);
 }
 
 /// Changes the synced watchlist, and with it the codes quoted for it, the
 /// dropdown and the settings window.
-fn publish(app: &AppHandle, change: impl FnOnce(&mut Option<Synced>)) {
-    let shared = app.state::<Shared>();
+fn publish(app: &App, change: impl FnOnce(&mut Option<Synced>)) {
+    let shared = app.shared();
     let symbols = {
         let mut model = shared.model();
         let before = model.synced.clone();
@@ -399,13 +394,13 @@ fn publish(app: &AppHandle, change: impl FnOnce(&mut Option<Synced>)) {
         changed
     });
     bar::request_render(app);
-    window::emit_ths(app);
+    app.notify(crate::app::Topic::Ths);
 }
 
 /// Records whether the user is signed in, and lets everything that reads
 /// the watchlist know.
-fn keep(app: &AppHandle, signed_in: bool) {
-    let shared = app.state::<Shared>();
+fn keep(app: &App, signed_in: bool) {
+    let shared = app.shared();
     let credentials = {
         let mut stored = shared.credentials();
         stored.ths_signed_in = signed_in;
@@ -415,16 +410,16 @@ fn keep(app: &AppHandle, signed_in: bool) {
         stored.clone()
     };
     shared.control.send_modify(|control| control.credentials = credentials);
-    window::emit_ths(app);
+    app.notify(crate::app::Topic::Ths);
 }
 
 /// Signs out: the session ends and its file goes; the watchlist leaves the
 /// dropdown.
-pub fn sign_out(app: &AppHandle) {
+pub fn sign_out(app: &App) {
     cancel_sign_in();
     keep(app, false);
     let app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    app.clone().spawn(async move {
         let Ok(dir) = session_dir(&app) else { return };
         let _helper = HELPER.lock().await;
         if let Ok(mut runtime) = Runtime::start() {
@@ -438,8 +433,7 @@ pub fn sign_out(app: &AppHandle) {
 }
 
 /// A sign-in under way, as the settings window shows it.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct SignIn {
     /// The QR code to scan in the Tonghuashun app, a PNG data URL; none
     /// until it has arrived.
@@ -449,8 +443,7 @@ pub struct SignIn {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignInState {
     /// Waiting for the code, then for it to be scanned and confirmed.
     Waiting,
@@ -477,7 +470,7 @@ pub fn sign_in_view() -> Option<SignIn> {
 }
 
 /// Starts signing in with a QR code, unless that is already under way.
-pub fn sign_in(app: &AppHandle) {
+pub fn sign_in(app: &App) {
     let (cancel, cancelled) = oneshot::channel();
     {
         let mut job = job();
@@ -489,9 +482,9 @@ pub fn sign_in(app: &AppHandle) {
             cancel: Some(cancel),
         });
     }
-    window::emit_ths(app);
+    app.notify(crate::app::Topic::Ths);
     let app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    app.clone().spawn(async move {
         let ended = scan(&app, cancelled).await;
         let signed_in = matches!(ended, Scan::SignedIn);
         {
@@ -518,7 +511,7 @@ pub fn sign_in(app: &AppHandle) {
         if signed_in {
             keep(&app, true);
         } else {
-            window::emit_ths(&app);
+            app.notify(crate::app::Topic::Ths);
         }
     });
 }
@@ -542,7 +535,7 @@ enum Scan {
 /// thsdk's QR sign-in: a code, then its state every [`QR_POLL`] until it is
 /// confirmed in the app, runs out, or the user stops it. A session still
 /// good needs no code at all.
-async fn scan(app: &AppHandle, mut cancelled: oneshot::Receiver<()>) -> Scan {
+async fn scan(app: &App, mut cancelled: oneshot::Receiver<()>) -> Scan {
     let dir = match session_dir(app) {
         Ok(dir) => dir,
         Err(e) => return Scan::Failed(e),
@@ -578,7 +571,7 @@ async fn scan(app: &AppHandle, mut cancelled: oneshot::Receiver<()>) -> Scan {
                     if let Some(job) = job().as_mut() {
                         job.view.qr = Some(qr);
                     }
-                    window::emit_ths(app);
+                    app.notify(crate::app::Topic::Ths);
                 }
                 Err(e) => log::warn!("tonghuashun QR code: {e}"),
             }
@@ -625,8 +618,7 @@ async fn qr_image(url: &str) -> Result<String, Error> {
 }
 
 /// The login as the settings window shows it.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct AccountView {
     /// Codes in the watchlist, groups shown, and entries nothing here quotes.
     pub count: usize,
@@ -639,8 +631,7 @@ pub struct AccountView {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy)]
 pub enum SyncState {
     Reading,
     Read,

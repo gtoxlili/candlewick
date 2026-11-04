@@ -11,8 +11,8 @@ mod quotes;
 
 use std::{borrow::Cow, future::Future, time::Duration};
 
+use crate::app::App;
 use serde::de::DeserializeOwned;
-use tauri::{AppHandle, ipc::Channel};
 use tokio::sync::{oneshot, watch};
 
 pub use self::{
@@ -138,11 +138,7 @@ impl<E: Exchange> Provider for E {
         pairs::drop_cache(E::ID);
     }
 
-    fn watch(
-        &self,
-        app: AppHandle,
-        control: watch::Receiver<FeedControl>,
-    ) -> BoxFuture<'static, ()> {
+    fn watch(&self, app: App, control: watch::Receiver<FeedControl>) -> BoxFuture<'static, ()> {
         Box::pin(quotes::run::<E>(app, control))
     }
 
@@ -196,9 +192,17 @@ impl<E: Exchange> Provider for E {
         &self,
         instrument: Instrument,
         stop: oneshot::Receiver<()>,
-        events: Channel<LiveEvent>,
+        events: tokio::sync::mpsc::UnboundedSender<LiveEvent>,
     ) -> BoxFuture<'static, ()> {
-        Box::pin(live::run::<E>(instrument, stop, events))
+        Box::pin(async move {
+            let closed = events.clone();
+            let (_keep, inner_stop) = oneshot::channel();
+            tokio::select! {
+                _ = stop => {},
+                () = closed.closed() => {},
+                () = live::run::<E>(instrument, inner_stop, events) => {},
+            }
+        })
     }
 }
 

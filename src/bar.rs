@@ -11,12 +11,12 @@
 
 use std::{collections::HashMap, sync::atomic::Ordering};
 
-use tauri::{AppHandle, Manager};
+use crate::app::App;
 
 use crate::{
     format::{self, Direction},
     i18n::{self, Locale},
-    model::{ColorScheme, Instrument, Model, Quote, Session, Shared, SyncStatus},
+    model::{ColorScheme, Instrument, Model, Quote, Session, SyncStatus},
     platform,
     portfolio::{Portfolio, Totals},
     update, window,
@@ -275,7 +275,7 @@ pub enum Action {
     Quit,
 }
 
-pub fn perform(app: &AppHandle, action: Action) {
+pub fn perform(app: &App, action: Action) {
     let result = match action {
         Action::Chart(id) => window::open_chart(app, &id),
         Action::Holdings => window::open_holdings(app),
@@ -297,8 +297,8 @@ pub fn perform(app: &AppHandle, action: Action) {
 
 /// The dropdown is opening: holdings getting old refresh, so the total in it
 /// is current a moment later.
-pub fn menu_opening(app: &AppHandle) {
-    app.state::<Shared>().control.send_if_modified(|control| {
+pub fn menu_opening(app: &App) {
+    app.shared().control.send_if_modified(|control| {
         let holdings = !control.credentials.exchanges.is_empty();
         if holdings {
             control.holdings_wanted = control.holdings_wanted.wrapping_add(1);
@@ -313,8 +313,8 @@ pub fn menu_opening(app: &AppHandle) {
 }
 
 /// Schedules a redraw on the bar's thread unless one is already pending.
-pub fn request_render(app: &AppHandle) {
-    let shared = app.state::<Shared>();
+pub fn request_render(app: &App) {
+    let shared = app.shared();
     if shared.render_pending.swap(true, Ordering::AcqRel) {
         return;
     }
@@ -326,8 +326,8 @@ pub fn request_render(app: &AppHandle) {
 /// The current view, for a render that [`request_render`] scheduled (or the
 /// first one). Reading it clears the pending flag, so an update arriving from
 /// now on schedules another pass.
-pub fn view(app: &AppHandle) -> View {
-    let shared = app.state::<Shared>();
+pub fn view(app: &App) -> View {
+    let shared = app.shared();
     shared.render_pending.store(false, Ordering::Release);
     let update = update::ready(app);
     let model = shared.model();

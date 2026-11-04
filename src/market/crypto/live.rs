@@ -5,7 +5,7 @@
 use std::{future::Future, time::Duration};
 
 use futures_util::{SinkExt, StreamExt, stream::FuturesUnordered};
-use tauri::ipc::Channel;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::{
     sync::oneshot,
     time::{Instant, MissedTickBehavior, interval_at, sleep, timeout},
@@ -107,7 +107,7 @@ enum Ended {
 pub async fn run<E: Exchange>(
     instrument: Instrument,
     mut stop: oneshot::Receiver<()>,
-    events: Channel<LiveEvent>,
+    events: UnboundedSender<LiveEvent>,
 ) {
     let mut session = E::live(&instrument);
     let path = session.path();
@@ -153,7 +153,7 @@ async fn pump<S: Session>(
     ping: Option<&'static str>,
     mut socket: net::Socket,
     stop: &mut oneshot::Receiver<()>,
-    events: &Channel<LiveEvent>,
+    events: &UnboundedSender<LiveEvent>,
 ) -> Ended {
     if !send(events, LiveEvent::State { state: FeedState::Live }) {
         return Ended::Stopped;
@@ -230,6 +230,6 @@ pub fn backoff(failures: u32) -> Duration {
 }
 
 /// False once the window is gone.
-fn send(events: &Channel<LiveEvent>, event: LiveEvent) -> bool {
+fn send(events: &UnboundedSender<LiveEvent>, event: LiveEvent) -> bool {
     events.send(event).is_ok()
 }

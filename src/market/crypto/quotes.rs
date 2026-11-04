@@ -6,8 +6,8 @@
 
 use std::{collections::HashMap, time::Duration};
 
+use crate::app::App;
 use futures_util::{SinkExt, StreamExt};
-use tauri::{AppHandle, Manager};
 use tokio::{
     sync::watch,
     time::{Instant, MissedTickBehavior, interval_at, sleep, timeout, timeout_at},
@@ -17,7 +17,7 @@ use tokio_tungstenite::tungstenite::Message;
 use super::{Exchange, KEEPALIVE};
 use crate::{
     bar, market,
-    model::{FeedControl, Quote, Shared, Status},
+    model::{FeedControl, Quote, Status},
     net,
 };
 
@@ -43,7 +43,7 @@ enum End {
     Lost(String),
 }
 
-pub async fn run<E: Exchange>(app: AppHandle, mut control: watch::Receiver<FeedControl>) {
+pub async fn run<E: Exchange>(app: App, mut control: watch::Receiver<FeedControl>) {
     // Start from the server that last worked; failures walk to the next.
     let mut preferred = 0;
     let mut failures: u32 = 0;
@@ -105,7 +105,7 @@ pub async fn run<E: Exchange>(app: AppHandle, mut control: watch::Receiver<FeedC
 }
 
 async fn pump<E: Exchange>(
-    app: &AppHandle,
+    app: &App,
     control: &mut watch::Receiver<FeedControl>,
     wanted: &(Vec<String>, u8),
     mut socket: net::Socket,
@@ -170,7 +170,7 @@ async fn pump<E: Exchange>(
 }
 
 /// Stores one frame's quote. Returns whether anything visible changed.
-fn apply<E: Exchange>(app: &AppHandle, text: &str) -> bool {
+fn apply<E: Exchange>(app: &App, text: &str) -> bool {
     let Some(tick) = E::quote(text) else {
         return false;
     };
@@ -179,7 +179,7 @@ fn apply<E: Exchange>(app: &AppHandle, text: &str) -> bool {
     }
     let quote = Quote { last: tick.last, open: tick.open, session: None };
     let id = market::instrument_id(E::ID, &tick.symbol);
-    let shared = app.state::<Shared>();
+    let shared = app.shared();
     let mut model = shared.model();
     if let Some(existing) = model.quotes.get_mut(&id) {
         let changed = existing.last != quote.last || existing.open != quote.open;

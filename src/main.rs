@@ -14,9 +14,10 @@
 mod i18n;
 
 mod agent;
+pub mod api;
+pub mod app;
 mod bar;
 mod calendar;
-mod commands;
 mod credentials;
 mod format;
 mod http;
@@ -52,49 +53,12 @@ fn main() {
         .build()
         .expect("failed to start the tokio runtime");
     tauri::async_runtime::set(runtime.handle().clone());
+    let runtime_handle = runtime.handle().clone();
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![
-            commands::get_settings,
-            commands::save_settings,
-            commands::get_locale,
-            commands::get_login_item,
-            commands::set_login_item,
-            commands::get_update,
-            commands::check_update,
-            commands::restart_to_update,
-            commands::window_ready,
-            commands::search_instruments,
-            commands::get_chart_instrument,
-            commands::open_chart,
-            commands::chart_spec,
-            commands::chart_history,
-            commands::chart_trades,
-            commands::chart_stream,
-            commands::chart_stream_stop,
-            commands::open_link,
-            commands::get_longbridge,
-            commands::set_longbridge,
-            commands::check_longbridge,
-            commands::get_ths,
-            commands::set_ths,
-            commands::ths_sign_in,
-            commands::ths_sign_in_cancel,
-            commands::ths_sign_out,
-            commands::chart_instrument,
-            commands::get_coingecko,
-            commands::set_coingecko,
-            commands::check_coingecko,
-            commands::get_exchange_keys,
-            commands::set_exchange_key,
-            commands::get_portfolio,
-            commands::open_holdings,
-            commands::open_settings,
-            commands::get_agent,
-        ])
-        .setup(|app| {
-            let config_dir = app.path().app_config_dir()?;
+        .setup(move |app| {
+            let config_dir = app::config_dir();
             let settings_path = config_dir.join("settings.json");
             let credentials_path = config_dir.join("credentials.json");
             let settings = model::load(&settings_path);
@@ -106,16 +70,16 @@ fn main() {
                 credentials::load(&credentials_path),
                 credentials_path,
             );
-            app.manage(shared);
-            app.manage(agent::Agent::default());
-            agent::sync(app.handle());
+            let handle = app::App::new(app.handle().clone(), runtime_handle.clone(), shared);
+            app.manage(handle.clone());
+            agent::sync(&handle);
 
             // Before the bar: Windows reports the display's state as soon as
             // the bar's thread asks for it.
-            let handle = app.handle().clone();
+            let pause_handle = handle.clone();
             platform::observe_pauses(move |reason, paused| {
                 let bit = reason as u8;
-                handle.state::<Shared>().control.send_if_modified(|control| {
+                pause_handle.shared().control.send_if_modified(|control| {
                     let before = control.paused;
                     if paused {
                         control.paused |= bit;
@@ -126,19 +90,16 @@ fn main() {
                 });
             });
 
-            platform::bar::create(app.handle())?;
+            platform::bar::create(&handle)?;
 
             for provider in ProviderId::ALL {
-                let quotes = provider.provider().watch(app.handle().clone(), control.clone());
-                tauri::async_runtime::spawn(quotes);
+                let quotes = provider.provider().watch(handle.clone(), control.clone());
+                handle.spawn(quotes);
             }
-            market::watch_accounts(app.handle(), &control);
-            tauri::async_runtime::spawn(market::ths::sync_watchlist(
-                app.handle().clone(),
-                control.clone(),
-            ));
+            market::watch_accounts(&handle, &control);
+            handle.spawn(market::ths::sync_watchlist(handle.clone(), control.clone()));
 
-            update::start(app.handle());
+            update::start(&handle);
 
             // Meant to run all the time: register as a login item the first
             // time it runs from an install location, once. The marker keeps a
@@ -154,7 +115,7 @@ fn main() {
                     log::warn!("cannot write {}: {e}", marker.display());
                 }
                 if platform::SETTINGS_ON_FIRST_RUN
-                    && let Err(e) = window::open_settings(app.handle())
+                    && let Err(e) = window::open_settings(&handle)
                 {
                     log::error!("cannot open settings: {e}");
                 }
@@ -163,9 +124,11 @@ fn main() {
         })
         .on_window_event(|window, event| match event {
             WindowEvent::Resized(_) => {
-                platform::window::resized(window.app_handle(), window.label())
+                platform::window::resized(&window.app_handle().state::<app::App>(), window.label())
             }
-            WindowEvent::Destroyed => window::on_destroyed(window.app_handle(), window.label()),
+            WindowEvent::Destroyed => {
+                window::on_destroyed(&window.app_handle().state::<app::App>(), window.label())
+            }
             _ => {}
         });
 
@@ -181,13 +144,13 @@ fn on_event(app: &AppHandle, event: RunEvent) {
         // (the dropdown, Cmd-Q) carry an exit code or bypass this.
         RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
         RunEvent::Exit => {
-            agent::shutdown(app);
+            agent::shutdown(&app.state::<app::App>());
             platform::bar::shutdown();
         }
         // Only macOS reports reopening through the event loop.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
-            if let Err(e) = window::reopen(app) {
+            if let Err(e) = window::reopen(&app.state::<app::App>()) {
                 log::error!("cannot reopen a window: {e}");
             }
         }
