@@ -401,10 +401,10 @@ mod tests {
         let (mut live, mut out) = (live(), Out::for_test());
         live.connected(&mut out);
         assert_eq!(
-            out.take_frames(),
+            out.take_frames().iter().map(|frame| serde_json::from_str::<serde_json::Value>(frame).unwrap()).collect::<Vec<_>>(),
             [
                 r#"{"args":["publicTrade.BTCUSDT","orderbook.1000.BTCUSDT","tickers.BTCUSDT"],"op":"subscribe"}"#
-            ]
+            ].map(|frame| serde_json::from_str::<serde_json::Value>(frame).unwrap())
         );
         // Deltas before the snapshot wait for it.
         live.frame(&book_frame("delta", 6, r#"[["99","1"]]"#, "[]"), &mut out);
@@ -422,11 +422,15 @@ mod tests {
         live.frame(&book_frame("delta", 10, r#"[["98","1"]]"#, "[]"), &mut out);
         assert!(out.take_events().is_empty());
         assert_eq!(
-            out.take_frames(),
+            out.take_frames()
+                .iter()
+                .map(|frame| serde_json::from_str::<serde_json::Value>(frame).unwrap())
+                .collect::<Vec<_>>(),
             [
                 r#"{"args":["orderbook.1000.BTCUSDT"],"op":"unsubscribe"}"#,
                 r#"{"args":["orderbook.1000.BTCUSDT"],"op":"subscribe"}"#,
             ]
+            .map(|frame| serde_json::from_str::<serde_json::Value>(frame).unwrap())
         );
         live.frame(&book_frame("delta", 11, r#"[["98","1"]]"#, "[]"), &mut out);
         live.frame(&book_frame("snapshot", 12, r#"[["97","3"]]"#, "[]"), &mut out);

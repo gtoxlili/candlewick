@@ -380,10 +380,10 @@ mod tests {
         let (mut live, mut out) = (live(), Out::for_test());
         live.connected(&mut out);
         assert_eq!(
-            out.take_frames(),
+            out.take_frames().iter().map(|frame| serde_json::from_str::<serde_json::Value>(frame).unwrap()).collect::<Vec<_>>(),
             [
                 r#"{"args":[{"channel":"trades","instId":"BTC-USDT"},{"channel":"books","instId":"BTC-USDT"},{"channel":"tickers","instId":"BTC-USDT"}],"op":"subscribe"}"#
-            ]
+            ].map(|frame| serde_json::from_str::<serde_json::Value>(frame).unwrap())
         );
         live.frame(
             &book_frame("snapshot", -1, 10, r#"[["101","1","0","1"],["102","2","0","3"]]"#),
@@ -405,11 +405,15 @@ mod tests {
         live.frame(&book_frame("update", 8, 9, "[]"), &mut out);
         assert!(out.take_events().is_empty());
         assert_eq!(
-            out.take_frames(),
+            out.take_frames()
+                .iter()
+                .map(|frame| serde_json::from_str::<serde_json::Value>(frame).unwrap())
+                .collect::<Vec<_>>(),
             [
                 r#"{"args":[{"channel":"books","instId":"BTC-USDT"}],"op":"unsubscribe"}"#,
                 r#"{"args":[{"channel":"books","instId":"BTC-USDT"}],"op":"subscribe"}"#,
             ]
+            .map(|frame| serde_json::from_str::<serde_json::Value>(frame).unwrap())
         );
         live.frame(&book_frame("update", 9, 10, r#"[["104","1","0","1"]]"#), &mut out);
         assert!(out.take_events().is_empty());
