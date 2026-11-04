@@ -49,12 +49,10 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 sys-locale = "0.3"
 dirs = "6"
 
-# The status item is Tauri's tray icon; Windows draws its own (platform/windows).
+# The status item uses AppKit; Windows draws its own (platform/windows).
 [target.'cfg(target_os = "macos")'.dependencies]
-tauri = { version = "2.12", features = ["macos-private-api", "tray-icon"] }
-# Match Tauri's tray backend so the native menu can be owned independently
-# of NSStatusItem.menu, which is only attached while the dropdown is open.
 tray-icon = { version = "0.25", default-features = false }
+png = "0.18"
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = [
@@ -64,7 +62,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std", "block2", "objc2-core-foundation", "NSAppearance", "NSApplication", "NSColorList", "NSAttributedString", "NSButton",
     "NSColor", "NSControl", "NSFont", "NSFontDescriptor", "NSImage", "NSMenu", "NSMenuItem",
-    "NSParagraphStyle", "NSResponder", "NSStatusBar", "NSStatusBarButton", "NSStatusItem",
+    "NSParagraphStyle", "NSResponder", "NSRunningApplication", "NSStatusBar", "NSStatusBarButton", "NSStatusItem",
     "NSStringDrawing", "NSText", "NSView", "NSWindow", "NSWorkspace",
 ] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = [

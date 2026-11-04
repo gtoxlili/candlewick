@@ -30,6 +30,7 @@ pub fn claim_single_instance() {}
 
 /// The app menu (see [`window::app_menu`]).
 pub fn configure(builder: Builder<Wry>) -> Builder<Wry> {
+    bar::install_event_handlers();
     builder.menu(window::app_menu)
 }
 

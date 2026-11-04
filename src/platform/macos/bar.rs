@@ -6,22 +6,20 @@
 
 use crate::app::App;
 
-use std::cell::RefCell;
+use std::{cell::RefCell, error::Error, io::Cursor};
 
 use objc2::{AnyThread, MainThreadMarker, rc::Retained};
 use objc2_app_kit::{
-    NSAttributedStringNSStringDrawing, NSColor, NSFont, NSFontAttributeName, NSFontWeightRegular,
-    NSForegroundColorAttributeName, NSMenu, NSMenuItem, NSMutableParagraphStyle,
-    NSParagraphStyleAttributeName, NSStatusItem, NSTextAlignment, NSTextTab,
+    NSApplication, NSApplicationActivationPolicy, NSAttributedStringNSStringDrawing, NSColor,
+    NSFont, NSFontAttributeName, NSFontWeightRegular, NSForegroundColorAttributeName, NSMenu,
+    NSMenuItem, NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSStatusItem,
+    NSTextAlignment, NSTextTab,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSMutableAttributedString, NSRange, NSString};
-use tauri::{
-    ActivationPolicy, Manager, Wry,
-    image::Image,
-    menu::MenuEvent,
-    tray::{MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
+use tray_icon::{
+    Icon, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    menu::{ContextMenu, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu},
 };
-use tray_icon::menu::{ContextMenu, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 
 use super::ticker;
 use crate::{
@@ -41,17 +39,44 @@ const INSTRUMENT_PREFIX: &str = "instrument:";
 /// A row of the synced watchlist's submenu: opens that instrument's chart.
 const SYNCED_PREFIX: &str = "synced:";
 
-fn template_icon() -> Image<'static> {
-    tauri::include_image!("icons/tray-template.png")
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+fn template_icon() -> Result<Icon> {
+    let decoder =
+        png::Decoder::new(Cursor::new(include_bytes!("../../../icons/tray-template.png")));
+    let mut reader = decoder.read_info()?;
+    let mut rgba = vec![0; reader.output_buffer_size().ok_or("invalid tray icon dimensions")?];
+    let frame = reader.next_frame(&mut rgba)?;
+    rgba.truncate(frame.buffer_size());
+    Ok(Icon::from_rgba(rgba, frame.width, frame.height)?)
 }
 
 thread_local! {
     static UI: RefCell<Option<Ui>> = const { RefCell::new(None) };
+    static APP: RefCell<Option<App>> = const { RefCell::new(None) };
+}
+
+/// Installs the process-wide native event handlers before the event loop starts.
+pub fn install_event_handlers() {
+    MenuEvent::set_event_handler(Some(|event| {
+        let app = APP.with_borrow(Clone::clone);
+        if let Some(app) = app {
+            on_menu_event(&app, event);
+        }
+    }));
+    TrayIconEvent::set_event_handler(Some(|event| {
+        if let TrayIconEvent::Click { button_state: MouseButtonState::Down, .. } = event {
+            let app = APP.with_borrow(Clone::clone);
+            if let Some(app) = app {
+                bar::menu_opening(&app);
+            }
+        }
+    }));
 }
 
 struct Ui {
-    tray: TrayIcon<Wry>,
-    native_tray: tray_icon::TrayIcon,
+    tray: TrayIcon,
+    icon: Icon,
     /// The menu exists even when tray-icon detaches it from the status item.
     menu: Option<Retained<NSMenu>>,
     /// The holdings submenu, while the layout has one.
@@ -161,55 +186,51 @@ struct Columns {
     change: f64,
 }
 
-/// Creates the status item and makes this a menu bar app: no Dock icon or app
-/// menu until a window opens. Must run on the main thread (Tauri's `setup`).
-pub fn create(app: &App) -> tauri::Result<()> {
-    app.handle().set_activation_policy(ActivationPolicy::Accessory)?;
+/// Creates the status item and hides the Dock icon until a window opens.
+/// Must run on the main thread.
+pub fn create(app: &App) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("tray is created on the main thread");
+    if !NSApplication::sharedApplication(mtm)
+        .setActivationPolicy(NSApplicationActivationPolicy::Accessory)
+    {
+        return Err("cannot set accessory activation policy".into());
+    }
+    let icon = template_icon()?;
     let tray = TrayIconBuilder::new()
-        .icon(template_icon())
-        .icon_as_template(true)
-        .tooltip("Candlewick")
-        .show_menu_on_left_click(true)
-        .on_menu_event(|handle, event| on_menu_event(&handle.state::<App>(), event))
-        // The dropdown opens on the press.
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button_state: MouseButtonState::Down, .. } = event {
-                bar::menu_opening(&tray.app_handle().state::<App>());
-            }
-        })
-        .build(app.handle())?;
+        .with_icon(icon.clone())
+        .with_icon_as_template(true)
+        .with_tooltip("Candlewick")
+        .with_menu_on_left_click(true)
+        .build()?;
 
-    // This callback runs inline on the main thread. Both handles refer to
-    // the same tray; native menu ownership stays on this thread.
-    let handle = tray.clone();
-    tray.with_inner_tray_icon(move |inner| {
-        let menu_font_size = NSFont::menuFontOfSize(0.0).pointSize();
-        // SAFETY: reading an immutable AppKit constant.
-        let regular = unsafe { NSFontWeightRegular };
-        UI.set(Some(Ui {
-            tray: handle,
-            native_tray: inner.clone(),
-            menu: None,
-            submenu: None,
-            synced_menu: None,
-            synced_groups: Vec::new(),
-            status_item: inner.ns_status_item().inspect(|item| use_tabular_digits(item)),
-            fonts: Fonts {
-                row: NSFont::monospacedDigitSystemFontOfSize_weight(menu_font_size, regular),
-                caption: NSFont::menuFontOfSize(NSFont::smallSystemFontSize()),
-            },
-            layout: None,
-            columns: Table::new(),
-            sub_columns: Table::new(),
-            synced_columns: Table::new(),
-            scheme: ColorScheme::default(),
-            holdings: None,
-            rows: Vec::new(),
-            synced: None,
-            caption: None,
-            ticker: None,
-        }));
-    })?;
+    let menu_font_size = NSFont::menuFontOfSize(0.0).pointSize();
+    // SAFETY: reading an immutable AppKit constant.
+    let regular = unsafe { NSFontWeightRegular };
+    let status_item = tray.ns_status_item().inspect(|item| use_tabular_digits(item));
+    UI.set(Some(Ui {
+        tray,
+        icon,
+        menu: None,
+        submenu: None,
+        synced_menu: None,
+        synced_groups: Vec::new(),
+        status_item,
+        fonts: Fonts {
+            row: NSFont::monospacedDigitSystemFontOfSize_weight(menu_font_size, regular),
+            caption: NSFont::menuFontOfSize(NSFont::smallSystemFontSize()),
+        },
+        layout: None,
+        columns: Table::new(),
+        sub_columns: Table::new(),
+        synced_columns: Table::new(),
+        scheme: ColorScheme::default(),
+        holdings: None,
+        rows: Vec::new(),
+        synced: None,
+        caption: None,
+        ticker: None,
+    }));
+    APP.set(Some(app.clone()));
     render(app);
     Ok(())
 }
@@ -217,11 +238,14 @@ pub fn create(app: &App) -> tauri::Result<()> {
 /// Queues a render on the main thread; false if the event loop is gone.
 pub fn schedule_render(app: &App) -> bool {
     let handle = app.clone();
-    app.handle().run_on_main_thread(move || render(&handle)).is_ok()
+    app.on_main(move || render(&handle))
 }
 
-/// Nothing to tear down: the status item goes with the process.
-pub fn shutdown() {}
+/// Removes the status item on the main thread.
+pub fn shutdown() {
+    APP.set(None);
+    UI.set(None);
+}
 
 fn render(app: &App) {
     let view = bar::view(app);
@@ -235,7 +259,7 @@ fn render(app: &App) {
 }
 
 impl Ui {
-    fn apply(&mut self, view: View) -> tauri::Result<()> {
+    fn apply(&mut self, view: View) -> Result<()> {
         let mtm = MainThreadMarker::new().expect("tray renders on the main thread");
         let layout = Layout {
             watchlist: view.watchlist,
@@ -278,7 +302,7 @@ impl Ui {
                 }
                 _ => Vec::new(),
             };
-            self.native_tray.set_menu(Some(Box::new(menu)));
+            self.tray.set_menu(Some(Box::new(menu)));
             self.layout = Some(layout);
             self.columns = Table::new();
             self.sub_columns = Table::new();
@@ -438,30 +462,30 @@ impl Ui {
         Ok(())
     }
 
-    fn show(&self, ticker: Option<&Ticker>, mtm: MainThreadMarker) -> tauri::Result<()> {
+    fn show(&self, ticker: Option<&Ticker>, mtm: MainThreadMarker) -> Result<()> {
         match ticker {
             None => {
-                self.tray.set_title(Some(""))?;
-                self.tray.set_icon_with_as_template(Some(template_icon()), true)?;
+                self.tray.set_title(Some(""));
+                self.tray.set_icon_with_as_template(Some(self.icon.clone()), true)?;
             }
             Some(ticker) if ticker.two_rows => {
                 log::trace!("ticker: {ticker:?}");
                 if let Some(button) = self.status_item.as_ref().and_then(|item| item.button(mtm)) {
                     button.setImage(Some(&ticker::image(ticker, self.scheme)));
                 }
-                // After the image: Tauri's setters also fit its click target
+                // After the image: the title setter also fits the click target
                 // to the button, whose width the image just changed.
-                self.tray.set_title(Some(""))?;
+                self.tray.set_title(Some(""));
             }
             Some(ticker) => {
                 log::trace!("ticker: {ticker:?}");
                 // Coming from the icon or the drawn block: clear the image
-                // (Tauri's call clears whatever the button holds).
+                // (the icon setter clears whatever the button holds).
                 let was_text = matches!(&self.ticker, Some(Some(shown)) if !shown.two_rows);
                 if !was_text {
                     self.tray.set_icon(None)?;
                 }
-                self.tray.set_title(Some(&ticker.line()))?;
+                self.tray.set_title(Some(&ticker.line()));
             }
         }
         Ok(())
@@ -619,7 +643,7 @@ fn utf16_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-fn build_menu(layout: &Layout, holdings: Option<&Holdings>) -> tauri::Result<Menu> {
+fn build_menu(layout: &Layout, holdings: Option<&Holdings>) -> Result<Menu> {
     let Layout { watchlist, update, synced, .. } = layout;
     let menu = Menu::new();
     if let Some(holdings) = holdings {

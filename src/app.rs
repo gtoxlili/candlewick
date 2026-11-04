@@ -70,9 +70,13 @@ impl App {
         self.0.topics[topic as usize].subscribe()
     }
 
-    pub fn on_main(&self, f: impl FnOnce() + Send + 'static) {
-        if let Err(error) = self.0.handle.run_on_main_thread(f) {
-            log::error!("cannot reach the main thread: {error}");
+    pub fn on_main(&self, f: impl FnOnce() + Send + 'static) -> bool {
+        match self.0.handle.run_on_main_thread(f) {
+            Ok(()) => true,
+            Err(error) => {
+                log::error!("cannot reach the main thread: {error}");
+                false
+            }
         }
     }
 

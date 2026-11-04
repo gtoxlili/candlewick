@@ -67,7 +67,8 @@ pub(crate) fn verify_closed_menu_refresh(app: &App) {
     shared.model().settings.watchlist.clear();
     bar::request_render(app);
     assert!(button.title().is_empty());
-    assert!(button.image().is_some(), "no pinned instrument shows the template icon");
+    let icon = button.image().expect("no pinned instrument shows the template icon");
+    assert!(icon.isTemplate(), "the status icon follows the system appearance");
     UI.with_borrow(|ui| {
         let ui = ui.as_ref().unwrap();
         assert!(ui.status_item.as_ref().unwrap().menu(mtm).is_none());

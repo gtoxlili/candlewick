@@ -56,6 +56,7 @@ mod window;
 fn main() {
     use tauri::Manager;
 
+    platform::bar::install_event_handlers();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let runtime_handle = runtime.handle().clone();
     tauri::Builder::default()
