@@ -216,16 +216,16 @@ pub fn range(from: f64, to: f64) -> String {
 }
 
 fn range_in(from: f64, to: f64, locale: Locale, now: i64) -> String {
-    let a = local_parts(from.floor() as i64);
-    let b = local_parts(to.floor() as i64);
+    let a = local_time_parts(from.floor() as i64);
+    let b = local_time_parts(to.floor() as i64);
     let span = to - from;
     if span < 2.0 * DAY {
-        let today = local_parts(now);
+        let today = local_time_parts(now);
         let dated = !a.same_date(today) || !b.same_date(today);
         let seconds = span < 10.0 * MINUTE;
         if dated { dated_clock(a, b, seconds, locale) } else { clock_range(a, b, seconds, locale) }
     } else {
-        let this_year = local_parts(now).year;
+        let this_year = local_time_parts(now).year;
         let with_years = a.year != this_year || b.year != this_year;
         dates(a, b, with_years, locale)
     }
@@ -375,13 +375,13 @@ enum Unit {
 
 /// A civil date and wall-clock time in the local time zone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct LocalTime {
-    year: i32,
-    month: i32,
-    day: i32,
-    hour: i32,
-    minute: i32,
-    second: i32,
+pub struct LocalTime {
+    pub year: i32,
+    pub month: i32,
+    pub day: i32,
+    pub hour: i32,
+    pub minute: i32,
+    pub second: i32,
 }
 
 impl LocalTime {
@@ -393,7 +393,7 @@ impl LocalTime {
 /// The C runtime's local time. `struct tm` starts with seconds, minutes,
 /// hours, the day of the month, the month and the year on both platforms;
 /// the buffer leaves room for the rest of it.
-fn local_parts(secs: i64) -> LocalTime {
+pub fn local_time_parts(secs: i64) -> LocalTime {
     let mut tm = [0i32; 16];
     let ok = {
         #[cfg(unix)]
@@ -427,7 +427,7 @@ fn local_parts(secs: i64) -> LocalTime {
 }
 
 fn local_time(secs: i64) -> (i32, i32, i32) {
-    let time = local_parts(secs);
+    let time = local_time_parts(secs);
     (time.hour, time.minute, time.second)
 }
 
