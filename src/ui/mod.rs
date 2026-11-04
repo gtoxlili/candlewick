@@ -8,6 +8,7 @@ use crate::app::{App, Topic};
 
 pub mod chart;
 pub mod holdings;
+pub mod prefs;
 pub mod settings;
 pub mod theme;
 pub mod widgets;
