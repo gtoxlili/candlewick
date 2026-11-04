@@ -57,7 +57,6 @@ fn main() {
     let runtime_handle = runtime.handle().clone();
 
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let config_dir = app::config_dir();
             let settings_path = config_dir.join("settings.json");

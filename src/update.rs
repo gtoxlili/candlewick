@@ -19,13 +19,17 @@ use std::{
 };
 
 use crate::app::{App, Topic};
-use tauri::Manager;
-use tauri_plugin_updater::{Update, UpdaterExt};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use cargo_packager_updater::{RemoteRelease, Update, UpdateFormat, semver::Version};
 
 use crate::{
-    agent, bar, http, net,
+    bar, http, net,
     platform::{self, Pause},
 };
+
+const ENDPOINT: &str =
+    "https://github.com/gtoxlili/candlewick/releases/latest/download/latest.json";
+const PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMwQzE1RjI4RTU5ODI3NjcKUldSbko1amxLRi9CTUZZbjhRaGcxYnZvUzFoemIwRFVIYTlkUDlkVkdzUEVQclhUUFRaM2R2bncK";
 
 /// The feeds and the first render come first.
 const FIRST_CHECK: Duration = Duration::from_secs(90);
@@ -35,8 +39,7 @@ const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 /// How often a ready update looks for its moment, besides every pause change.
 const TICK: Duration = Duration::from_secs(60);
 const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
-/// The plugin's timeout covers the check, not the download, and a stalled
-/// download must not hold the updater for good. Plenty for a few megabytes.
+/// A stalled download must not hold the updater indefinitely.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
 /// What the settings show beside the version.
@@ -96,7 +99,7 @@ pub fn start(app: &App) {
         busy: tokio::sync::Mutex::new(()),
         pending: Mutex::new(None),
     });
-    app.handle().manage(updater.clone());
+    app.set_updater(updater.clone());
     if enabled {
         let app = app.clone();
         app.clone().spawn(async move { updater.run(&app).await });
@@ -104,7 +107,7 @@ pub fn start(app: &App) {
 }
 
 pub fn view(app: &App) -> UpdateView {
-    UpdateView { current: app.handle().package_info().version.to_string(), state: state(app) }
+    UpdateView { current: env!("CARGO_PKG_VERSION").to_owned(), state: state(app) }
 }
 
 /// The version a restart would run, if one is ready.
@@ -132,7 +135,7 @@ pub fn restart_now(app: &App) {
 }
 
 fn updater(app: &App) -> Option<Arc<Updater>> {
-    app.handle().try_state::<Arc<Updater>>().map(|updater| updater.inner().clone())
+    app.updater()
 }
 
 fn state(app: &App) -> UpdateState {
@@ -177,7 +180,7 @@ impl Updater {
             if automatic
                 && matches!(self.state(), UpdateState::Ready { .. })
                 && self.restarts_quietly()
-                && unnoticed(paused, !app.handle().webview_windows().is_empty())
+                && unnoticed(paused, app.windows_open())
             {
                 self.restart(app).await;
             }
@@ -212,10 +215,7 @@ impl Updater {
             return;
         }
         self.set(app, UpdateState::Checking);
-        let found = match client(app) {
-            Ok(updater) => updater.check().await,
-            Err(e) => Err(e),
-        };
+        let found = check().await;
         let update = match found {
             Ok(Some(update)) => update,
             Ok(None) => {
@@ -233,14 +233,10 @@ impl Updater {
         let version = update.version.clone();
         log::info!("update {version} available");
         self.set(app, UpdateState::Downloading { version: version.clone() });
-        match tokio::time::timeout(DOWNLOAD_TIMEOUT, update.download(|_, _| {}, || {})).await {
-            Ok(Ok(bytes)) => self.stage(app, update, bytes).await,
-            Ok(Err(e)) => {
+        match download(&update).await {
+            Ok(bytes) => self.stage(app, update, bytes).await,
+            Err(e) => {
                 log::warn!("update {version} did not download: {e}");
-                self.set(app, UpdateState::Failed { version });
-            }
-            Err(_) => {
-                log::warn!("update {version} stopped downloading");
                 self.set(app, UpdateState::Failed { version });
             }
         }
@@ -290,9 +286,13 @@ impl Updater {
         self.set(app, UpdateState::Restarting { version: version.clone() });
         let pending = lock(&self.pending).take();
         if let Some((update, bytes)) = pending {
-            // Windows: the installer takes over and this process exits inside
-            // `install` (after `on_before_exit`); it only returns on failure.
+            // Windows: the installer takes over and ends this process.
             // macOS: the swap, with the administrator's prompt it needs.
+            #[cfg(windows)]
+            {
+                crate::agent::shutdown(app);
+                platform::bar::shutdown();
+            }
             match app.spawn_blocking(move || update.install(bytes)).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
@@ -308,29 +308,93 @@ impl Updater {
             }
         }
         log::info!("restarting into {version}");
-        app.handle().request_restart();
+        app.request_restart();
     }
 }
 
-/// The updater for one check, on the route and TLS setup of every other
-/// request (`http.rs`).
-fn client(app: &App) -> tauri_plugin_updater::Result<tauri_plugin_updater::Updater> {
-    app.handle()
-        .updater_builder()
-        .timeout(CHECK_TIMEOUT)
-        .configure_client(|client| {
-            client.use_preconfigured_tls(net::tls_client_config()).proxy(http::system_proxy())
-        })
-        // Windows: the installer is about to replace the app; the tray icon,
-        // the taskbar ticker and the agents' skill go first, as at quit.
-        .on_before_exit({
-            let app = app.clone();
-            move || {
-                agent::shutdown(&app);
-                platform::bar::shutdown();
-            }
-        })
+type UpdateError = Box<dyn std::error::Error + Send + Sync>;
+
+fn client(timeout: Duration) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .use_preconfigured_tls(net::tls_client_config())
+        .proxy(http::system_proxy())
+        .user_agent(concat!("Candlewick/", env!("CARGO_PKG_VERSION")))
+        .timeout(timeout)
         .build()
+}
+
+fn newer(release: &RemoteRelease) -> bool {
+    release.version > Version::parse(env!("CARGO_PKG_VERSION")).expect("valid package version")
+}
+
+async fn check() -> Result<Option<Update>, UpdateError> {
+    let response = client(CHECK_TIMEOUT)?.get(ENDPOINT).send().await?.error_for_status()?;
+    if response.status() == reqwest::StatusCode::NO_CONTENT {
+        return Ok(None);
+    }
+    let release: RemoteRelease = response.json().await?;
+    if !newer(&release) {
+        return Ok(None);
+    }
+    let target = cargo_packager_updater::target().ok_or("unsupported update target")?;
+    let format = release.format(&target)?;
+    let download_url = release.download_url(&target)?.clone();
+    let signature = release.signature(&target)?.clone();
+    if !matches!(
+        (std::env::consts::OS, format),
+        ("macos", UpdateFormat::App) | ("windows", UpdateFormat::Nsis)
+    ) {
+        return Err("unsupported update format".into());
+    }
+    let exe = std::env::current_exe()?;
+    #[cfg(target_os = "macos")]
+    let extract_path = exe
+        .ancestors()
+        .find(|dir| dir.extension().is_some_and(|ext| ext == "app"))
+        .ok_or("application bundle not found")?
+        .to_path_buf();
+    #[cfg(windows)]
+    let extract_path = exe.parent().ok_or("application directory not found")?.to_path_buf();
+    Ok(Some(Update {
+        config: cargo_packager_updater::Config {
+            endpoints: vec![ENDPOINT.parse()?],
+            pubkey: PUBLIC_KEY.to_owned(),
+            windows: None,
+        },
+        body: release.notes.clone(),
+        current_version: env!("CARGO_PKG_VERSION").to_owned(),
+        version: release.version.to_string(),
+        date: release.pub_date,
+        target,
+        extract_path,
+        download_url,
+        signature,
+        timeout: Some(DOWNLOAD_TIMEOUT),
+        headers: Default::default(),
+        format,
+    }))
+}
+
+async fn download(update: &Update) -> Result<Vec<u8>, UpdateError> {
+    let bytes = client(DOWNLOAD_TIMEOUT)?
+        .get(update.download_url.clone())
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?
+        .to_vec();
+    verify(&bytes, &update.signature, PUBLIC_KEY)?;
+    Ok(bytes)
+}
+
+fn verify(bytes: &[u8], signature: &str, public_key: &str) -> Result<(), UpdateError> {
+    let key = String::from_utf8(STANDARD.decode(public_key)?)?;
+    let signature = String::from_utf8(STANDARD.decode(signature)?)?;
+    let key = minisign_verify::PublicKey::decode(&key)?;
+    let signature = minisign_verify::Signature::decode(&signature)?;
+    key.verify(bytes, &signature, true)?;
+    Ok(())
 }
 
 /// Whether this user can replace the bundle: write access to it and to the
@@ -375,13 +439,34 @@ mod tests {
         assert!(!unnoticed(asleep, false));
     }
 
-    /// The updater compares the app's version (tauri.conf.json) with the
-    /// manifest, and CI bumps it together with Cargo.toml's; a hand edit
-    /// that touched only one would make every check look like an update.
     #[test]
-    fn the_app_version_is_the_crate_version() {
-        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
-            .expect("tauri.conf.json parses");
-        assert_eq!(conf["version"], env!("CARGO_PKG_VERSION"));
+    fn compares_release_version_to_the_running_package() {
+        let current = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        let manifest = |version: &str| -> RemoteRelease {
+            serde_json::from_value(serde_json::json!({
+                "version": version,
+                "platforms": {}
+            }))
+            .unwrap()
+        };
+        assert!(!newer(&manifest(&current.to_string())));
+        assert!(newer(&manifest(&format!("{}.0.0", current.major + 1))));
+        assert!(!newer(&manifest("0.0.0")));
+    }
+
+    #[test]
+    fn verifies_signed_artifacts_and_rejects_changes() {
+        // Upstream minisign-verify's signed "test" vector, in the release feed's encoding.
+        let key = "untrusted comment: minisign public key\nRWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\n";
+        let signature = concat!(
+            "untrusted comment: signature from minisign secret key\n",
+            "RUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\n",
+            "trusted comment: timestamp:1633700835\tfile:test\tprehashed\n",
+            "wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJAgAooBQ==\n"
+        );
+        let key = STANDARD.encode(key);
+        let signature = STANDARD.encode(signature);
+        assert!(verify(b"test", &signature, &key).is_ok());
+        assert!(verify(b"tampered", &signature, &key).is_err());
     }
 }
