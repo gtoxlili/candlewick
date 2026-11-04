@@ -101,7 +101,10 @@
       "autoUpdate": "自动更新",
       "agentAccess": "AI 助手接入",
       "agentsCanRead": "%{agents} 可以读取行情和持仓",
-      "noAgents": "没有找到 Claude Code、Codex 或 OpenCode"
+      "noAgents": "没有找到 Claude Code、Codex 或 OpenCode",
+      "english": "English",
+      "chinese": "简体中文",
+      "japanese": "日本語"
     },
     "update": {
       "versionUnavailable": "暂时无法读取版本信息",

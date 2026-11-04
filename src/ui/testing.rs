@@ -162,6 +162,27 @@ pub fn run() {
         .unwrap();
         windows.push((kind, window));
     }
+    let original = crate::api::get_settings(&app);
+    let error = ui::settings::parts::update_settings(&app, |settings| {
+        settings.watchlist.push(settings.watchlist[0].clone());
+    });
+    assert!(error.is_err(), "duplicate watchlist entries must be rejected");
+    assert_eq!(crate::api::get_settings(&app), original);
+
+    for (locale_name, locale) in [("en", crate::i18n::Locale::En), ("ja", crate::i18n::Locale::Ja)]
+    {
+        crate::i18n::set(locale);
+        app.notify(crate::app::Topic::Locale);
+        cx.run_until_parked();
+        for (name, dark) in [("light", false), ("dark", true)] {
+            cx.update(|cx| ui::theme::apply(&app, dark, cx));
+            let settings = windows.iter().find(|(kind, _)| *kind == "settings").unwrap().1;
+            render_png(&mut cx, settings, &format!("settings-{locale_name}-{name}"));
+        }
+    }
+    crate::i18n::set(crate::i18n::Locale::En);
+    app.notify(crate::app::Topic::Locale);
+    cx.run_until_parked();
     for (name, dark) in [("light", false), ("dark", true)] {
         cx.update(|cx| ui::theme::apply(&app, dark, cx));
         for (kind, window) in &windows {

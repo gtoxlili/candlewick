@@ -50,6 +50,8 @@ pub fn problem(
     message: impl Into<SharedString>,
 ) -> impl IntoElement {
     gpui_kit::component::alert::Alert::error(id, message.into())
+        .whitespace_nowrap()
+        .overflow_hidden()
 }
 
 /// A row containing a label and a switch.
@@ -90,8 +92,8 @@ pub fn picker_row(label: impl Into<SharedString>, picker: impl IntoElement) -> D
         .px_3()
         .py_2()
         .min_h(px(40.))
-        .child(div().min_w_0().overflow_hidden().whitespace_nowrap().child(label.into()))
-        .child(picker)
+        .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().child(label.into()))
+        .child(div().flex_shrink_0().child(picker))
 }
 
 /// One labeled credential input, with its masking configured by the owner.
@@ -99,6 +101,11 @@ pub struct CredentialInput {
     pub label: SharedString,
     pub state: gpui_kit::Entity<gpui_kit::component::input::InputState>,
 }
+
+/// A credential action called on the UI thread.
+pub type CredentialAction = Box<dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)>;
+/// A credential save action receiving values in field order.
+pub type CredentialSave = Box<dyn Fn(Vec<String>, &mut gpui_kit::Window, &mut gpui_kit::App)>;
 
 /// A controlled credential editor; the owner supplies inputs and save/remove actions.
 pub struct CredentialField {
@@ -109,10 +116,10 @@ pub struct CredentialField {
     pub busy: bool,
     pub inputs: Vec<CredentialInput>,
     pub error: Option<SharedString>,
-    pub on_edit: Box<dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)>,
-    pub on_cancel: Box<dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)>,
-    pub on_save: Box<dyn Fn(Vec<String>, &mut gpui_kit::Window, &mut gpui_kit::App)>,
-    pub on_remove: Box<dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)>,
+    pub on_edit: CredentialAction,
+    pub on_cancel: CredentialAction,
+    pub on_save: CredentialSave,
+    pub on_remove: CredentialAction,
 }
 
 impl CredentialField {

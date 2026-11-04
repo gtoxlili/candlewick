@@ -25,6 +25,7 @@ use gpui_kit::{
 };
 
 pub struct SettingsView {
+    app: App,
     watchlist: Entity<WatchlistSection>,
     keys: Entity<ApiKeysSection>,
     longbridge: Entity<LongbridgeSection>,
@@ -51,33 +52,49 @@ impl SettingsView {
             language: cx.new(|cx| LanguageRow::new(app.clone(), window, cx)),
             agent: cx.new(|cx| AgentNote::new(app.clone(), window, cx)),
             footer: cx.new(|cx| AppFooter::new(app.clone(), window, cx)),
+            app,
             _observers: observers,
         }
     }
 }
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        super::frame(t!("window.settings").to_owned(), cx).child(
-            div()
-                .id("settings-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scrollbar()
-                .px_5()
-                .pt_3()
-                .pb_6()
-                .flex()
-                .flex_col()
-                .gap_5()
-                .child(self.watchlist.clone())
-                .child(self.keys.clone())
-                .child(self.longbridge.clone())
-                .child(self.ths.clone())
-                .child(self.coingecko.clone())
-                .child(self.display.clone())
-                .child(self.language.clone())
-                .child(self.agent.clone())
-                .child(self.footer.clone()),
-        )
+        super::frame(t!("window.settings").to_owned(), cx)
+            .child(
+                div()
+                    .id("settings-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .px_5()
+                    .pt_3()
+                    .pb_6()
+                    .flex()
+                    .flex_col()
+                    .gap_5()
+                    .child(self.watchlist.clone())
+                    .child(self.keys.clone())
+                    .child(self.longbridge.clone())
+                    .child(self.ths.clone())
+                    .child(self.coingecko.clone())
+                    .child(self.display.clone())
+                    .child(
+                        parts::section(t!("settings.general.title"), &self.app, cx).child(
+                            parts::group(&self.app, cx)
+                                .child(self.language.clone())
+                                .child(self.agent.clone()),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .px_5()
+                    .pt_3()
+                    .pb_3()
+                    .flex_shrink_0()
+                    .border_t_1()
+                    .border_color(super::theme::Palette::current(&self.app, cx).border)
+                    .child(self.footer.clone()),
+            )
     }
 }

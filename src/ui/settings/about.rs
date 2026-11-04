@@ -27,5 +27,20 @@ macro_rules! placeholder {
     };
 }
 placeholder!(DisplaySection, "settings.display.title");
-placeholder!(AgentNote, "settings.general.agentAccess");
+pub struct AgentNote {
+    app: App,
+    _observers: Vec<Task<()>>,
+}
+impl AgentNote {
+    pub fn new(app: App, _: &mut Window, cx: &mut Context<Self>) -> Self {
+        let observers = vec![ui::observe(&app, Topic::Locale, cx, |_, _| {})];
+        Self { app, _observers: observers }
+    }
+}
+impl Render for AgentNote {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::{ParentElement, Styled, div};
+        div().px_3().py_2().text_color(ui::theme::Palette::current(&self.app, cx).muted).child("…")
+    }
+}
 placeholder!(AppFooter, "settings.update.check");
