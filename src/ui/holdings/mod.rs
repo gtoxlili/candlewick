@@ -3,19 +3,23 @@
 pub mod summary;
 
 use crate::app::App;
-use gpui_kit::{Context, IntoElement, ParentElement, Render, Styled, Window, div};
+use gpui_kit::{Context, IntoElement, Render, Task, Window};
 
 pub struct HoldingsView {
     app: App,
+    _observers: Vec<Task<()>>,
 }
 impl HoldingsView {
-    pub fn new(app: App) -> Self {
-        Self { app }
+    pub fn new(app: App, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut observers = super::setup(&app, window, cx);
+        observers
+            .push(super::observe_title(&app, window, cx, |_, _| t!("window.holdings").to_owned()));
+        Self { app, _observers: observers }
     }
 }
 impl Render for HoldingsView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _ = &self.app;
-        div().whitespace_nowrap().child(t!("window.holdings").to_owned())
+        super::frame(t!("window.holdings").to_owned(), cx)
     }
 }

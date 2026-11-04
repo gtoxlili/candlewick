@@ -3,7 +3,10 @@
 //! app's trend colors (src/index.css `--up`/`--down`), the same the macOS
 //! menu bar and the pages use.
 
-use crate::bar::Hue;
+use crate::{
+    bar::Hue,
+    ui::theme::{GREEN, RED},
+};
 
 /// sRGB with straight (not premultiplied) alpha, each channel 0–1.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,16 +80,16 @@ impl Palette {
                 secondary: Rgba::rgb(255, 255, 255).alpha(0.786),
                 hover: Rgba::rgb(255, 255, 255).alpha(0.0605),
                 pressed: Rgba::rgb(255, 255, 255).alpha(0.0419),
-                green: Rgba::rgb(0x30, 0xd7, 0x92),
-                red: Rgba::rgb(0xff, 0x6e, 0x74),
+                green: Rgba::rgb(GREEN.1.0, GREEN.1.1, GREEN.1.2),
+                red: Rgba::rgb(RED.1.0, RED.1.1, RED.1.2),
             },
             Tone::Light => Self {
                 text: Rgba::rgb(0, 0, 0).alpha(0.894),
                 secondary: Rgba::rgb(0, 0, 0).alpha(0.62),
                 hover: Rgba::rgb(0, 0, 0).alpha(0.0373),
                 pressed: Rgba::rgb(0, 0, 0).alpha(0.0241),
-                green: Rgba::rgb(0x00, 0x80, 0x47),
-                red: Rgba::rgb(0xd4, 0x2e, 0x3d),
+                green: Rgba::rgb(GREEN.0.0, GREEN.0.1, GREEN.0.2),
+                red: Rgba::rgb(RED.0.0, RED.0.1, RED.0.2),
             },
         }
     }

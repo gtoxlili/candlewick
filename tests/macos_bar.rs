@@ -56,7 +56,12 @@ mod update;
 mod window;
 
 #[cfg(target_os = "macos")]
+#[path = "../src/ui/testing.rs"]
+mod ui_testing;
+
+#[cfg(target_os = "macos")]
 fn main() {
+    ui_testing::run();
     platform::bar::install_event_handlers();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let runtime_handle = runtime.handle().clone();

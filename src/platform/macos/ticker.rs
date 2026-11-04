@@ -36,8 +36,7 @@ const TREND_TINT: f64 = 0.45;
 
 /// The app's trend colors (src/index.css `--up`/`--down`), as sRGB bytes
 /// for the light and the dark appearance.
-const GREEN: ((u8, u8, u8), (u8, u8, u8)) = ((0x00, 0x80, 0x47), (0x30, 0xd7, 0x92));
-const RED: ((u8, u8, u8), (u8, u8, u8)) = ((0xd4, 0x2e, 0x3d), (0xff, 0x6e, 0x74));
+use crate::ui::theme::{GREEN, RED};
 
 /// A color that resolves to its light or dark value for whatever appearance
 /// it is drawn in, as the system's own semantic colors do.

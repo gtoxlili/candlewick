@@ -27,7 +27,7 @@ mod net;
 mod platform;
 mod portfolio;
 mod sign;
-mod ui;
+pub mod ui;
 mod update;
 mod window;
 

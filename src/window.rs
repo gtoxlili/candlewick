@@ -1,7 +1,8 @@
 use std::{collections::HashMap, io};
 
 use gpui_kit::{
-    AnyWindowHandle, AppContext, Global, TitlebarOptions, WindowBounds, WindowOptions, px, size,
+    AnyWindowHandle, AppContext, Global, WindowBackgroundAppearance, WindowBounds, WindowOptions,
+    px, size,
 };
 
 use crate::{
@@ -158,31 +159,19 @@ fn open_on_main(app: &App, cx: &mut gpui_kit::App, label: &'static str, title: S
         raise(cx, window);
         return;
     }
-    let (width, height, min_width, min_height, resizable) = match label {
-        SETTINGS => (460., 640., 460., 640., false),
-        HOLDINGS => (980., 640., 800., 500., true),
-        CHART => (980., 640., 760., 480., true),
-        _ => unreachable!(),
-    };
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(width), px(height)), cx)),
-        titlebar: Some(TitlebarOptions { title: Some(title.into()), ..Default::default() }),
-        window_min_size: Some(size(px(min_width), px(min_height))),
-        is_resizable: resizable,
-        ..Default::default()
-    };
+    let options = window_options(cx, label, title);
     let handle = app.clone();
     let result = match label {
-        SETTINGS => gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|_| ui::settings::SettingsView::new(handle))
+        SETTINGS => gpui_kit::open_window(options, cx, |window, cx| {
+            cx.new(|cx| ui::settings::SettingsView::new(handle, window, cx))
         })
         .map(|(w, _)| w),
-        HOLDINGS => gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|_| ui::holdings::HoldingsView::new(handle))
+        HOLDINGS => gpui_kit::open_window(options, cx, |window, cx| {
+            cx.new(|cx| ui::holdings::HoldingsView::new(handle, window, cx))
         })
         .map(|(w, _)| w),
-        CHART => gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|_| ui::chart::ChartView::new(handle))
+        CHART => gpui_kit::open_window(options, cx, |window, cx| {
+            cx.new(|cx| ui::chart::ChartView::new(handle, window, cx))
         })
         .map(|(w, _)| w),
         _ => unreachable!(),
@@ -202,6 +191,30 @@ fn open_on_main(app: &App, cx: &mut gpui_kit::App, label: &'static str, title: S
                 platform::window::did_close_all(cx);
             }
         }
+    }
+}
+
+pub(crate) fn window_options(cx: &mut gpui_kit::App, label: &str, title: String) -> WindowOptions {
+    let (width, height, min_width, min_height, resizable) = match label {
+        SETTINGS => (460., 640., 460., 640., false),
+        HOLDINGS => (980., 640., 800., 500., true),
+        CHART => (980., 640., 760., 480., true),
+        _ => unreachable!(),
+    };
+    WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(width), px(height)), cx)),
+        titlebar: Some(gpui_kit::TitlebarOptions {
+            title: Some(title.into()),
+            ..gpui_kit::component::TitleBar::title_bar_options()
+        }),
+        window_background: if cfg!(target_os = "windows") {
+            WindowBackgroundAppearance::MicaBackdrop
+        } else {
+            WindowBackgroundAppearance::Blurred
+        },
+        window_min_size: Some(size(px(min_width), px(min_height))),
+        is_resizable: resizable,
+        ..gpui_kit::component::TitleBar::window_options()
     }
 }
 
