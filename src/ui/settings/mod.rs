@@ -1,10 +1,39 @@
 //! The settings window.
 
+mod about;
+mod coingecko;
+mod keys;
+mod language;
+mod longbridge;
+pub mod parts;
+mod ths;
+mod watchlist;
+
+use self::{
+    about::{AgentNote, AppFooter, DisplaySection},
+    coingecko::CoinGeckoSection,
+    keys::ApiKeysSection,
+    language::LanguageRow,
+    longbridge::LongbridgeSection,
+    ths::ThsSection,
+    watchlist::WatchlistSection,
+};
 use crate::app::App;
-use gpui_kit::{Context, IntoElement, Render, Task, Window};
+use gpui_kit::{
+    AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render, Styled,
+    Task, Window, component::scroll::ScrollableElement, div,
+};
 
 pub struct SettingsView {
-    app: App,
+    watchlist: Entity<WatchlistSection>,
+    keys: Entity<ApiKeysSection>,
+    longbridge: Entity<LongbridgeSection>,
+    ths: Entity<ThsSection>,
+    coingecko: Entity<CoinGeckoSection>,
+    display: Entity<DisplaySection>,
+    language: Entity<LanguageRow>,
+    agent: Entity<AgentNote>,
+    footer: Entity<AppFooter>,
     _observers: Vec<Task<()>>,
 }
 impl SettingsView {
@@ -12,12 +41,43 @@ impl SettingsView {
         let mut observers = super::setup(&app, window, cx);
         observers
             .push(super::observe_title(&app, window, cx, |_, _| t!("window.settings").to_owned()));
-        Self { app, _observers: observers }
+        Self {
+            watchlist: cx.new(|cx| WatchlistSection::new(app.clone(), window, cx)),
+            keys: cx.new(|cx| ApiKeysSection::new(app.clone(), window, cx)),
+            longbridge: cx.new(|cx| LongbridgeSection::new(app.clone(), window, cx)),
+            ths: cx.new(|cx| ThsSection::new(app.clone(), window, cx)),
+            coingecko: cx.new(|cx| CoinGeckoSection::new(app.clone(), window, cx)),
+            display: cx.new(|cx| DisplaySection::new(app.clone(), window, cx)),
+            language: cx.new(|cx| LanguageRow::new(app.clone(), window, cx)),
+            agent: cx.new(|cx| AgentNote::new(app.clone(), window, cx)),
+            footer: cx.new(|cx| AppFooter::new(app.clone(), window, cx)),
+            _observers: observers,
+        }
     }
 }
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _ = &self.app;
-        super::frame(t!("window.settings").to_owned(), cx)
+        super::frame(t!("window.settings").to_owned(), cx).child(
+            div()
+                .id("settings-scroll")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scrollbar()
+                .px_5()
+                .pt_3()
+                .pb_6()
+                .flex()
+                .flex_col()
+                .gap_5()
+                .child(self.watchlist.clone())
+                .child(self.keys.clone())
+                .child(self.longbridge.clone())
+                .child(self.ths.clone())
+                .child(self.coingecko.clone())
+                .child(self.display.clone())
+                .child(self.language.clone())
+                .child(self.agent.clone())
+                .child(self.footer.clone()),
+        )
     }
 }
