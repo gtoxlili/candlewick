@@ -186,15 +186,24 @@ struct Columns {
     change: f64,
 }
 
+/// Hides the Dock icon until a window opens. An app whose Info.plist says
+/// `LSUIElement` starts as an accessory, and the system answers `false` to
+/// setting the policy a process already has, so the policy it ends up with is
+/// what counts, not the answer.
+fn become_accessory(mtm: MainThreadMarker) -> Result<()> {
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    if app.activationPolicy() != NSApplicationActivationPolicy::Accessory {
+        return Err("cannot set accessory activation policy".into());
+    }
+    Ok(())
+}
+
 /// Creates the status item and hides the Dock icon until a window opens.
 /// Must run on the main thread.
 pub fn create(app: &App) -> Result<()> {
     let mtm = MainThreadMarker::new().expect("tray is created on the main thread");
-    if !NSApplication::sharedApplication(mtm)
-        .setActivationPolicy(NSApplicationActivationPolicy::Accessory)
-    {
-        return Err("cannot set accessory activation policy".into());
-    }
+    become_accessory(mtm)?;
     let icon = template_icon()?;
     let tray = TrayIconBuilder::new()
         .with_icon(icon.clone())

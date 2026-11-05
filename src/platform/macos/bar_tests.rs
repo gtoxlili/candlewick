@@ -4,6 +4,14 @@ use crate::app::App;
 
 use super::*;
 
+/// A menu-bar app is an accessory from launch, so the second call here is the
+/// one a launched app makes: the system refuses to set the policy it has.
+pub(crate) fn verify_accessory_policy() {
+    let mtm = MainThreadMarker::new().unwrap();
+    become_accessory(mtm).unwrap();
+    become_accessory(mtm).unwrap();
+}
+
 pub(crate) fn verify_closed_menu_refresh(app: &App) {
     use crate::model::Quote;
 

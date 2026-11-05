@@ -27,6 +27,7 @@ pub fn run_native_checks() {
         let handle = app::App::new(cx, runtime_handle, shared);
         verify_topics(&handle);
         platform::bar::create(&handle).unwrap();
+        platform::bar::tests::verify_accessory_policy();
         platform::bar::tests::verify_closed_menu_refresh(&handle);
         println!("macos_bar: prices, settings and menu rows refresh without a click");
         platform::bar::shutdown();
