@@ -1,8 +1,5 @@
 //! Chart state and the requests that update it.
 
-#![cfg_attr(not(test), allow(dead_code))]
-// Removed when a window uses this module.
-
 use std::{
     cell::Cell,
     collections::BTreeSet,
@@ -132,6 +129,15 @@ impl ChartModel {
     pub fn app(&self) -> &App {
         &self.app
     }
+    #[cfg(test)]
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+    /// The page to ask for next, when a test drives the history itself.
+    #[cfg(test)]
+    pub(crate) fn begin_older(&mut self) -> Option<OlderPage> {
+        self.begin_older_at(std::time::Instant::now())
+    }
     pub fn instrument_id(&self) -> Option<&str> {
         self.instrument_id.as_deref()
     }
@@ -150,8 +156,23 @@ impl ChartModel {
     pub fn last_direction(&self) -> i8 {
         self.last_direction
     }
+    /// What the stretch on screen did. The canvas reports it every frame while
+    /// the window follows the live edge, so only a difference the line under
+    /// the price can show is worth a repaint.
     pub fn set_visible_stats(&mut self, visible: Option<VisibleStats>, cx: &mut Context<Self>) {
-        if self.visible != visible {
+        let same = match (self.visible, visible) {
+            (Some(before), Some(after)) => {
+                before.live == after.live
+                    && (before.change_pct - after.change_pct).abs() < 0.005
+                    && (before.amplitude_pct - after.amplitude_pct).abs() < 0.005
+                    && (before.span - after.span).abs() < 0.001 * after.span
+                    && (before.from - after.from).abs() < 0.005 * after.span
+                    && (before.to - after.to).abs() < 0.005 * after.span
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
             self.visible = visible;
             cx.notify();
         }
@@ -285,7 +306,11 @@ impl ChartModel {
 
     fn sync_instrument(&mut self, cx: &mut Context<Self>) {
         let id = api::get_chart_instrument(&self.app);
-        if id == self.instrument_id {
+        let spec = id.as_ref().and_then(|id| api::chart_spec(&self.app, id.clone()).ok());
+        // A settings change can add a provider key, which changes what the
+        // provider offers this instrument: intervals, a book. Only the same
+        // offer keeps the loaded chart.
+        if id == self.instrument_id && spec == self.spec {
             self.instrument =
                 id.as_ref().and_then(|id| api::chart_instrument(&self.app, id.clone()).ok());
             return;
@@ -298,7 +323,7 @@ impl ChartModel {
         self.instrument_id = id.clone();
         self.instrument =
             id.as_ref().and_then(|id| api::chart_instrument(&self.app, id.clone()).ok());
-        self.spec = id.as_ref().and_then(|id| api::chart_spec(&self.app, id.clone()).ok());
+        self.spec = spec;
         self.market = None;
         self.analysis_revision = None;
         self.viewport = Viewport::new(now(), 60.0, self.prefs.chart.bars);
@@ -396,7 +421,7 @@ impl ChartModel {
         });
         self.keep(task);
     }
-    fn apply_event(&mut self, event: LiveEvent, cx: &mut Context<Self>) {
+    pub(crate) fn apply_event(&mut self, event: LiveEvent, cx: &mut Context<Self>) {
         let Some(market) = &mut self.market else {
             return;
         };
@@ -436,19 +461,19 @@ impl ChartModel {
         let token = market.begin_history();
         self.request_history(token, None, PAGE, false, cx);
     }
-    fn begin_older(&mut self, now: std::time::Instant) -> Option<OlderPage> {
+    fn begin_older_at(&mut self, now: std::time::Instant) -> Option<OlderPage> {
         if self.older_retry_at.is_some_and(|at| now < at) {
             return None;
         }
         self.market.as_mut().and_then(Market::begin_older)
     }
     fn load_older(&mut self, cx: &mut Context<Self>) {
-        let Some(page) = self.begin_older(std::time::Instant::now()) else {
+        let Some(page) = self.begin_older_at(std::time::Instant::now()) else {
             return;
         };
         self.request_history(page.load, Some(page.before), page.limit, true, cx);
     }
-    fn accept_history(
+    pub(crate) fn accept_history(
         &mut self,
         generation: u64,
         token: LoadToken,
@@ -734,7 +759,7 @@ mod tests {
             model.last_direction = 1;
             let old_token = model.market.as_mut().unwrap().begin_history();
             let old_interval = model.market.as_ref().unwrap().current().interval();
-            let generation = model.generation;
+            let generation = model.generation();
             model.sync_instrument(cx);
             assert!(model.instrument_id().is_none());
             assert!(model.market().is_none());
@@ -751,15 +776,15 @@ mod tests {
             assert!(!model.accept_history(generation, old_token, vec![candle(60.0)], false));
             assert!(!model.market.as_ref().unwrap().current().ready());
             assert!(model.accept_history(
-                model.generation,
+                model.generation(),
                 new_token,
                 vec![candle(60.0), candle(120.0)],
                 false
             ));
-            let page = model.begin_older(std::time::Instant::now()).unwrap();
+            let page = model.begin_older().unwrap();
             assert_eq!(page.before, 60.0);
             assert_eq!(page.limit, PAGE);
-            assert!(model.begin_older(std::time::Instant::now()).is_none());
+            assert!(model.begin_older().is_none());
         });
     }
 

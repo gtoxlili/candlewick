@@ -232,7 +232,7 @@ pub struct Candidate {
 
 /// What the chart window offers for an instrument: data, not text; the page
 /// names it in its own language.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChartSpec {
     pub source: ProviderId,
     pub intervals: Vec<IntervalSpec>,
@@ -256,7 +256,7 @@ pub struct ChartSpec {
     pub link: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatsSpan {
     /// The last 24 hours, as crypto counts a day.
     Rolling24h,
@@ -264,7 +264,7 @@ pub enum StatsSpan {
     Today,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntervalSpec {
     pub secs: u32,
     /// How the chart first shows it.
@@ -276,7 +276,7 @@ pub struct IntervalSpec {
     pub regular_only: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChartMode {
     Line,
     Candle,
