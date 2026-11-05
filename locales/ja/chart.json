@@ -52,7 +52,7 @@
     "flowBalanced": "売り買い拮抗",
     "liquidity": "流動性",
     "marketCap": "時価総額",
-    "fdv": "完全希薄化時価総額",
+    "fdv": "FDV",
     "tools": "描画ツール",
     "tool": {
       "cursor": "カーソル",
