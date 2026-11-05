@@ -1008,6 +1008,23 @@ fn chart_live_samples(cx: &mut HeadlessAppContext, app: &App) {
     // A settled chart asks for no frames at all.
     assert_eq!(chart_frame(cx, window), 0, "a chart at rest requests no frames");
 
+    // A window that changes size lays the chart out again at the new size.
+    let wide = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame").plot_w;
+    cx.update_window(window, |_, window, cx| {
+        window.resize(gpui_kit::size(px(760.), px(480.)));
+        window.bounds_changed(cx);
+    })
+    .unwrap();
+    assert!(chart_settle(cx, window, 400));
+    let narrow = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame").plot_w;
+    assert!(narrow < wide - 100.0, "the plot follows the window: {wide} -> {narrow}");
+    cx.update_window(window, |_, window, cx| {
+        window.resize(gpui_kit::size(px(980.), px(640.)));
+        window.bounds_changed(cx);
+    })
+    .unwrap();
+    assert!(chart_settle(cx, window, 400));
+
     // The overlay paints on the right axis the price of the level drawn here;
     // its position is the one the frame the canvas wrote maps.
     let a = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame");

@@ -385,9 +385,11 @@ impl Element for PriceElement {
             |_, _, _| (),
             move |bounds, (), window, cx| {
                 let mut painter = painter.borrow_mut();
-                if painter.bounds.is_none() {
-                    // The first frame: lay the chart out at the size it was
-                    // given, so the overlay can paint the same geometry.
+                if painter.bounds != Some(bounds) {
+                    // The first frame, or a window that changed size: lay the
+                    // chart out again here, where the size is exact, with no
+                    // time passing, and let the tick after this frame keep
+                    // animating from the new size.
                     painter.advance(&model, bounds, window, cx, Some(0.0));
                 }
                 draw(&mut painter, palette, dark, bounds, &model, window, cx);
