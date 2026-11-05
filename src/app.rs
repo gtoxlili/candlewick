@@ -11,7 +11,7 @@ use tokio::{runtime::Handle, sync::watch, task::JoinHandle};
 
 use crate::{agent::Agent, model::Shared};
 
-const IDENTIFIER: &str = "com.influo.candlewick";
+pub(crate) const IDENTIFIER: &str = "com.influo.candlewick";
 
 #[derive(Clone)]
 pub struct App(Arc<Inner>);

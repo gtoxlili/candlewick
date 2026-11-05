@@ -3,15 +3,17 @@
 //! A little after launch, and every six hours while automatic updates are
 //! on, the release's manifest is fetched along the route every other request
 //! takes (the system proxy, the platform's certificate check). A newer
-//! version is downloaded and its signature checked right away. On macOS the
-//! bundle is swapped on disk there and then, so even the next launch runs
-//! it; on Windows, and wherever swapping would need an administrator, the
-//! verified package waits in memory. The restart waits until nobody would
-//! notice it: no window open, and the display off or the session locked.
-//! Whoever wants it sooner has the dropdown's item and the settings' button.
+//! version is downloaded and its signature checked right away, and `install`
+//! puts it in place. On macOS the bundle is swapped on disk there and then,
+//! so even the next launch runs it; on Windows the verified installer waits
+//! for the restart that runs it. The restart waits until nobody would notice
+//! it: no window open, and the display off or the session locked. Whoever
+//! wants it sooner has the dropdown's item and the settings' button.
 //!
 //! Only an installed copy updates itself (`platform::is_installed`): a build
 //! run from elsewhere would have its own directory replaced.
+
+mod install;
 
 use std::{
     sync::{Arc, Mutex, MutexGuard},
@@ -20,7 +22,7 @@ use std::{
 
 use crate::app::{App, Topic};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use cargo_packager_updater::{RemoteRelease, Update, UpdateFormat, semver::Version};
+use cargo_packager_updater::{RemoteRelease, UpdateFormat, semver::Version, url::Url};
 
 use crate::{
     bar, http, net,
@@ -77,14 +79,21 @@ pub struct UpdateView {
     pub state: UpdateState,
 }
 
+/// A release the manifest says is newer, still to be downloaded.
+struct Release {
+    version: Version,
+    download_url: Url,
+    signature: String,
+}
+
 pub struct Updater {
     state: Mutex<UpdateState>,
     /// Checks and restarts never overlap.
     busy: tokio::sync::Mutex<()>,
-    /// A verified package still to install: always on Windows, where the
-    /// installer ends the process; on macOS when swapping the bundle needs
-    /// an administrator, which only a restart the user asked for may prompt.
-    pending: Mutex<Option<(Update, Vec<u8>)>>,
+    /// Windows: the verified installer. Running it ends the process, so it
+    /// waits for a restart.
+    #[cfg(windows)]
+    pending: Mutex<Option<Vec<u8>>>,
 }
 
 /// Starts checking for updates, if this copy is installed.
@@ -97,6 +106,7 @@ pub fn start(app: &App) {
             UpdateState::Disabled
         }),
         busy: tokio::sync::Mutex::new(()),
+        #[cfg(windows)]
         pending: Mutex::new(None),
     });
     app.set_updater(updater.clone());
@@ -179,7 +189,6 @@ impl Updater {
             let paused = control.borrow().paused;
             if automatic
                 && matches!(self.state(), UpdateState::Ready { .. })
-                && self.restarts_quietly()
                 && unnoticed(paused, app.windows_open())
             {
                 self.restart(app).await;
@@ -196,12 +205,6 @@ impl Updater {
         }
     }
 
-    /// Whether the restart needs nobody: not an administrator's password to
-    /// install a package still held on macOS.
-    fn restarts_quietly(&self) -> bool {
-        cfg!(windows) || lock(&self.pending).is_none()
-    }
-
     async fn check(&self, app: &App) {
         let Ok(_busy) = self.busy.try_lock() else {
             return;
@@ -216,8 +219,8 @@ impl Updater {
         }
         self.set(app, UpdateState::Checking);
         let found = check().await;
-        let update = match found {
-            Ok(Some(update)) => update,
+        let release = match found {
+            Ok(Some(release)) => release,
             Ok(None) => {
                 self.set(app, UpdateState::Idle { checked: true });
                 return;
@@ -230,11 +233,11 @@ impl Updater {
                 return;
             }
         };
-        let version = update.version.clone();
+        let version = release.version.to_string();
         log::info!("update {version} available");
         self.set(app, UpdateState::Downloading { version: version.clone() });
-        match download(&update).await {
-            Ok(bytes) => self.stage(app, update, bytes).await,
+        match download(&release).await {
+            Ok(bytes) => self.stage(app, release, bytes).await,
             Err(e) => {
                 log::warn!("update {version} did not download: {e}");
                 self.set(app, UpdateState::Failed { version });
@@ -242,17 +245,17 @@ impl Updater {
         }
     }
 
-    /// Swaps the bundle now if that needs nobody's password: the running
+    /// Replaces the bundle now if its folder can be written to: the running
     /// process keeps its mapped binary, and the next launch is the new one.
     #[cfg(target_os = "macos")]
-    async fn stage(&self, app: &App, update: Update, bytes: Vec<u8>) {
-        let version = update.version.clone();
-        if !bundle_is_writable() {
-            *lock(&self.pending) = Some((update, bytes));
-            self.set(app, UpdateState::Ready { version });
+    async fn stage(&self, app: &App, release: Release, bytes: Vec<u8>) {
+        let version = release.version.to_string();
+        let Some(bundle) = install::installed_bundle() else {
+            log::warn!("update {version} did not install: it is not inside an app bundle");
+            self.set(app, UpdateState::Failed { version });
             return;
-        }
-        match app.spawn_blocking(move || update.install(bytes)).await {
+        };
+        match app.spawn_blocking(move || install::install(&bundle, &bytes)).await {
             Ok(Ok(())) => {
                 log::info!("update {version} installed; a restart runs it");
                 self.set(app, UpdateState::Ready { version });
@@ -268,11 +271,11 @@ impl Updater {
         }
     }
 
-    /// Running the installer ends the process, so it waits for the restart.
+    /// The installer ends the process, so it waits for the restart.
     #[cfg(windows)]
-    async fn stage(&self, app: &App, update: Update, bytes: Vec<u8>) {
-        let version = update.version.clone();
-        *lock(&self.pending) = Some((update, bytes));
+    async fn stage(&self, app: &App, release: Release, bytes: Vec<u8>) {
+        let version = release.version.to_string();
+        *lock(&self.pending) = Some(bytes);
         self.set(app, UpdateState::Ready { version });
     }
 
@@ -284,31 +287,40 @@ impl Updater {
             return;
         };
         self.set(app, UpdateState::Restarting { version: version.clone() });
-        let pending = lock(&self.pending).take();
-        if let Some((update, bytes)) = pending {
-            // Windows: the installer takes over and ends this process.
-            // macOS: the swap, with the administrator's prompt it needs.
-            #[cfg(windows)]
-            {
-                crate::agent::shutdown(app);
-                platform::bar::shutdown();
-            }
-            match app.spawn_blocking(move || update.install(bytes)).await {
+
+        #[cfg(windows)]
+        {
+            let Some(bytes) = lock(&self.pending).take() else {
+                log::warn!("update {version} is no longer held in memory");
+                self.set(app, UpdateState::Failed { version });
+                return;
+            };
+            // The installer replaces the files of the running app, so this
+            // process leaves first; the installer starts the new version.
+            crate::agent::shutdown(app);
+            platform::bar::shutdown();
+            match app.spawn_blocking(move || install::install(&bytes)).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
-                    log::warn!("update {version} did not install: {e}");
+                    log::warn!("update {version} did not start: {e}");
                     self.set(app, UpdateState::Failed { version });
                     return;
                 }
                 Err(e) => {
-                    log::warn!("update {version} did not install: {e}");
+                    log::warn!("update {version} did not start: {e}");
                     self.set(app, UpdateState::Failed { version });
                     return;
                 }
             }
+            log::info!("update {version} is installing; the installer starts the new version");
+            std::process::exit(0);
         }
-        log::info!("restarting into {version}");
-        app.request_restart();
+
+        #[cfg(target_os = "macos")]
+        {
+            log::info!("restarting into {version}");
+            app.request_restart();
+        }
     }
 }
 
@@ -327,7 +339,7 @@ fn newer(release: &RemoteRelease) -> bool {
     release.version > Version::parse(env!("CARGO_PKG_VERSION")).expect("valid package version")
 }
 
-async fn check() -> Result<Option<Update>, UpdateError> {
+async fn check() -> Result<Option<Release>, UpdateError> {
     let response = client(CHECK_TIMEOUT)?.get(ENDPOINT).send().await?.error_for_status()?;
     if response.status() == reqwest::StatusCode::NO_CONTENT {
         return Ok(None);
@@ -338,53 +350,29 @@ async fn check() -> Result<Option<Update>, UpdateError> {
     }
     let target = cargo_packager_updater::target().ok_or("unsupported update target")?;
     let format = release.format(&target)?;
-    let download_url = release.download_url(&target)?.clone();
-    let signature = release.signature(&target)?.clone();
     if !matches!(
         (std::env::consts::OS, format),
         ("macos", UpdateFormat::App) | ("windows", UpdateFormat::Nsis)
     ) {
         return Err("unsupported update format".into());
     }
-    let exe = std::env::current_exe()?;
-    #[cfg(target_os = "macos")]
-    let extract_path = exe
-        .ancestors()
-        .find(|dir| dir.extension().is_some_and(|ext| ext == "app"))
-        .ok_or("application bundle not found")?
-        .to_path_buf();
-    #[cfg(windows)]
-    let extract_path = exe.parent().ok_or("application directory not found")?.to_path_buf();
-    Ok(Some(Update {
-        config: cargo_packager_updater::Config {
-            endpoints: vec![ENDPOINT.parse()?],
-            pubkey: PUBLIC_KEY.to_owned(),
-            windows: None,
-        },
-        body: release.notes.clone(),
-        current_version: env!("CARGO_PKG_VERSION").to_owned(),
-        version: release.version.to_string(),
-        date: release.pub_date,
-        target,
-        extract_path,
-        download_url,
-        signature,
-        timeout: Some(DOWNLOAD_TIMEOUT),
-        headers: Default::default(),
-        format,
+    Ok(Some(Release {
+        version: release.version.clone(),
+        download_url: release.download_url(&target)?.clone(),
+        signature: release.signature(&target)?.clone(),
     }))
 }
 
-async fn download(update: &Update) -> Result<Vec<u8>, UpdateError> {
+async fn download(release: &Release) -> Result<Vec<u8>, UpdateError> {
     let bytes = client(DOWNLOAD_TIMEOUT)?
-        .get(update.download_url.clone())
+        .get(release.download_url.clone())
         .send()
         .await?
         .error_for_status()?
         .bytes()
         .await?
         .to_vec();
-    verify(&bytes, &update.signature, PUBLIC_KEY)?;
+    verify(&bytes, &release.signature, PUBLIC_KEY)?;
     Ok(bytes)
 }
 
@@ -395,24 +383,6 @@ fn verify(bytes: &[u8], signature: &str, public_key: &str) -> Result<(), UpdateE
     let signature = minisign_verify::Signature::decode(&signature)?;
     key.verify(bytes, &signature, true)?;
     Ok(())
-}
-
-/// Whether this user can replace the bundle: write access to it and to the
-/// folder it sits in (an admin's Applications folder, or ~/Applications).
-#[cfg(target_os = "macos")]
-fn bundle_is_writable() -> bool {
-    let Ok(exe) = std::env::current_exe() else {
-        return false;
-    };
-    let Some(bundle) = exe.ancestors().find(|dir| dir.extension().is_some_and(|ext| ext == "app"))
-    else {
-        return false;
-    };
-    let can_write = |dir: &std::path::Path| {
-        let probe = dir.join(format!(".candlewick-update-{}", std::process::id()));
-        std::fs::create_dir(&probe).is_ok() && std::fs::remove_dir(&probe).is_ok()
-    };
-    bundle.parent().is_some_and(can_write) && can_write(bundle)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

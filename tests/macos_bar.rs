@@ -52,7 +52,7 @@ mod sign;
 #[path = "../src/ui/mod.rs"]
 mod ui;
 #[cfg(target_os = "macos")]
-#[path = "../src/update.rs"]
+#[path = "../src/update/mod.rs"]
 mod update;
 #[cfg(target_os = "macos")]
 #[path = "../src/window.rs"]
