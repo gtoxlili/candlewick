@@ -31,15 +31,20 @@
     },
     "holdings": {
       "title": "保有資産",
-      "footnote": "保有資産の読み取りにだけ使い、注文はしません。キーはこのコンピュータにのみ保存されます。",
       "notSet": "未設定",
+      "apiKey": "API Key",
+      "apiSecret": "API Secret",
+      "secretKey": "Secret Key",
+      "passphrase": "Passphrase",
       "create": "%{exchange} で API キーを作成",
       "verifying": "確認中",
       "inBar": "メニューバーに総資産を表示",
       "inBar_windows": "タスクバーに総資産を表示",
       "inBarDetail": "ウォッチリストの価格の代わりに表示します。ウォッチリストからいつでも戻せます。",
       "window": "保有資産ウインドウ",
-      "open": "開く"
+      "open": "開く",
+      "footnote": "保有資産の読み取りにだけ使い、注文はしません。",
+      "footnoteKeys": "キーはこのコンピュータにのみ保存されます。"
     },
     "stocks": {
       "footnote": "入力すると、米国株・香港株・中国 A 株を追加できます。",

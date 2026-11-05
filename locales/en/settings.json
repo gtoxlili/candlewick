@@ -31,15 +31,20 @@
     },
     "holdings": {
       "title": "Holdings",
-      "footnote": "Only used to read your holdings, never to trade. Keys stay on this computer.",
       "notSet": "Not set",
+      "apiKey": "API Key",
+      "apiSecret": "API Secret",
+      "secretKey": "Secret Key",
+      "passphrase": "Passphrase",
       "create": "Create an API key on %{exchange}",
       "verifying": "Verifying",
       "inBar": "Show total in menu bar",
       "inBar_windows": "Show total in taskbar",
       "inBarDetail": "Takes the place of a watchlist price; turn one back on in the watchlist anytime.",
       "window": "Holdings window",
-      "open": "Open"
+      "open": "Open",
+      "footnote": "Only used to read your holdings, never to trade.",
+      "footnoteKeys": "Keys stay on this computer."
     },
     "stocks": {
       "footnote": "Fill these in to add US, Hong Kong and China A-share stocks.",

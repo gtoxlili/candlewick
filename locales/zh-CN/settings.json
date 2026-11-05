@@ -31,15 +31,20 @@
     },
     "holdings": {
       "title": "持仓",
-      "footnote": "只用于读取持仓，不会下单。Key 只保存在本机。",
       "notSet": "未填写",
+      "apiKey": "API Key",
+      "apiSecret": "API Secret",
+      "secretKey": "Secret Key",
+      "passphrase": "Passphrase",
       "create": "在%{exchange}创建 API Key",
       "verifying": "正在验证",
       "inBar": "菜单栏显示总资产",
       "inBar_windows": "任务栏显示总资产",
       "inBarDetail": "代替自选的价格；也可在自选里重新置顶一个。",
       "window": "持仓窗口",
-      "open": "打开"
+      "open": "打开",
+      "footnote": "只用于读取持仓，不会下单。",
+      "footnoteKeys": "Key 只保存在本机。"
     },
     "stocks": {
       "footnote": "填写后可添加美股、港股和 A 股。",
