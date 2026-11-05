@@ -4,7 +4,7 @@
 
 ## 什么算应用本身
 
-`src`、`src-tauri`、`index.html`、`chart.html`、`holdings.html`、`package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、`patches`、`tsconfig.json` 和 `vite.config.ts`。只改文档不会触发构建。只改工作流会完整构建一遍，但不发布。
+`src`、`Cargo.toml`、`Cargo.lock`、`build.rs`、`Info.plist`、`icons`、`locales`、`assets` 和 `windows`。只改文档不会触发构建。只改工作流会完整构建一遍，但不发布。
 
 ## 版本号
 
@@ -16,9 +16,9 @@
 
 提交信息仍使用 Conventional Commits，方便阅读发布说明，但提交类型不再触发次版本号或主版本号递增。
 
-机器人把新版本写进 `src-tauri/tauri.conf.json`、`package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`，提交 `chore: release vX.Y.Z` 并推到 main，安装包从这个提交构建。所以本地推送前先 `git pull --rebase`。
+机器人把新版本写进 `Cargo.toml` 和 `Cargo.lock`，提交 `chore: release vX.Y.Z` 并推到 main，安装包从这个提交构建。所以本地推送前先 `git pull --rebase`。
 
-要跳到指定版本（比如 1.0.0），手动把这四个文件改成那个版本再推送。文件里的版本还没有对应的 tag，工作流就原样发布它，不再加一。
+要跳到指定版本（比如 1.0.0），手动把这两个文件改成那个版本再推送。文件里的版本还没有对应的 tag，工作流就原样发布它，不再加一。
 
 发布失败后同样复用文件中的版本号，即使重试时选择了 `minor`，也会先完成尚未打 tag 的版本。完成后再次手动选择 `minor`，才会升到下一个次版本。
 
@@ -36,11 +36,11 @@
 
 ## 自动更新
 
-已安装的应用从 `https://github.com/gtoxlili/candlewick/releases/latest/download/latest.json` 读取最新版本。这个文件是每个 Release 的附件，列出各平台更新包的地址和签名。macOS 的更新包是 `.app.tar.gz`，CI 确认应用已经装订了公证票据之后才打包，并解开检查一遍；Windows 直接用安装包。
+已安装的应用从 `https://github.com/gtoxlili/candlewick/releases/latest/download/latest.json` 读取最新版本。这个文件是每个 Release 的附件，按平台（`macos-aarch64`、`windows-x86_64`）列出更新包的地址、签名和格式（`app` 或 `nsis`）。macOS 的更新包是 `.app.tar.gz`，CI 确认应用已经装订了公证票据之后才打包，并解开检查一遍；Windows 直接用安装包。
 
-应用只接受能用公钥验证的更新包，公钥在 `tauri.conf.json` 的 `plugins.updater.pubkey`，私钥是 `release` 环境里的 `TAURI_SIGNING_PRIVATE_KEY`。换掉这对密钥，已经安装的版本就再也收不到更新，所以私钥要另外妥善备份。
+应用只接受能用公钥验证的更新包，公钥是 `src/update/mod.rs` 里的 `PUBLIC_KEY`，私钥是 `release` 环境里的 `TAURI_SIGNING_PRIVATE_KEY`（工作流把它交给打包工具的 `CARGO_PACKAGER_SIGN_PRIVATE_KEY`）。换掉这对密钥，已经安装的版本就再也收不到更新，所以私钥要另外妥善备份。
 
-应用这边的逻辑在 `src-tauri/src/update.rs`：启动一分半后检查一次，之后每六小时一次；新版本下载并验证后，等到锁屏或显示器关闭、并且没有打开的窗口时才重新启动。不想等的话，下拉菜单和设置页里都能立即重启。设置里关掉「自动更新」后，只在手动点「检查更新」时才会检查。
+应用这边的逻辑在 `src/update/`：启动一分半后检查一次，之后每六小时一次；新版本下载并验证后，等到锁屏或显示器关闭、并且没有打开的窗口时才重新启动。macOS 上先解包到应用旁边的暂存目录，核对应用标识和版本，再换掉旧的 `.app`；换失败会还原旧应用。不想等的话，下拉菜单和设置页里都能立即重启。设置里关掉「自动更新」后，只在手动点「检查更新」时才会检查。
 
 ## Pull request
 
@@ -50,8 +50,10 @@ PR 只构建和测试 Windows 安装包，不签名，也不发布；macOS 版�
 
 macOS 安装包的签名和公证凭据，以及更新密钥，都放在 GitHub 的 `release` 环境里。这个环境只允许 main 使用，其他分支和 PR 都读不到。
 
+打包工具从环境变量读证书和公证凭据（`APPLE_CERTIFICATE`、`APPLE_CERTIFICATE_PASSWORD`、`APPLE_ID`、`APPLE_PASSWORD`、`APPLE_TEAM_ID`），签名身份只读配置，所以工作流先把 `APPLE_SIGNING_IDENTITY` 写进 `Cargo.toml` 的 macOS 打包配置再打包。
+
 签名还需要 Apple 的 Developer ID G2 中间证书。它是公开证书，构建时从 apple.com 下载，确认能链到系统信任的 Apple 根证书后再装进钥匙串。
 
 ## Windows 代码签名
 
-还没有接入。未签名的安装包第一次运行时，SmartScreen 会提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」即可，之后的更新不受影响。要接入的话，在 `tauri.windows.conf.json` 的 `bundle.windows.signCommand` 里配置签名命令（比如 Azure Artifact Signing），程序和安装包会一起签名。
+还没有接入。未签名的安装包第一次运行时，SmartScreen 会提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」即可，之后的更新不受影响。要接入的话，在 `Cargo.toml` 的 `[package.metadata.packager.windows]` 里用 `sign-command` 配置签名命令（命令里的 `%1` 代表要签名的文件，比如 Azure Artifact Signing），打包时程序和安装包会一起签名。
