@@ -3,7 +3,9 @@
 use std::{path::Path, sync::Arc};
 
 use crate::{
+    api,
     app::App,
+    market::longbridge::{Account, MarketAccess},
     model::{ColorScheme, Settings, Shared},
     ui::{self, theme::Palette, widgets},
 };
@@ -25,6 +27,15 @@ impl<V: Render> Render for Backdrop<V> {
 
 fn backdrop<V: Render>(view: Entity<V>, app: &App, cx: &mut gpui_kit::App) -> Entity<Backdrop<V>> {
     cx.new(|_| Backdrop { app: app.clone(), view })
+}
+
+struct SectionStage {
+    section: Entity<ui::settings::LongbridgeSection>,
+}
+impl Render for SectionStage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().px_5().pt_3().flex().flex_col().child(self.section.clone())
+    }
 }
 
 struct Gallery {
@@ -227,6 +238,121 @@ fn holdings_samples(cx: &mut HeadlessAppContext, app: &App) {
     cx.run_until_parked();
 }
 
+/// What a signed-in Longbridge account may quote.
+fn longbridge_account() -> Account {
+    Account {
+        markets: vec![
+            MarketAccess {
+                market: "US",
+                packages: vec!["LV1 Real-time Quotes".into(), "LV2 Real-time Quotes".into()],
+                note: None,
+            },
+            MarketAccess {
+                market: "HK",
+                packages: vec!["LV1 Real-time Quotes".into()],
+                note: None,
+            },
+            MarketAccess { market: "CN", packages: Vec::new(), note: None },
+        ],
+    }
+}
+
+fn longbridge_state(state: &str) -> (api::LongbridgeView, bool, Option<SharedString>) {
+    let key = Some("LB-8f2c…6d1a".to_owned());
+    match state {
+        "saved" => {
+            (api::LongbridgeView { app_key: key, account: Some(longbridge_account()) }, false, None)
+        }
+        "checking" => (api::LongbridgeView { app_key: key, account: None }, true, None),
+        "error" => (
+            api::LongbridgeView { app_key: key, account: None },
+            false,
+            Some(t!("error.sourceSays", source = "Longbridge", message = "invalid app key").into()),
+        ),
+        _ => (api::LongbridgeView { app_key: None, account: None }, false, None),
+    }
+}
+
+/// The Longbridge section alone and inside the settings window: an empty
+/// form, saved keys with what the account may quote, a login under way, and
+/// a failed login; both themes and every language whose text must fit.
+fn longbridge_samples(cx: &mut HeadlessAppContext, app: &App) {
+    use crate::i18n::Locale;
+
+    let (section_window, section) = cx.update(|cx| {
+        let handle = app.clone();
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                Default::default(),
+                size(px(460.), px(440.)),
+            ))),
+            focus: false,
+            show: false,
+            ..Default::default()
+        };
+        let mut created = None;
+        let (window, _) = gpui_kit::open_window(options, cx, |window, cx| {
+            let view = cx.new(|cx| {
+                ui::settings::LongbridgeSection::with_view(
+                    handle.clone(),
+                    longbridge_state("empty").0,
+                    window,
+                    cx,
+                )
+            });
+            created = Some(view.clone());
+            backdrop(cx.new(|_| SectionStage { section: view }), &handle, cx)
+        })
+        .unwrap();
+        (window, created.unwrap())
+    });
+
+    let (settings_window, settings) = cx.update(|cx| {
+        let handle = app.clone();
+        let mut options = crate::window::window_options(cx, "settings", "settings".to_owned());
+        options.focus = false;
+        options.show = false;
+        let mut created = None;
+        let (window, _) = gpui_kit::open_window(options, cx, |window, cx| {
+            let view = cx.new(|cx| ui::settings::SettingsView::new(handle.clone(), window, cx));
+            created = Some(view.clone());
+            backdrop(view, &handle, cx)
+        })
+        .unwrap();
+        (window, created.unwrap())
+    });
+    let settings_section = cx.update(|cx| settings.read(cx).longbridge());
+
+    for (tag, locale) in [("en", Locale::En), ("ja", Locale::Ja)] {
+        cx.update(|_| crate::i18n::set(locale));
+        app.notify(crate::app::Topic::Locale);
+        cx.run_until_parked();
+        for state in ["empty", "saved", "checking", "error"] {
+            let (view, checking, error) = longbridge_state(state);
+            let (settings_view, settings_checking, settings_error) = longbridge_state(state);
+            cx.update(|cx| {
+                section.update(cx, |this, cx| this.show(view, checking, error, cx));
+                settings_section.update(cx, |this, cx| {
+                    this.show(settings_view, settings_checking, settings_error, cx)
+                });
+                settings.update(cx, |_, cx| cx.notify());
+            });
+            for (name, dark) in [("light", false), ("dark", true)] {
+                cx.update(|cx| ui::theme::apply(app, dark, cx));
+                render_png(cx, section_window, &format!("longbridge-{state}-{name}-{tag}"));
+                render_png(
+                    cx,
+                    settings_window,
+                    &format!("settings-longbridge-{state}-{name}-{tag}"),
+                );
+            }
+        }
+    }
+    cx.update(|_| crate::i18n::set(Locale::En));
+    app.notify(crate::app::Topic::Locale);
+    cx.run_until_parked();
+}
+
 pub fn run() {
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
@@ -364,6 +490,7 @@ pub fn run() {
     }
     crate::i18n::set(locale);
     holdings_samples(&mut cx, &app);
+    longbridge_samples(&mut cx, &app);
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);
     cx.run_until_parked();

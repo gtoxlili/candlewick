@@ -43,6 +43,9 @@
     },
     "stocks": {
       "footnote": "Fill these in to add US, Hong Kong and China A-share stocks.",
+      "appKey": "App Key",
+      "appSecret": "App Secret",
+      "accessToken": "Access Token",
       "signingIn": "Signing in to %{source}…",
       "noAccess": "No quote access",
       "checkAccess": "Check quote access",

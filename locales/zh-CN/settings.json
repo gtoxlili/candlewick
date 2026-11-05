@@ -43,6 +43,9 @@
     },
     "stocks": {
       "footnote": "填写后可添加美股、港股和 A 股。",
+      "appKey": "App Key",
+      "appSecret": "App Secret",
+      "accessToken": "Access Token",
       "signingIn": "正在登录%{source}…",
       "noAccess": "无行情权限",
       "checkAccess": "查看行情权限",
