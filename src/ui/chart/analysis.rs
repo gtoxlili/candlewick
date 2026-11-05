@@ -65,6 +65,10 @@ pub struct Analysis {
     pub pointer: Option<Point>,
     /// Where the pointer lands in the chart, snapped to the candle under it.
     pub snapped: Option<Anchor>,
+    /// Index of the candle under the pointer in `candles()`.
+    pub hovered_candle: Option<usize>,
+    /// Whether a pointer drag is panning the chart.
+    pub panning: bool,
     pub indicators: Vec<IndicatorSpec>,
     pub series: Vec<IndicatorSeries>,
     /// The candles the indicators were computed over, oldest first.
@@ -92,6 +96,8 @@ impl Analysis {
             draft: None,
             pointer: None,
             snapped: None,
+            hovered_candle: None,
+            panning: false,
             indicators: indicators::default_indicators(),
             series: Vec::new(),
             candles: Vec::new(),
@@ -279,8 +285,20 @@ impl Analysis {
 
     pub fn pointer_move(&mut self, p: Point, frame: Option<&Frame>, interval: f64, free: bool) {
         self.pointer = Some(p);
-        let Some(frame) = frame else { return };
+        let Some(frame) = frame else {
+            self.snapped = None;
+            self.hovered_candle = None;
+            if self.hovered.take().is_some() {
+                self.changed = true;
+            }
+            return;
+        };
         let map = geometry::mapping(frame);
+        self.hovered_candle = if map.plot().contains(p) {
+            frame.hover.and_then(|candle| self.index_of(candle.time))
+        } else {
+            None
+        };
         self.snapped = if map.plot().contains(p) {
             Some(geometry::snap(frame, &map, p, interval, free))
         } else {
@@ -333,6 +351,7 @@ impl Analysis {
     pub fn pointer_leave(&mut self) {
         self.pointer = None;
         self.snapped = None;
+        self.hovered_candle = None;
         if self.hovered.is_some() {
             self.hovered = None;
             self.changed = true;
@@ -669,6 +688,19 @@ mod tests {
         assert!(analysis.take_changed());
         assert!(analysis.hovered.is_none());
         assert!(analysis.pointer.is_none());
+    }
+
+    #[test]
+    fn hover_index_and_snapped_point_clear_when_pointer_leaves() {
+        let mut analysis = Analysis::new();
+        analysis.set_candles(candles());
+        analysis.pointer_move(point(340., 153.), Some(&hovering()), 60., false);
+        assert_eq!(analysis.hovered_candle, Some(5));
+        assert_eq!(analysis.snapped.unwrap().price, 100.5);
+        analysis.pointer_leave();
+        assert_eq!(analysis.hovered_candle, None);
+        assert_eq!(analysis.snapped, None);
+        assert_eq!(analysis.pointer, None);
     }
 
     #[test]
