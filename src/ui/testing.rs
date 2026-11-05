@@ -1498,6 +1498,7 @@ pub fn run() {
     hover_frame_sample(&mut cx, &app);
     chart_live_samples(&mut cx, &app);
     display_samples(&mut cx, &app);
+    picker_sample(&mut cx, &app, &windows);
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);
     cx.run_until_parked();
@@ -1509,6 +1510,26 @@ pub fn run() {
     let reversed = Palette::new(false, ColorScheme::RedUp);
     assert_eq!(normal.up, reversed.down);
     assert_eq!(normal.down, reversed.up);
+}
+
+/// The chart's instrument picker open, in both themes: its list sits close to
+/// the popover's edge, and the selected row is the one on show.
+fn picker_sample(cx: &mut HeadlessAppContext, app: &App, windows: &[(&str, AnyWindowHandle)]) {
+    let chart = windows.iter().find(|(kind, _)| *kind == "chart").unwrap().1;
+    cx.update_window(chart, |_, window, cx| {
+        assert!(window.try_find("chart-instrument-list").is_none());
+        window.click("chart-instrument-trigger", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for (name, dark) in [("light", false), ("dark", true)] {
+        cx.update(|cx| ui::theme::apply(app, dark, cx));
+        render_png(cx, chart, &format!("chart-picker-{name}"));
+    }
+    cx.update_window(chart, |_, window, _| {
+        assert!(window.try_find("chart-instrument-list").is_some(), "the picker opens");
+    })
+    .unwrap();
 }
 
 /// The exchange API keys section, alone at the settings width and inside the

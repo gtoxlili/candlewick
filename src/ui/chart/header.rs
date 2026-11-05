@@ -14,8 +14,8 @@ use crate::{
 };
 use gpui_kit::{
     Animation, AnimationExt, Context, Entity, FontWeight, Hsla, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, WeakEntity, Window,
-    div, px,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, TestSupportExt as _,
+    WeakEntity, Window, div, px,
 };
 use gpui_kit::{
     assets::IconName,
@@ -458,6 +458,9 @@ impl Render for InstrumentPicker {
         let entity = self.model.clone();
 
         let picker = Popover::new("chart-instrument")
+            // The list sits 4px from the edge, as a select's does: the
+            // popover's own 12px would put it 16px in.
+            .p(px(4.))
             .trigger(
                 Button::new("chart-instrument-trigger")
                     .ghost()
@@ -485,7 +488,7 @@ impl Render for InstrumentPicker {
                     div()
                         .id(SharedString::from(format!("instrument-{index}")))
                         .px(px(8.))
-                        .py(px(5.))
+                        .py(px(4.))
                         .rounded(px(6.))
                         .flex()
                         .items_baseline()
@@ -510,10 +513,9 @@ impl Render for InstrumentPicker {
                 });
                 div()
                     .id("chart-instrument-list")
+                    .test_support()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
-                    .p(px(4.))
                     .min_w(px(180.))
                     .children(rows)
             });
