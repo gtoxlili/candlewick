@@ -78,6 +78,101 @@ fn render_png(cx: &mut HeadlessAppContext, window: AnyWindowHandle, name: &str) 
     }
 }
 
+fn overlay_sample(cx: &mut HeadlessAppContext, app: &App) {
+    use ui::chart::{
+        geometry::Frame,
+        market::Market,
+        model::{Anchor, Drawing},
+        model_state::ChartModel,
+        overlay::Overlay,
+    };
+
+    let id = crate::api::get_chart_instrument(app).unwrap();
+    let instrument = crate::api::chart_instrument(app, id.clone()).unwrap();
+    let spec = crate::api::chart_spec(app, id).unwrap();
+    let interval = spec.intervals[0];
+    let step = f64::from(interval.secs);
+    let start = 1_700_000_000.;
+    let candles: Vec<_> = (0..100)
+        .map(|i| {
+            let close = 100. + (f64::from(i) / 7.).sin() * 8. + f64::from(i) * 0.1;
+            crate::market::Candle {
+                time: start + f64::from(i) * step,
+                open: close - 1.,
+                high: close + 2.,
+                low: close - 2.,
+                close,
+            }
+        })
+        .collect();
+    let mut market = Market::new(interval);
+    let load = market.begin_history();
+    market.finish_history(load, candles);
+    let frame = Frame {
+        left: start + step * 25.,
+        right: start + step * 100.,
+        min: 85.,
+        max: 125.,
+        plot_x: 20.,
+        plot_y: 20.,
+        plot_w: 680.,
+        plot_h: 360.,
+        hover: None,
+    };
+    let handle = app.clone();
+    let options = cx.update(|cx| {
+        let mut options = crate::window::window_options(cx, "chart", "overlay".to_owned());
+        options.window_bounds = Some(WindowBounds::Windowed(Bounds {
+            origin: Default::default(),
+            size: size(px(800.), px(430.)),
+        }));
+        options.focus = false;
+        options.show = false;
+        options
+    });
+    let window = cx.update(|cx| {
+        gpui_kit::open_window(options, cx, |_, cx| {
+            let mut model = ChartModel::with_market(handle.clone(), Some(instrument), spec, market);
+            model.frame.set(Some(frame));
+            let a = Anchor { time: start + step * 38., price: 95. };
+            let b = Anchor { time: start + step * 56., price: 115. };
+            let analysis = model.analysis_mut();
+            analysis.drawings = vec![
+                Drawing::Level { id: "level".into(), price: 104. },
+                Drawing::Trend { id: "trend".into(), a, b },
+                Drawing::Fib {
+                    id: "fib".into(),
+                    a: Anchor { time: start + step * 60., price: 98. },
+                    b: Anchor { time: start + step * 80., price: 120. },
+                },
+                Drawing::Measure {
+                    id: "measure".into(),
+                    a: Anchor { time: start + step * 30., price: 90. },
+                    b: Anchor { time: start + step * 45., price: 100. },
+                },
+            ];
+            analysis.selected = Some("trend".into());
+            analysis.set_indicator("ma1", Some(true), None);
+            analysis.set_indicator("boll", Some(true), None);
+            analysis.pointer_move(
+                ui::chart::geometry::Point { x: 500., y: 150. },
+                Some(&frame),
+                step,
+                false,
+            );
+            let model = cx.new(|_| model);
+            let overlay = cx.new(|cx| Overlay::new(model, cx));
+            backdrop(overlay, &handle, cx)
+        })
+        .unwrap()
+        .0
+    });
+    for (name, dark) in [("light", false), ("dark", true)] {
+        cx.update(|cx| ui::theme::apply(app, dark, cx));
+        render_png(cx, window, &format!("overlay-{name}"));
+    }
+}
+
 /// The holdings window over a realistic portfolio: both window sizes, both
 /// themes, and every language at the sizes its strings must fit.
 fn holdings_samples(cx: &mut HeadlessAppContext, app: &App) {
@@ -151,6 +246,7 @@ pub fn run() {
         let mut model = app.shared().model();
         model.chart = model.settings.watchlist.first().map(|instrument| instrument.id());
     }
+    overlay_sample(&mut cx, &app);
     let mut windows = Vec::new();
     for (kind, width, height) in [
         ("settings", 460., 640.),

@@ -65,7 +65,7 @@ impl ChartView {
         Self {
             app,
             canvas: cx.new(|_| PriceCanvas { model: model.clone() }),
-            overlay: cx.new(|_| Overlay { model: model.clone() }),
+            overlay: cx.new(|cx| Overlay::new(model.clone(), cx)),
             hero: cx.new(|_| Hero { model: model.clone() }),
             mode: cx.new(|_| ModeToggle { model: model.clone() }),
             live: cx.new(|_| LiveBadge { model: model.clone() }),

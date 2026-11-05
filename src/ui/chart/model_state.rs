@@ -48,6 +48,7 @@ pub struct ChartModel {
     last_direction: i8,
     viewport: Viewport,
     analysis: Analysis,
+    analysis_revision: Option<(u32, u64)>,
     prefs: UiPrefs,
     /// The canvas writes the geometry it painted; the overlay reads the same slot.
     pub frame: Rc<Cell<Option<Frame>>>,
@@ -93,6 +94,7 @@ impl ChartModel {
             last_direction: 0,
             viewport: Viewport::new(now(), 60.0, prefs.chart.bars),
             analysis,
+            analysis_revision: None,
             prefs,
             frame: Rc::new(Cell::new(None)),
             generation: 0,
@@ -123,6 +125,7 @@ impl ChartModel {
         model.market = Some(market);
         model.viewport.select_interval(f64::from(secs));
         model.update_history_bounds();
+        model.sync_analysis_candles();
         model
     }
 
@@ -205,9 +208,11 @@ impl ChartModel {
         let load = market.select_interval(interval);
         self.viewport.select_interval(f64::from(secs));
         self.frame.set(None);
+        self.analysis.pointer_leave();
         self.visible = None;
         self.prefs.chart.interval = secs;
         self.update_history_bounds();
+        self.sync_analysis_candles();
         if load {
             self.load_history(cx);
         }
@@ -295,6 +300,7 @@ impl ChartModel {
             id.as_ref().and_then(|id| api::chart_instrument(&self.app, id.clone()).ok());
         self.spec = id.as_ref().and_then(|id| api::chart_spec(&self.app, id.clone()).ok());
         self.market = None;
+        self.analysis_revision = None;
         self.viewport = Viewport::new(now(), 60.0, self.prefs.chart.bars);
         self.visible = None;
         self.last_direction = 0;
@@ -419,6 +425,7 @@ impl ChartModel {
             self.refresh(interval, cx);
         }
         if changed {
+            self.sync_analysis_candles();
             cx.notify();
         }
     }
@@ -466,6 +473,7 @@ impl ChartModel {
         let changed = market.revision() != revision;
         if changed {
             self.update_history_bounds();
+            self.sync_analysis_candles();
         }
         changed
     }
@@ -590,6 +598,7 @@ impl ChartModel {
                     let revision = market.revision();
                     market.merge_latest(interval, &candles);
                     if revision != market.revision() {
+                        model.sync_analysis_candles();
                         cx.notify();
                     }
                 }
@@ -637,6 +646,20 @@ impl ChartModel {
                 s.exhausted(),
             );
         }
+    }
+    fn sync_analysis_candles(&mut self) {
+        let Some(market) = &self.market else { return };
+        let series = market.current();
+        let revision = (market.interval(), series.revision());
+        if self.analysis_revision == Some(revision) {
+            return;
+        }
+        let mut candles = series.candles().to_vec();
+        if let Some(live) = series.live() {
+            candles.push(live);
+        }
+        self.analysis.set_candles(candles);
+        self.analysis_revision = Some(revision);
     }
     fn schedule_save(&mut self, cx: &mut Context<Self>) {
         self.prefs_dirty = true;
