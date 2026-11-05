@@ -30,6 +30,7 @@
     "balanced": "买卖均衡",
     "hint": "拖动查看更早的走势 · 滚动或双指缩放 · 双击复位",
     "backToLive": "回到最新",
+    "emptyData": "暂无数据",
     "noCandles": "暂无 K 线数据",
     "unreachable": "无法连接%{source}，正在重试…",
     "price": "价格",

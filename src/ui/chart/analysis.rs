@@ -407,6 +407,13 @@ mod tests {
             plot_y: 10.0,
             plot_w: 600.0,
             plot_h: 300.0,
+            width: 720.0,
+            height: 340.0,
+            now: 1600.0,
+            candle_width: 60.0,
+            hover_x: None,
+            scrub: 0.0,
+            line_mode: 0.0,
             hover: None,
         }
     }

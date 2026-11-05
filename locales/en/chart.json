@@ -30,6 +30,7 @@
     "balanced": "Balanced book",
     "hint": "Drag to look back · Scroll or pinch to zoom · Double-click to reset",
     "backToLive": "Back to live",
+    "emptyData": "No data to display",
     "noCandles": "No candles yet",
     "unreachable": "Can't reach %{source}. Retrying…",
     "price": "Price",
