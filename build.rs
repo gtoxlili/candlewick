@@ -13,9 +13,10 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let version = env::var("CARGO_PKG_VERSION").unwrap();
         let parts: Vec<_> = version.split('.').collect();
+        // No manifest here: gpui embeds its own (resource 1), and the linker
+        // refuses a second one. Its manifest declares what the app needs.
         let rc = format!(
-            r#"1 24 "{}"
-1 ICON "{}"
+            r#"1 ICON "{}"
 1 VERSIONINFO
  FILEVERSION {},{},{},0
  PRODUCTVERSION {},{},{},0
@@ -38,11 +39,6 @@ BEGIN
  END
 END
 "#,
-            Path::new("windows/app.manifest")
-                .canonicalize()
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/"),
             Path::new("icons/icon.ico")
                 .canonicalize()
                 .unwrap()
@@ -60,7 +56,6 @@ END
         let path = Path::new(&env::var("OUT_DIR").unwrap()).join("candlewick.rc");
         fs::write(&path, rc).unwrap();
         embed_resource::compile(path, embed_resource::NONE).manifest_required().unwrap();
-        println!("cargo:rerun-if-changed=windows/app.manifest");
         println!("cargo:rerun-if-changed=icons/icon.ico");
     }
 }

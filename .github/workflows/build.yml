@@ -43,7 +43,6 @@ on:
       - "icons/**"
       - "locales/**"
       - "assets/**"
-      - "windows/**"
       - "rustfmt.toml"
       - ".github/workflows/build.yml"
   pull_request:
@@ -62,7 +61,7 @@ env:
   # What counts as the app when deciding whether to release and what goes
   # into the notes. The workflow itself is not in it: changing only the
   # workflow builds, and releases nothing.
-  APP_PATHS: src Cargo.toml Cargo.lock build.rs Info.plist icons locales assets windows
+  APP_PATHS: src Cargo.toml Cargo.lock build.rs Info.plist icons locales assets
 
 jobs:
   # Works out whether this push is a release and which version it is, and

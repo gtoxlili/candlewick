@@ -81,7 +81,7 @@ cargo packager --release   # 安装程序
 
 cargo-packager 的 NSIS 模板没有卸载钩子，所以卸载后删开机启动值的逻辑写在 `nsis.preinstall-section` 里，定义 `un.onUninstSuccess`：卸载成功后删除 `Run` 和 `StartupApproved\Run` 里名为 Candlewick 的值。安装程序在安装前卸载旧版本时会带 `_?=` 参数，这时保留这两个值，所以升级不会丢掉开机启动设置。
 
-程序清单在 `windows/app.manifest`，由 `build.rs` 嵌入。它声明了 Windows 10/11 兼容性、Per-Monitor V2 DPI、Common Controls 6 和长路径支持。兼容性声明必不可少，没有它系统会拒绝创建分层子窗口，行情条就挂不上任务栏。清单还启用了 Segment Heap，Windows 10 2004 起生效，对整天运行的进程来说占用和碎片更少。
+程序清单由 gpui 嵌入，应用自己不再带一份：gpui 的 `windows-manifest` 特性在 Windows 上由平台层强制打开，也没有交给宿主提供的开关，而链接器不接受第二份清单（资源 ID 1 重复）。它声明了 Windows 10/11 兼容性、Per-Monitor V2 DPI、Common Controls 6 和 Segment Heap。兼容性声明必不可少，没有它系统会拒绝创建分层子窗口，行情条就挂不上任务栏；Segment Heap 从 Windows 10 2004 起生效，对整天运行的进程来说占用和碎片更少。清单不含长路径支持。`build.rs` 嵌入的资源只有图标和版本信息。
 
 `icons/icon.ico` 含 16、20、24、32、40、48、64、256 八个尺寸，256 用 PNG 压缩。它和 macOS 图标用的是同一套插画，但去掉了 macOS 风格的投影，底板占画布约 92%，更接近 Windows 图标的比例；32 像素及以下用 `app-icon-small.svg` 的简化插画。生成方法是用 Chrome 无头模式把 SVG 在每个目标尺寸上直接渲染成 PNG，再合成 ICO。
 
