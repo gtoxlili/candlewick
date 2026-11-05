@@ -339,14 +339,8 @@ mod tests {
 
     #[test]
     fn account_summary_includes_nonzero_groups_and_skipped() {
-        let mut account = AccountView {
-            count: 1,
-            groups: 0,
-            skipped: 0,
-            updated: None,
-            state: SyncState::Read,
-            error: None,
-        };
+        let mut account =
+            AccountView { count: 1, groups: 0, skipped: 0, state: SyncState::Read, error: None };
         assert_eq!(account_detail(&account), t!("settings.ths.countOne", count = 1));
         account.count = 7;
         account.groups = 2;

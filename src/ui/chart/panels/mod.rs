@@ -20,7 +20,6 @@ use crate::{
 };
 use gpui_kit::{Entity, IntoElement, ParentElement, SharedString, Styled, div, px, relative};
 
-use super::market::VisibleStats;
 use crate::model::Instrument;
 
 /// Decimals for prices in this window: the pair's tick precision when the
@@ -72,49 +71,6 @@ pub(crate) fn step_decimals(step: f64) -> usize {
 
 /// Column heads and the loading spinner, shared with the trades panel.
 pub(crate) use self::order_book::{header_row, loading};
-
-/// One readable line about the stretch on screen, plus, while live, the order
-/// book's pressure, or for a pool which way the day's swaps lean. `None`
-/// until the stretch can be read.
-pub fn insight(
-    visible: Option<VisibleStats>,
-    book: Option<&Book>,
-    onchain: Option<&Onchain>,
-) -> Option<String> {
-    let visible = visible?;
-    let stretch = if visible.live {
-        t!("chart.lastSpan", span = format::duration(visible.span))
-    } else {
-        format::range(visible.from, visible.to)
-    };
-    let mut parts = vec![
-        format!("{stretch} {}", format::change_signed(visible.change_pct)),
-        t!("chart.amplitude", value = format!("{:.2}", visible.amplitude_pct)),
-    ];
-    if visible.live {
-        if let Some(share) = book.and_then(bid_share) {
-            let other = 100.0 - share;
-            parts.push(if share >= 55.0 {
-                t!("chart.bidsLead", share = format!("{share:.0}"))
-            } else if share <= 45.0 {
-                t!("chart.asksLead", share = format!("{other:.0}"))
-            } else {
-                t!("chart.balanced").to_owned()
-            });
-        }
-        if let Some(share) = onchain.and_then(buy_share) {
-            let other = 100.0 - share;
-            parts.push(if share >= 55.0 {
-                t!("chart.buyersLead", share = format!("{share:.0}"))
-            } else if share <= 45.0 {
-                t!("chart.sellersLead", share = format!("{other:.0}"))
-            } else {
-                t!("chart.flowBalanced").to_owned()
-            });
-        }
-    }
-    Some(parts.join(" · "))
-}
 
 /// The bid/ask (or buy/sell) split bar: a share filling from the left in the
 /// up color, the rest in the down color.
@@ -194,34 +150,6 @@ mod tests {
         assert_eq!(bid_share(&book(&[], &[])), None);
         assert_eq!(buy_share(&onchain(7, 3)), Some(70.0));
         assert_eq!(buy_share(&onchain(0, 0)), None);
-    }
-
-    #[test]
-    fn insight_reads_the_stretch_and_live_pressure() {
-        let visible = VisibleStats {
-            live: true,
-            span: 3600.0,
-            from: 0.0,
-            to: 0.0,
-            change_pct: 1.234,
-            amplitude_pct: 2.5,
-        };
-        let plain = insight(Some(visible), None, None).unwrap();
-        assert!(plain.contains("+1.23%") && plain.contains("2.50%"));
-        assert_eq!(plain.matches(" · ").count(), 1);
-        let bids = book(&[(1.0, 6.0)], &[(2.0, 4.0)]);
-        let led = insight(Some(visible), Some(&bids), Some(&onchain(3, 7))).unwrap();
-        assert!(led.contains("60%") && led.contains("70%"));
-        assert_eq!(led.matches(" · ").count(), 3);
-        let even = book(&[(1.0, 5.0)], &[(2.0, 5.0)]);
-        let balanced = insight(Some(visible), Some(&even), Some(&onchain(5, 5))).unwrap();
-        assert!(!balanced.contains("60%") && !balanced.contains("70%"));
-        assert_eq!(balanced.matches(" · ").count(), 3);
-        assert!(insight(None, Some(&bids), None).is_none());
-        let past = VisibleStats { live: false, span: 0.0, ..visible };
-        let line = insight(Some(past), Some(&bids), Some(&onchain(3, 7))).unwrap();
-        assert!(!line.contains("60%") && !line.contains("70%"));
-        assert_eq!(line.matches(" · ").count(), 1);
     }
 
     #[test]

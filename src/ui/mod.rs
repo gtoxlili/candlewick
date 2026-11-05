@@ -11,6 +11,8 @@ pub mod chart;
 pub mod holdings;
 pub mod prefs;
 pub mod settings;
+#[cfg(feature = "test-support")]
+pub mod testing;
 pub mod theme;
 pub mod widgets;
 

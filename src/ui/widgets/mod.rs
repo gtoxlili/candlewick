@@ -1,6 +1,4 @@
 //! Pieces shared by more than one window.
-// Removed when a window uses this module.
-#![cfg_attr(not(test), allow(dead_code))]
 
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::{
@@ -67,23 +65,4 @@ pub fn status_dot(status: Status, palette: Palette) -> Div {
         Status::Stale => palette.faint,
     };
     div().size(px(6.)).rounded_full().bg(color)
-}
-
-/// A compact label and numeric value on a tinted fill.
-pub fn stat_tile(
-    label: impl Into<SharedString>,
-    value: impl Into<SharedString>,
-    palette: Palette,
-) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .rounded(px(10.))
-        .bg(palette.fill)
-        .p_3()
-        .child(div().text_color(palette.muted).whitespace_nowrap().child(label.into()))
-        .child(tabular(
-            div().text_color(palette.foreground).whitespace_nowrap().child(value.into()),
-        ))
 }

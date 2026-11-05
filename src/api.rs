@@ -356,11 +356,6 @@ pub fn open_holdings(app: &App) -> CmdResult<()> {
     Ok(())
 }
 
-pub fn open_settings(app: &App) -> CmdResult<()> {
-    window::open_settings(app).map_err(|e| CommandError::Window(e.to_string()))?;
-    Ok(())
-}
-
 /// `hk_abc1…wxyz`
 fn masked(key: &str) -> String {
     let chars: Vec<char> = key.chars().collect();

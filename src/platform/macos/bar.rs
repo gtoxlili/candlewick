@@ -747,7 +747,6 @@ fn on_menu_event(app: &App, event: MenuEvent) {
     bar::perform(app, action);
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
+#[cfg(feature = "test-support")]
 #[path = "bar_tests.rs"]
 pub(crate) mod tests;

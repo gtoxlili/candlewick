@@ -110,6 +110,7 @@ impl Viewport {
 
     /// The one-frame jump flag, read once and cleared: the chart jumps to
     /// the targets instead of easing toward them.
+    #[cfg(test)]
     pub fn take_snap(&mut self) -> bool {
         std::mem::take(&mut self.view.snap)
     }

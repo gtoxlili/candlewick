@@ -320,7 +320,7 @@ impl ApiKeysSection {
 
     /// Put the section into a given editing, busy and problem state; for
     /// offscreen renders.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn testing_state(
         &mut self,
         editing: Option<ProviderId>,

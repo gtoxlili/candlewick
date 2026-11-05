@@ -76,7 +76,6 @@ impl Render for Gallery {
                     .child(widgets::status_dot(widgets::Status::Error, p))
                     .child(widgets::status_dot(widgets::Status::Stale, p)),
             )
-            .child(widgets::stat_tile("Balance", "84,049.95", p))
     }
 }
 
@@ -906,7 +905,7 @@ fn card_quad(window: &Window, color: gpui_kit::Hsla) -> Option<(f64, f64, f64, f
 /// narrower flips the card to the other side of the pointer, and the card is
 /// repainted when the canvas notifies it of that change.
 fn hover_frame_sample(cx: &mut HeadlessAppContext, app: &App) {
-    use ui::chart::{geometry::Frame, model::Anchor, model_state::ChartModel, panels::HoverCard};
+    use ui::chart::{geometry::Frame, model::Anchor, panels::HoverCard};
 
     let (model, candles, spec) = chart_live_model(cx, app);
     let secs = f64::from(spec.intervals[0].secs);

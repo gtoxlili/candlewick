@@ -108,6 +108,7 @@ impl ChartModel {
     }
 
     /// Construct a chart with prepared data and no observers, stream, or network requests.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_market(
         app: App,
         instrument: Option<Instrument>,
@@ -129,17 +130,14 @@ impl ChartModel {
     pub fn app(&self) -> &App {
         &self.app
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
     /// The page to ask for next, when a test drives the history itself.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn begin_older(&mut self) -> Option<OlderPage> {
         self.begin_older_at(std::time::Instant::now())
-    }
-    pub fn instrument_id(&self) -> Option<&str> {
-        self.instrument_id.as_deref()
     }
     pub fn instrument(&self) -> Option<&Instrument> {
         self.instrument.as_ref()
@@ -177,6 +175,7 @@ impl ChartModel {
             cx.notify();
         }
     }
+    #[cfg(any(test, feature = "test-support"))]
     pub fn market_mut(&mut self) -> Option<&mut Market> {
         self.market.as_mut()
     }
@@ -257,10 +256,6 @@ impl ChartModel {
         self.prefs.chart.book_step = step;
         self.schedule_save(cx);
         cx.notify();
-    }
-    pub fn go_live(&mut self, cx: &mut Context<Self>) {
-        self.viewport.go_live();
-        self.viewport_changed(cx);
     }
     pub fn select_instrument(&self, id: String) {
         let _ = api::open_chart(&self.app, id);
@@ -761,7 +756,7 @@ mod tests {
             let old_interval = model.market.as_ref().unwrap().current().interval();
             let generation = model.generation();
             model.sync_instrument(cx);
-            assert!(model.instrument_id().is_none());
+            assert!(model.instrument().is_none());
             assert!(model.market().is_none());
             assert!(model.viewport().live());
             assert_eq!(model.analysis().tool, super::super::analysis::Tool::Cursor);

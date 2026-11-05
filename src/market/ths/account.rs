@@ -624,8 +624,6 @@ pub struct AccountView {
     pub count: usize,
     pub groups: usize,
     pub skipped: usize,
-    /// Epoch milliseconds of the last good read.
-    pub updated: Option<f64>,
     pub state: SyncState,
     /// Why the last read failed.
     pub error: Option<String>,
@@ -645,7 +643,6 @@ pub fn view(synced: Option<&Synced>) -> AccountView {
         count: synced.map_or(0, |s| s.instruments.len()),
         groups: synced.map_or(0, |s| s.groups.len()),
         skipped: synced.map_or(0, |s| s.skipped),
-        updated: synced.and_then(|s| s.updated),
         state: match status {
             None | Some(SyncStatus::Reading) => SyncState::Reading,
             Some(SyncStatus::Read) => SyncState::Read,

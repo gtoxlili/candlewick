@@ -1,6 +1,4 @@
 //! Shared settings layout and controls.
-// Removed when a window uses this module.
-#![cfg_attr(not(test), allow(dead_code))]
 
 use crate::{api, app::App, model::Settings, ui::theme::Palette};
 use gpui_kit::{Div, IntoElement, ParentElement, SharedString, Styled, div, px};

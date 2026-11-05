@@ -9,11 +9,17 @@ edition = "2024"
 rust-version = "1.98"
 publish = false
 
+[features]
+# What the native regression test needs: the headless renderer and the menu-bar
+# checks, compiled into the library only when asked for.
+test-support = ["gpui-kit/test-support"]
+
 [[test]]
 name = "macos_bar"
 path = "tests/macos_bar.rs"
 # AppKit must run on the process's main thread, not a libtest worker.
 harness = false
+required-features = ["test-support"]
 
 [build-dependencies]
 ureq = "3"
@@ -163,3 +169,5 @@ debug = false
 
 [dev-dependencies]
 gpui-kit = { version = "0.9", default-features = false, features = ["gpui-fast", "component", "assets", "test-support"] }
+# Turns the feature on for `cargo test` without a flag.
+candlewick = { path = ".", features = ["test-support"] }

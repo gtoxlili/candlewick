@@ -12,10 +12,10 @@ mod watchlist;
 
 pub(crate) use self::longbridge::LongbridgeSection;
 /// Samples of the settings window for the offscreen test renderer.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use about::samples as settings_samples;
 /// Samples of the Display section for the offscreen test renderer.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use display::samples as display_samples;
 
 use self::{
@@ -48,13 +48,13 @@ pub struct SettingsView {
 }
 impl SettingsView {
     /// The exchange keys section, for offscreen render checks.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn keys(&self) -> Entity<ApiKeysSection> {
         self.keys.clone()
     }
 
     /// The display section, for offscreen render checks.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn display(&self) -> Entity<DisplaySection> {
         self.display.clone()
     }

@@ -9,7 +9,7 @@ mod assets;
 mod hero;
 mod tiles;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod fixtures;
 
 #[cfg(test)]

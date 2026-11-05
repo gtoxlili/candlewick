@@ -63,6 +63,7 @@ impl Drawing {
         }
     }
 
+    #[cfg(test)]
     pub fn kind(&self) -> DrawingKind {
         match self {
             Drawing::Level { .. } => DrawingKind::Level,
@@ -73,6 +74,7 @@ impl Drawing {
     }
 
     /// The drawing's level price, or the price of its first end.
+    #[cfg(test)]
     pub fn price(&self) -> f64 {
         match self {
             Drawing::Level { price, .. } => *price,
@@ -99,6 +101,7 @@ pub fn make_drawing(kind: DrawingKind, a: Anchor, b: Option<Anchor>) -> Drawing 
 }
 
 /// The movable ends of a drawing; a level has none, it moves as a whole.
+#[cfg(test)]
 pub fn anchors_of(drawing: &Drawing) -> Vec<Anchor> {
     match drawing {
         Drawing::Level { .. } => Vec::new(),
@@ -144,12 +147,14 @@ pub fn with_anchor(drawing: &Drawing, index: usize, anchor: Anchor) -> Drawing {
 }
 
 /// The drawings as JSON, the form they are kept in.
+#[cfg(test)]
 pub fn drawings_to_json(drawings: &[Drawing]) -> Result<String, serde_json::Error> {
     serde_json::to_string(drawings)
 }
 
 /// The drawings in `raw`, skipping entries that are not drawings. A value
 /// that is not a JSON array at all gives no drawings.
+#[cfg(test)]
 pub fn drawings_from_json(raw: &str) -> Vec<Drawing> {
     let Ok(serde_json::Value::Array(items)) = serde_json::from_str(raw) else {
         return Vec::new();

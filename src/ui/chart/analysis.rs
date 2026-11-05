@@ -112,6 +112,7 @@ impl Analysis {
     }
 
     /// The instrument whose drawings are open.
+    #[cfg(test)]
     pub fn instrument(&self) -> Option<&str> {
         self.instrument.as_deref()
     }
@@ -120,6 +121,7 @@ impl Analysis {
         self.drag.is_some()
     }
 
+    #[cfg(test)]
     pub fn drafting(&self) -> bool {
         self.draft.is_some()
     }
@@ -163,6 +165,7 @@ impl Analysis {
     }
 
     /// The indicator settings read back from the viewer's store.
+    #[cfg(test)]
     pub fn set_indicators(&mut self, indicators: Vec<IndicatorSpec>) {
         self.indicators = indicators;
         self.recompute();

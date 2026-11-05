@@ -221,6 +221,7 @@ impl Series {
 
     /// The line: each closed candle's close at its center, so the candle/line
     /// morph keeps its density before and after the window opened.
+    #[cfg(test)]
     pub fn line(&mut self) -> &[LinePoint] {
         self.ensure_line();
         self.line.as_deref().unwrap_or(&[])
@@ -331,12 +332,8 @@ pub struct ChartData<'a> {
     pub line: &'a [LinePoint],
     /// Latest trade price.
     pub price: Option<f64>,
-    /// Nothing older can be paged in.
-    pub exhausted: bool,
     /// History has loaded, even if it had no candles.
     pub loaded: bool,
-    /// Changes whenever this data does.
-    pub revision: u64,
 }
 
 /// What the stretch on screen did: the last `span` seconds while following the
@@ -476,6 +473,7 @@ impl Market {
         self.series.values().map(Series::interval)
     }
 
+    #[cfg(test)]
     pub fn price(&self) -> Option<f64> {
         self.price
     }
@@ -731,7 +729,6 @@ impl Market {
     /// the closed candles on first use after they changed.
     pub fn chart_data(&mut self) -> ChartData<'_> {
         let interval = self.current;
-        let revision = self.chart_revision;
         let price = self.price;
         let series = self.series.get_mut(&interval).expect("the selected interval has a series");
         series.ensure_line();
@@ -741,9 +738,7 @@ impl Market {
             live: series.live,
             line: series.line.as_deref().unwrap_or(&[]),
             price: price.or(series.live.map(|candle| candle.close)),
-            exhausted: series.exhausted || series.candles.len() >= MAX_CANDLES,
             loaded: series.ready,
-            revision,
         }
     }
 
@@ -1036,12 +1031,10 @@ mod tests {
         market.finish_history(load, page());
         let data = market.chart_data();
         assert_eq!(data.interval, 60);
-        assert!(data.revision > 0);
         assert_eq!(data.candles.len(), 10);
         assert_eq!(data.live.unwrap().time, 600.0);
         assert_eq!(data.price, Some(115.0));
         assert!(data.loaded);
-        assert!(!data.exhausted);
         assert_eq!(data.line.len(), 10);
         assert_eq!(data.line[0], LinePoint { time: 30.0, value: 102.0 });
 
@@ -1145,7 +1138,6 @@ mod tests {
         market.finish_history(load, page);
         assert_eq!(market.current().candles().len(), MAX_CANDLES);
         assert!(market.begin_older().is_none());
-        assert!(market.chart_data().exhausted);
     }
 
     #[test]
@@ -1197,21 +1189,6 @@ mod tests {
         market.push_trades(&many);
         assert_eq!(market.trades().len(), MAX_TRADES);
         assert_eq!(market.trades()[0].id, MAX_TRADES as u64 + 4);
-    }
-
-    // The side panels change without invalidating work derived from candles.
-    #[test]
-    fn chart_revision_ignores_side_panels() {
-        let mut market = Market::new(interval(60));
-        let load = market.begin_history();
-        market.finish_history(load, vec![candle(0.0, 1.0), candle(60.0, 2.0)]);
-        let chart = market.chart_data().revision;
-        let window = market.revision();
-        market.apply(LiveEvent::Book { books: Vec::new() });
-        assert_eq!(market.chart_data().revision, chart);
-        assert!(market.revision() > window);
-        market.apply_price(3.0, 65.0, false);
-        assert!(market.chart_data().revision > chart);
     }
 
     #[test]
