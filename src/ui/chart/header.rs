@@ -353,10 +353,13 @@ impl Render for LiveBadge {
             FeedState::Offline => (widgets::Status::Error, t!("chart.reconnecting")),
         };
         let dot = if state == FeedState::Live {
-            // A ring swells out of the dot while the feed is live.
+            // A ring swells out of the dot with each new price and rests until
+            // the next one; a repeating ring would keep the whole window
+            // redrawing every frame while the feed is idle.
+            let price = model.market().and_then(|market| market.stats()).map(|stats| stats.last);
             let ring = div().absolute().rounded_full().bg(palette.mint).with_animation(
-                "live-ping",
-                Animation::new(Duration::from_millis(1200)).repeat(),
+                SharedString::from(format!("live-ping-{price:?}")),
+                Animation::new(Duration::from_millis(1200)),
                 |ring, delta| {
                     ring.size(px(8. + 8. * delta))
                         .top(px(-4. * delta))
