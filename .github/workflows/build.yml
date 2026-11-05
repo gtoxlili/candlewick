@@ -3,20 +3,22 @@ name: Build Candlewick
 # Builds the installers and releases from main on its own. A push to main
 # that changes the app increments the patch version. A manual run can
 # explicitly select a minor release. Both create a `chore: release vX.Y.Z`
-# commit, a GitHub release with the
-# installers, and the tag that comes with it. Nobody maintains versions or
-# tags by hand. Pull requests build and test the Windows installer, and
-# release nothing.
+# commit, a GitHub release with the installers, and the tag that comes with
+# it. Nobody maintains versions or tags by hand. Pull requests build and
+# test the Windows installer, and release nothing.
 #
 # Signing: the macOS build only runs for a release, in the `release`
 # environment, which main alone may use: it holds the Apple secrets, so no
 # other branch or pull request ever sees them. The Windows installer is not
-# signed yet; it earns a SmartScreen prompt on first install. See
-# docs/release.md.
+# code-signed yet; it earns a SmartScreen prompt on first install. Both the
+# macOS update archive and the Windows installer carry the updater's
+# minisign signature. See docs/release.md.
 #
 # Secrets (environment `release`):
 #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY
 #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
+#   TAURI_SIGNING_PRIVATE_KEY (the updater's private key; the packager reads
+#   it as CARGO_PACKAGER_SIGN_PRIVATE_KEY)
 
 on:
   workflow_dispatch:
@@ -33,16 +35,16 @@ on:
     branches: [main]
     paths: &app
       - "src/**"
-      - "src-tauri/**"
-      - "index.html"
-      - "chart.html"
-      - "holdings.html"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "patches/**"
-      - "tsconfig.json"
-      - "vite.config.ts"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "Info.plist"
+      - "icons/**"
+      - "locales/**"
+      - "assets/**"
+      - "windows/**"
+      - "rustfmt.toml"
       - ".github/workflows/build.yml"
   pull_request:
     branches: [main]
@@ -60,7 +62,7 @@ env:
   # What counts as the app when deciding whether to release and what goes
   # into the notes. The workflow itself is not in it: changing only the
   # workflow builds, and releases nothing.
-  APP_PATHS: src src-tauri index.html chart.html holdings.html package.json pnpm-lock.yaml pnpm-workspace.yaml patches tsconfig.json vite.config.ts
+  APP_PATHS: src Cargo.toml Cargo.lock build.rs Info.plist icons locales assets windows
 
 jobs:
   # Works out whether this push is a release and which version it is, and
@@ -86,9 +88,9 @@ jobs:
           fetch-tags: true
 
       # Automatic releases always bump patch, regardless of commit type.
-      # A workflow_dispatch on main can explicitly bump minor. When
-      # the files already hold a version no tag names (a hand bump, or a
-      # release whose run did not finish), that version ships as it is.
+      # A workflow_dispatch on main can explicitly bump minor. When the
+      # files already hold a version no tag names (a hand bump, or a release
+      # whose run did not finish), that version ships as it is.
       - name: Decide
         id: decide
         shell: bash
@@ -96,7 +98,7 @@ jobs:
           RELEASE_BUMP: ${{ inputs.bump || 'patch' }}
         run: |
           set -euo pipefail
-          current=$(jq -r .version src-tauri/tauri.conf.json)
+          current=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
           [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::unexpected version ${current}"; exit 1; }
           echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           echo "version=${current}" >> "$GITHUB_OUTPUT"
@@ -132,14 +134,11 @@ jobs:
           fi
 
           if [[ "$next" != "$current" ]]; then
-            sed -i "s/^  \"version\": \"${current}\",$/  \"version\": \"${next}\",/" src-tauri/tauri.conf.json package.json
-            sed -i "s/^version = \"${current}\"$/version = \"${next}\"/" src-tauri/Cargo.toml
-            sed -i "/^name = \"candlewick\"$/{n;s/^version = \"${current}\"$/version = \"${next}\"/}" src-tauri/Cargo.lock
+            sed -i "s/^version = \"${current}\"$/version = \"${next}\"/" Cargo.toml
+            sed -i "/^name = \"candlewick\"$/{n;s/^version = \"${current}\"$/version = \"${next}\"/}" Cargo.lock
             # Every file must now say it; a pattern that missed fails here.
-            [[ "$(jq -r .version src-tauri/tauri.conf.json)" == "$next" ]]
-            [[ "$(jq -r .version package.json)" == "$next" ]]
-            grep -qx "version = \"${next}\"" src-tauri/Cargo.toml
-            grep -A1 -x 'name = "candlewick"' src-tauri/Cargo.lock | grep -qx "version = \"${next}\""
+            [[ "$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)" == "$next" ]]
+            grep -A1 -x 'name = "candlewick"' Cargo.lock | grep -qx "version = \"${next}\""
             git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -qam "chore: release v${next}"
             # A push that lands in between makes this fail; the next run
@@ -170,11 +169,11 @@ jobs:
         run: |
           set -euo pipefail
           want="${{ needs.version.outputs.version }}"
-          json() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "$1"; }
-          for have in "$(json src-tauri/tauri.conf.json)" "$(json package.json)" \
-            "$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -1)"; do
-            if [[ "$have" != "$want" ]]; then
-              echo "::error::releasing ${want}, but the checkout says ${have}"
+          have=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          lock=$(grep -A1 -x 'name = "candlewick"' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+          for found in "$have" "$lock"; do
+            if [[ "$found" != "$want" ]]; then
+              echo "::error::releasing ${want}, but the checkout says ${found}"
               exit 1
             fi
           done
@@ -188,36 +187,23 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
+          workspaces: . -> target
           key: x86_64-pc-windows-msvc
 
-      - &setup-pnpm
-        name: Setup pnpm
-        uses: pnpm/action-setup@v6
-        with:
-          version: latest
-
-      - &setup-node
-        name: Setup Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: lts/*
-          cache: pnpm
-
-      - &install
-        name: Install page dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
 
       - name: Lint
-        working-directory: src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Test
-        working-directory: src-tauri
         run: cargo test --locked
 
       - name: Build installer
-        run: pnpm tauri build --target x86_64-pc-windows-msvc
+        env:
+          # The packager's `before-packaging-command` builds this target too.
+          CARGO_BUILD_TARGET: x86_64-pc-windows-msvc
+        run: cargo packager --release --target x86_64-pc-windows-msvc
 
       # The upload takes seconds when it works; when the connection stalls,
       # the action neither fails nor returns, so the bound comes from here.
@@ -227,7 +213,7 @@ jobs:
         with:
           name: candlewick-x86_64-pc-windows-msvc
           retention-days: 7
-          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+          path: target/x86_64-pc-windows-msvc/release/candlewick_*-setup.exe
           if-no-files-found: error
 
   macos:
@@ -257,9 +243,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           missing=0
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID CARGO_PACKAGER_SIGN_PRIVATE_KEY; do
             if [[ -z "${!name}" ]]; then
               echo "::error::the release environment has no ${name}"
               missing=1
@@ -276,29 +263,26 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
+          workspaces: . -> target
           key: aarch64-apple-darwin
 
-      - *setup-pnpm
-      - *setup-node
-      - *install
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
 
       - name: Lint
-        working-directory: src-tauri
         run: |
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
 
       - name: Test
-        working-directory: src-tauri
         run: cargo test --locked
 
       # codesign asks trustd to chain the certificate up to Apple's root, and
-      # trustd does not take the intermediate from the temporary keychain the
-      # bundler makes from the p12. Without it in the login keychain the DMG
-      # signature fails with "unable to build chain to self-signed root". It is
-      # Apple's public Developer ID G2 CA, fetched from Apple; verify-cert
-      # proves it chains to the Apple Root CA in the system trust store.
+      # trustd does not take the intermediate from the temporary keychain
+      # made from the p12. Without it in the login keychain the signature
+      # fails with "unable to build chain to self-signed root". It is Apple's
+      # public Developer ID G2 CA, fetched from Apple; verify-cert proves it
+      # chains to the Apple Root CA in the system trust store.
       - name: Install Apple's intermediate certificate
         shell: bash
         run: |
@@ -311,26 +295,44 @@ jobs:
           security add-certificates -k "$keychain" "$cert" || true
           security find-certificate -c "Developer ID Certification Authority" "$keychain" >/dev/null
 
-      # The bundler imports the p12 into a throwaway keychain, signs every
-      # binary with the hardened runtime, notarizes the app and staples it,
-      # then builds and signs the DMG. The secrets reach this step alone.
+      # cargo-packager imports the p12 into a throwaway keychain, signs
+      # every binary with the hardened runtime, notarizes and staples the
+      # app, then builds and signs the DMG. It reads the certificate and the
+      # notarization credentials from the environment, but the signing
+      # identity only from the config, so the step writes it there first.
+      # The secrets reach this step alone.
       - name: Build installer
         timeout-minutes: 40
+        shell: bash
         env:
+          # The packager's `before-packaging-command` builds this target too.
+          CARGO_BUILD_TARGET: aarch64-apple-darwin
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # The bundler skips the DMG's Finder layout (window size, icon
-          # positions) on CI; the hosted Mac can script Finder, so keep it.
-          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
-        run: pnpm tauri build --target aarch64-apple-darwin
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
 
-      # Until tauri-apps/tauri#7533 is fixed, the bundler only signs the DMG.
-      # Users install from the DMG, so it gets its own notarization and
-      # ticket; the app inside is checked the way Gatekeeper will see it.
+          path = "Cargo.toml"
+          anchor = "[package.metadata.packager.macos]\n"
+          text = open(path).read()
+          assert anchor in text, "the packager's macOS table moved"
+          line = "signing-identity = " + json.dumps(os.environ["APPLE_SIGNING_IDENTITY"]) + "\n"
+          open(path, "w").write(text.replace(anchor, anchor + line, 1))
+          PY
+          # create-dmg lays the window out with Finder unless CI is set; the
+          # hosted Mac can do that, so keep the layout.
+          env -u CI cargo packager --release --target aarch64-apple-darwin --formats app,dmg
+
+      # cargo-packager notarizes and staples the app; the DMG it builds is
+      # signed but not notarized, so it gets its own submission and ticket.
       - name: Notarize and verify the DMG
         timeout-minutes: 30
         shell: bash
@@ -340,9 +342,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle"
-          app="$bundle/macos/Candlewick.app"
-          dmgs=("$bundle"/dmg/*.dmg)
+          bundle="target/aarch64-apple-darwin/release"
+          app="$bundle/Candlewick.app"
+          dmgs=("$bundle"/Candlewick_*.dmg)
           [[ ${#dmgs[@]} -eq 1 && -s "${dmgs[0]}" ]]
           dmg="${dmgs[0]}"
 
@@ -380,44 +382,25 @@ jobs:
           xcrun stapler validate "$dmg"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
 
-          # What the user drags out of the DMG. The bundler stapled it before
-          # building the DMG but ignores a failed staple; without the ticket
-          # the first launch needs to reach Apple, which a download just did.
+          # What the user drags out of the DMG. The packager stapled it
+          # before building the DMG; check the ticket came along.
           mount="$RUNNER_TEMP/candlewick-dmg"
           mkdir -p "$mount"
           hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mount" "$dmg" >/dev/null
           trap 'hdiutil detach "$mount" -quiet || true' EXIT
           codesign --verify --deep --strict --verbose=2 "$mount/Candlewick.app"
           spctl --assess --type execute --verbose=2 "$mount/Candlewick.app"
-          if ! xcrun stapler validate "$mount/Candlewick.app"; then
-            echo "::warning::the app inside the DMG has no stapled ticket; it opens online only the first time"
-          fi
+          xcrun stapler validate "$mount/Candlewick.app"
 
-      # The updater's package: the stapled app, archived and signed with the
-      # updater key. Made here rather than by the bundler, which archives the
-      # app before a failed staple could be retried; what users receive is
-      # then checked the way Gatekeeper will check it.
-      - name: Package the update
+      # The packager archives the stapled app and signs the archive with the
+      # updater key when it packages; check what users will download.
+      - name: Check the update archive
         shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |
           set -euo pipefail
-          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
-          app="$bundle/Candlewick.app"
-          for attempt in 1 2 3 4 5; do
-            xcrun stapler validate "$app" >/dev/null && break
-            if [[ "$attempt" -eq 5 ]]; then
-              echo "::error::no notarization ticket on $app"
-              exit 1
-            fi
-            xcrun stapler staple "$app" || sleep 30
-          done
+          bundle="target/aarch64-apple-darwin/release"
           update="$bundle/Candlewick.app.tar.gz"
-          COPYFILE_DISABLE=1 tar -czf "$update" -C "$bundle" Candlewick.app
-          pnpm tauri signer sign "$update"
-          test -s "$update.sig"
+          test -s "$update" && test -s "$update.sig"
           check=$(mktemp -d "$RUNNER_TEMP/update.XXXXXX")
           tar -xzf "$update" -C "$check"
           codesign --verify --deep --strict --verbose=2 "$check/Candlewick.app"
@@ -431,9 +414,9 @@ jobs:
           name: candlewick-aarch64-apple-darwin
           retention-days: 7
           path: |
-            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Candlewick.app.tar.gz
-            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Candlewick.app.tar.gz.sig
+            target/aarch64-apple-darwin/release/Candlewick_*.dmg
+            target/aarch64-apple-darwin/release/Candlewick.app.tar.gz
+            target/aarch64-apple-darwin/release/Candlewick.app.tar.gz.sig
           if-no-files-found: error
 
   # The release and its tag come last: a tag means the installers are there.
@@ -462,9 +445,8 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - *setup-pnpm
-      - *setup-node
-      - *install
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
 
       - name: Download installers
         uses: actions/download-artifact@v8
@@ -474,14 +456,17 @@ jobs:
           merge-multiple: true
 
       # The installers under their release names, the updater's manifest
-      # (latest.json: each platform's package and its signature), and the
-      # notes: the app's commits since the previous release, how to install,
-      # and the checksums.
+      # (latest.json: each platform's package, its signature and its format),
+      # and the notes: the app's commits since the previous release, how to
+      # install, and the checksums. The platform keys and formats are
+      # cargo-packager-updater's: `macos-aarch64` with `app` and
+      # `windows-x86_64` with `nsis`; src/update.rs holds the public key that
+      # checks these signatures.
       - name: Assemble the release
         shell: bash
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ""
         run: |
           set -euo pipefail
           built_dmg=$(find built -type f -name '*.dmg')
@@ -504,7 +489,7 @@ jobs:
           cp "$built_app" "release/$app"
           cp "$built_exe" "release/$exe"
           # The installer doubles as the updater's package on Windows.
-          pnpm tauri signer sign "release/$exe"
+          cargo packager signer sign "release/$exe"
           exe_sig="release/$exe.sig"
 
           previous=$(git describe --tags --abbrev=0 --match 'v*' "${SHA}^" 2>/dev/null || true)
@@ -524,8 +509,8 @@ jobs:
               notes: $notes,
               pub_date: $date,
               platforms: {
-                "darwin-aarch64": {url: $mac, signature: ($mac_sig | rtrimstr("\n"))},
-                "windows-x86_64": {url: $win, signature: ($win_sig | rtrimstr("\n"))}
+                "macos-aarch64": {url: $mac, signature: ($mac_sig | rtrimstr("\n")), format: "app"},
+                "windows-x86_64": {url: $win, signature: ($win_sig | rtrimstr("\n")), format: "nsis"}
               }
             }' > release/latest.json
           rm "$exe_sig"
