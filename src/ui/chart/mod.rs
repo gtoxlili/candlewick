@@ -15,13 +15,15 @@ pub mod toolbar;
 pub mod viewport;
 
 use crate::{
-    app::App,
+    app::{App, Topic},
     ui::{prefs::SideTab, theme::Palette, widgets},
 };
 use canvas::PriceCanvas;
 use gpui_kit::{
     AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled, Task,
-    Window, div, px,
+    Window,
+    component::{Sizable as _, TitleBar},
+    div, px,
 };
 use header::{Hero, InstrumentPicker, LiveBadge, ModeToggle};
 use model_state::ChartModel;
@@ -60,9 +62,14 @@ impl ChartView {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut observers = super::setup(&app, window, cx);
-        observers.push(super::observe_title(&app, window, cx, |view, _| view.title()));
-        cx.observe(&model, |_, _, cx| cx.notify()).detach();
-        Self {
+        observers.push(super::observe_title(&app, window, cx, |view, cx| {
+            view.notify_header(cx);
+            view.title()
+        }));
+        observers.push(super::observe(&app, Topic::Settings, cx, |view, cx| {
+            view.notify_header(cx);
+        }));
+        let view = Self {
             app,
             canvas: cx.new(|_| PriceCanvas { model: model.clone() }),
             overlay: cx.new(|cx| Overlay::new(model.clone(), cx)),
@@ -78,7 +85,22 @@ impl ChartView {
             toolbar: cx.new(|cx| AnalysisBar::new(model.clone(), window, cx)),
             model,
             _observers: observers,
-        }
+        };
+        cx.observe(&view.model, |view, _, cx| {
+            view.notify_header(cx);
+            cx.notify();
+        })
+        .detach();
+        view
+    }
+
+    /// Mark the header's child views for rendering when the model, the
+    /// language or the watchlist changes.
+    fn notify_header(&self, cx: &mut gpui_kit::App) {
+        self.hero.update(cx, |_, cx| cx.notify());
+        self.mode.update(cx, |_, cx| cx.notify());
+        self.live.update(cx, |_, cx| cx.notify());
+        self.picker.update(cx, |_, cx| cx.notify());
     }
     fn title(&self) -> String {
         let model = self.app.shared().model();
@@ -91,7 +113,7 @@ impl ChartView {
     }
 }
 impl Render for ChartView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = Palette::current(&self.app, cx);
         let model = self.model.read(cx);
         let has_book = model.spec().is_none_or(|s| s.book);
@@ -103,21 +125,49 @@ impl Render for ChartView {
             let labels: Vec<SharedString> =
                 intervals.iter().map(|secs| interval_label(*secs).into()).collect();
             let entity = self.model.clone();
-            Some(widgets::pill_tabs("chart-interval", labels, selected, move |index, _, cx| {
-                if let Some(secs) = intervals.get(*index) {
-                    entity.update(cx, |model, cx| model.select_interval(*secs, cx));
-                }
-            }))
+            Some(
+                widgets::pill_tabs("chart-interval", labels, selected, move |index, _, cx| {
+                    if let Some(secs) = intervals.get(*index) {
+                        entity.update(cx, |model, cx| model.select_interval(*secs, cx));
+                    }
+                })
+                .small(),
+            )
         });
-        super::frame(self.title(), cx)
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .text_color(palette.foreground)
             .child(
-                div()
-                    .h(px(30.))
-                    .px_4()
-                    .flex()
-                    .items_center()
-                    .child(div().flex_1().h_full().child(self.picker.clone()))
-                    .child(div().w(px(100.)).h_full().child(self.live.clone())),
+                TitleBar::new()
+                    .bg(gpui_kit::component::Theme::global(cx).transparent)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .child(self.picker.clone()),
+                    )
+                    .child(
+                        div()
+                            .w(px(112.))
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .child(self.live.clone()),
+                    )
+                    .child(
+                        div()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .pr(px(8.))
+                            .child(header::link_button(&self.model, cx)),
+                    ),
             )
             .child(
                 div()
@@ -133,17 +183,13 @@ impl Render for ChartView {
                             .min_h_0()
                             .gap_3()
                             .pb_4()
-                            .child(div().h(px(74.)).px_5().pt_2().child(self.hero.clone()))
-                            .child(
-                                div()
-                                    .h(px(28.))
-                                    .px_4()
-                                    .flex()
-                                    .items_center()
-                                    .child(div().flex_1().min_w_0().children(tabs))
-                                    .child(div().h_full().child(self.toolbar.clone()))
-                                    .child(div().w(px(70.)).h_full().child(self.mode.clone())),
-                            )
+                            .child(div().h(px(66.)).child(self.hero.clone()))
+                            .child(controls_row(
+                                tabs,
+                                self.toolbar.clone(),
+                                self.mode.clone(),
+                                window,
+                            ))
                             .child(
                                 widgets::panel(
                                     div()
@@ -214,7 +260,55 @@ impl Render for ChartView {
     }
 }
 
-fn interval_label(secs: u32) -> String {
+/// The interval, analysis and chart-type controls. At the narrowest window
+/// width the analysis controls take a line of their own, so every interval
+/// stays visible instead of sliding under an edge.
+fn controls_row(
+    tabs: Option<gpui_kit::component::tab::TabBar>,
+    toolbar: Entity<AnalysisBar>,
+    mode: Entity<ModeToggle>,
+    window: &Window,
+) -> gpui_kit::Div {
+    let toolbar = || div().h_full().flex_shrink_0().child(toolbar.clone());
+    let mode = || div().w(px(70.)).h_full().flex_shrink_0().child(mode.clone());
+    if window.viewport_size().width < px(900.) {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .h(px(28.))
+                    .px_4()
+                    .flex()
+                    .items_center()
+                    .child(div().flex_1().min_w_0().children(tabs)),
+            )
+            .child(
+                div()
+                    .h(px(28.))
+                    .px_4()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1())
+                    .child(toolbar())
+                    .child(mode()),
+            )
+    } else {
+        div()
+            .h(px(28.))
+            .px_4()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(div().flex_1().min_w_0().children(tabs))
+            .child(toolbar())
+            .child(mode())
+    }
+}
+
+pub(crate) fn interval_label(secs: u32) -> String {
     if secs.is_multiple_of(604_800) {
         t!("interval.week", n = secs / 604_800).to_string()
     } else if secs.is_multiple_of(86_400) {
