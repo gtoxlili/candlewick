@@ -14,22 +14,33 @@ pub mod panels;
 pub mod toolbar;
 pub mod viewport;
 
+use std::sync::Once;
+
 use crate::{
     app::{App, Topic},
     ui::{prefs::SideTab, theme::Palette, widgets},
 };
 use canvas::PriceCanvas;
 use gpui_kit::{
-    AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled, Task,
-    Window,
+    AppContext, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding, ParentElement,
+    Render, SharedString, Styled, Task, Window,
     component::{Sizable as _, TitleBar},
     div, px,
 };
 use header::{Hero, InstrumentPicker, LiveBadge, ModeToggle};
+use model::DrawingKind;
 use model_state::ChartModel;
 use overlay::Overlay;
 use panels::{FlowHeader, HoverCard, OrderBookPanel, StatsGrid, TradesPanel};
 use toolbar::AnalysisBar;
+
+/// What the chart window's keys do, whatever element has focus.
+pub mod actions {
+    gpui_kit::actions!(
+        chart,
+        [Cancel, DeleteDrawing, Undo, ToolCursor, ToolLevel, ToolTrend, ToolFib, ToolMeasure]
+    );
+}
 
 pub struct ChartView {
     app: App,
@@ -69,17 +80,24 @@ impl ChartView {
         observers.push(super::observe(&app, Topic::Settings, cx, |view, cx| {
             view.notify_header(cx);
         }));
+        let overlay = cx.new(|cx| Overlay::new(model.clone(), cx));
+        let hover = cx.new(|_| HoverCard::new(model.clone()));
+        bind_keys(cx);
+        // The chart takes the keyboard while the window is up: with nothing
+        // focused, a key event would never reach the window's element tree.
+        window.focus(&overlay.read(cx).focus_handle(), cx);
         let view = Self {
             app,
-            canvas: cx.new(|_| PriceCanvas { model: model.clone() }),
-            overlay: cx.new(|cx| Overlay::new(model.clone(), cx)),
+            canvas: cx
+                .new(|_| PriceCanvas::new(model.clone(), [overlay.entity_id(), hover.entity_id()])),
+            overlay,
             hero: cx.new(|_| Hero { model: model.clone() }),
             mode: cx.new(|_| ModeToggle { model: model.clone() }),
             live: cx.new(|_| LiveBadge { model: model.clone() }),
             picker: cx.new(|_| InstrumentPicker { model: model.clone() }),
             order_book: cx.new(|_| OrderBookPanel::new(model.clone())),
             trades: cx.new(|_| TradesPanel::new(model.clone())),
-            hover: cx.new(|_| HoverCard::new(model.clone())),
+            hover,
             stats: cx.new(|_| StatsGrid::new(model.clone())),
             flow: cx.new(|_| FlowHeader::new(model.clone())),
             toolbar: cx.new(|cx| AnalysisBar::new(model.clone(), window, cx)),
@@ -101,6 +119,52 @@ impl ChartView {
         self.mode.update(cx, |_, cx| cx.notify());
         self.live.update(cx, |_, cx| cx.notify());
         self.picker.update(cx, |_, cx| cx.notify());
+    }
+    fn cancel(&mut self, _: &actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        self.model.update(cx, |model, cx| {
+            model.analysis_mut().cancel();
+            model.analysis_changed(cx);
+        });
+    }
+    fn delete_drawing(
+        &mut self,
+        _: &actions::DeleteDrawing,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.model.update(cx, |model, cx| {
+            if model.analysis().selected.is_some() {
+                model.analysis_mut().remove_selected();
+                model.analysis_changed(cx);
+            }
+        });
+    }
+    fn undo(&mut self, _: &actions::Undo, _: &mut Window, cx: &mut Context<Self>) {
+        self.model.update(cx, |model, cx| {
+            model.analysis_mut().undo();
+            model.analysis_changed(cx);
+        });
+    }
+    fn choose_tool(&mut self, tool: analysis::Tool, cx: &mut Context<Self>) {
+        self.model.update(cx, |model, cx| {
+            model.analysis_mut().set_tool(tool);
+            model.analysis_changed(cx);
+        });
+    }
+    fn tool_cursor(&mut self, _: &actions::ToolCursor, _: &mut Window, cx: &mut Context<Self>) {
+        self.choose_tool(analysis::Tool::Cursor, cx);
+    }
+    fn tool_level(&mut self, _: &actions::ToolLevel, _: &mut Window, cx: &mut Context<Self>) {
+        self.choose_tool(analysis::Tool::Drawing(DrawingKind::Level), cx);
+    }
+    fn tool_trend(&mut self, _: &actions::ToolTrend, _: &mut Window, cx: &mut Context<Self>) {
+        self.choose_tool(analysis::Tool::Drawing(DrawingKind::Trend), cx);
+    }
+    fn tool_fib(&mut self, _: &actions::ToolFib, _: &mut Window, cx: &mut Context<Self>) {
+        self.choose_tool(analysis::Tool::Drawing(DrawingKind::Fib), cx);
+    }
+    fn tool_measure(&mut self, _: &actions::ToolMeasure, _: &mut Window, cx: &mut Context<Self>) {
+        self.choose_tool(analysis::Tool::Drawing(DrawingKind::Measure), cx);
     }
     fn title(&self) -> String {
         let model = self.app.shared().model();
@@ -135,10 +199,20 @@ impl Render for ChartView {
             )
         });
         div()
+            .id("chart-window")
+            .key_context("Chart")
             .size_full()
             .flex()
             .flex_col()
             .text_color(palette.foreground)
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::delete_drawing))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::tool_cursor))
+            .on_action(cx.listener(Self::tool_level))
+            .on_action(cx.listener(Self::tool_trend))
+            .on_action(cx.listener(Self::tool_fib))
+            .on_action(cx.listener(Self::tool_measure))
             .child(
                 TitleBar::new()
                     .bg(gpui_kit::component::Theme::global(cx).transparent)
@@ -258,6 +332,26 @@ impl Render for ChartView {
                     ),
             )
     }
+}
+
+/// The chart window's keys. Registered once for the app; the chart's root
+/// element carries the `Chart` context they are scoped to.
+fn bind_keys(cx: &mut gpui_kit::App) {
+    static BOUND: Once = Once::new();
+    BOUND.call_once(|| {
+        cx.bind_keys([
+            KeyBinding::new("escape", actions::Cancel, Some("Chart")),
+            KeyBinding::new("backspace", actions::DeleteDrawing, Some("Chart")),
+            KeyBinding::new("delete", actions::DeleteDrawing, Some("Chart")),
+            KeyBinding::new("cmd-z", actions::Undo, Some("Chart")),
+            KeyBinding::new("ctrl-z", actions::Undo, Some("Chart")),
+            KeyBinding::new("alt-v", actions::ToolCursor, Some("Chart")),
+            KeyBinding::new("alt-h", actions::ToolLevel, Some("Chart")),
+            KeyBinding::new("alt-t", actions::ToolTrend, Some("Chart")),
+            KeyBinding::new("alt-f", actions::ToolFib, Some("Chart")),
+            KeyBinding::new("alt-m", actions::ToolMeasure, Some("Chart")),
+        ]);
+    });
 }
 
 /// The interval, analysis and chart-type controls. At the narrowest window

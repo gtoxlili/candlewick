@@ -5,14 +5,13 @@ mod paint;
 use super::{
     analysis::{Press, Tool},
     geometry::{self, Frame, HitPart, Point},
-    model::DrawingKind,
     model_state::ChartModel,
 };
 use crate::{format, ui::theme::Palette};
 use gpui_kit::{
     Bounds, Context, CursorStyle, Entity, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    PinchEvent, Pixels, Render, ScrollEvent, StatefulInteractiveElement, Styled, Window, canvas,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PinchEvent, Pixels,
+    Render, ScrollEvent, StatefulInteractiveElement, Styled, TestSupportExt as _, Window, canvas,
     div, px,
 };
 use std::{
@@ -126,7 +125,8 @@ impl Overlay {
             let interval = model.market().map_or(60., |m| f64::from(m.interval()));
             if double && model.analysis().tool == Tool::Cursor && model.analysis().hovered.is_none()
             {
-                model.go_live(cx);
+                model.viewport_mut().reset();
+                model.viewport_changed(cx);
                 return Press::Draw;
             }
             let press =
@@ -243,45 +243,10 @@ impl Overlay {
         });
         cx.stop_propagation();
     }
-    fn key(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let key = e.keystroke.key.as_str();
-        let mods = e.keystroke.modifiers;
-        let handled = self.model.update(cx, |m, cx| {
-            let a = m.analysis_mut();
-            let handled = match key {
-                "escape" => a.cancel(),
-                "backspace" | "delete" if a.selected.is_some() => {
-                    a.remove_selected();
-                    true
-                }
-                "z" if (mods.platform || mods.control) && !mods.shift => {
-                    a.undo();
-                    true
-                }
-                key if mods.alt && !mods.platform && !mods.control => {
-                    let tool = match key {
-                        "v" => Some(Tool::Cursor),
-                        "h" => Some(Tool::Drawing(DrawingKind::Level)),
-                        "t" => Some(Tool::Drawing(DrawingKind::Trend)),
-                        "f" => Some(Tool::Drawing(DrawingKind::Fib)),
-                        "m" => Some(Tool::Drawing(DrawingKind::Measure)),
-                        _ => None,
-                    };
-                    if let Some(tool) = tool {
-                        a.set_tool(tool);
-                        true
-                    } else {
-                        false
-                    }
-                }
-                _ => false,
-            };
-            m.analysis_changed(cx);
-            handled
-        });
-        if handled {
-            cx.stop_propagation();
-        }
+    /// The handle the chart window keeps focused, so its keys reach the
+    /// window's element tree.
+    pub fn focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
     }
 }
 
@@ -316,6 +281,7 @@ impl Render for Overlay {
         let weak = cx.weak_entity();
         div()
             .id("Overlay")
+            .test_support()
             .size_full()
             .track_focus(&self.focus)
             .cursor(cursor)
@@ -325,7 +291,6 @@ impl Render for Overlay {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::up))
             .on_scroll(cx.listener(Self::scroll))
             .on_pinch(cx.listener(Self::pinch))
-            .on_key_down(cx.listener(Self::key))
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                 if !hovered && this.pan.is_none() && !this.model.read(cx).analysis().dragging() {
                     this.model.update(cx, |m, cx| {

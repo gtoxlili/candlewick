@@ -2,9 +2,6 @@
 //! the trades and provider pages that fold into them, the latest trades, and
 //! the statistics of the stretch on screen.
 
-#![cfg_attr(not(test), allow(dead_code))]
-// Removed when a window uses this module.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::market::{Book, Candle, FeedState, IntervalSpec, LiveEvent, Stats, Trade};

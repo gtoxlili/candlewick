@@ -76,6 +76,18 @@ fn tool_label(tool: Tool) -> SharedString {
     }
 }
 
+fn tool_tooltip(tool: Tool) -> SharedString {
+    let key = match tool {
+        Tool::Cursor => 'V',
+        Tool::Drawing(DrawingKind::Level) => 'H',
+        Tool::Drawing(DrawingKind::Trend) => 'T',
+        Tool::Drawing(DrawingKind::Fib) => 'F',
+        Tool::Drawing(DrawingKind::Measure) => 'M',
+    };
+    let modifier = if cfg!(target_os = "macos") { "⌥" } else { "Alt+" };
+    format!("{}  {modifier}{key}", tool_label(tool)).into()
+}
+
 fn indicator_label(kind: IndicatorKind) -> SharedString {
     match kind {
         IndicatorKind::Simple => t!("chart.indicator.sma").into(),
@@ -215,7 +227,7 @@ impl AnalysisBar {
         Toggle::new(("chart-tool", index))
             .checked(pressed)
             .icon(Icon::new(tool_icon(tool)).with_size(Size::Small))
-            .tooltip(tool_label(tool))
+            .tooltip(tool_tooltip(tool))
             .with_size(Size::Small)
             .w(px(28.))
             .rounded_full()
