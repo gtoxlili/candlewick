@@ -64,6 +64,11 @@ mod ui_testing;
 
 #[cfg(target_os = "macos")]
 fn main() {
+    // Nothing here may touch the real configuration directory.
+    let config = std::env::temp_dir().join(format!("candlewick-test-{}", std::process::id()));
+    std::fs::create_dir_all(&config).unwrap();
+    // SAFETY: no other thread exists yet.
+    unsafe { std::env::set_var("CANDLEWICK_CONFIG_DIR", &config) };
     ui_testing::run();
     platform::bar::install_event_handlers();
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -84,6 +89,7 @@ fn main() {
         platform::bar::shutdown();
         cx.quit();
     });
+    let _ = std::fs::remove_dir_all(&config);
 }
 
 #[cfg(not(target_os = "macos"))]
