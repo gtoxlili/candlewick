@@ -118,8 +118,6 @@ impl Render for SettingsView {
             .child(
                 div()
                     .px_5()
-                    .pt_3()
-                    .pb_3()
                     .flex_shrink_0()
                     .border_t_1()
                     .border_color(super::theme::Palette::current(&self.app, cx).border)

@@ -300,10 +300,10 @@ impl Render for AppFooter {
         div()
             .flex()
             .flex_col()
-            .gap_1()
-            .text_xs()
+            .text_size(px(FOOTER_TEXT))
             .child(
                 div()
+                    .h(px(FOOTER_ROW))
                     .flex()
                     .items_center()
                     .justify_between()
@@ -319,14 +319,9 @@ impl Render for AppFooter {
                     )
                     .child(div().flex_shrink_0().child(action)),
             )
-            .child(
-                div()
-                    .h_4()
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .text_color(p.muted)
-                    .children(note),
-            )
+            .children(note.map(|note| {
+                div().pb_2().whitespace_nowrap().overflow_hidden().text_color(p.muted).child(note)
+            }))
     }
 }
 
@@ -339,6 +334,11 @@ fn act(app: &App, state: &UpdateState) {
         api::check_update(app);
     }
 }
+
+/// The footer's single row, a line under which the border makes 32px; the
+/// small type of a status line (12px on Windows, as there).
+const FOOTER_ROW: f32 = 31.;
+const FOOTER_TEXT: f32 = if cfg!(target_os = "windows") { 12. } else { 11. };
 
 /// What the footer's button says for each update state.
 fn update_label(state: &UpdateState) -> SharedString {
