@@ -1,5 +1,5 @@
 //! Settings, live quotes and feed status, shared by the feed tasks, the bar
-//! renderer and the IPC commands.
+//! renderer and the windows' API (`api.rs`).
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -201,9 +201,9 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Normalizes and checks settings coming from the webview. Pairs of
-    /// another exchange than the one picked are dropped: picking another one
-    /// takes them off the watchlist.
+    /// Normalizes and checks settings coming from the settings window. Pairs
+    /// of another exchange than the one picked are dropped: picking another
+    /// one takes them off the watchlist.
     pub fn validated(mut self) -> Result<Self, String> {
         if !self.exchange.is_exchange() {
             return Err(t!("error.unsupportedExchange", name = self.exchange.name()));
@@ -411,9 +411,9 @@ pub struct Model {
     /// By instrument id.
     pub quotes: HashMap<String, Quote>,
     pub feeds: Feeds,
-    /// The instrument id the chart window shows (or last showed). The page
-    /// reads it on load, since a switch requested while it was still loading
-    /// can't reach it as an event.
+    /// The instrument id the chart window shows (or last showed). The window
+    /// reads it on load, since a switch requested while it was still opening
+    /// can't reach it as a topic change.
     pub chart: Option<String>,
     /// Holdings of each exchange with an API key.
     pub accounts: BTreeMap<ProviderId, portfolio::Account>,

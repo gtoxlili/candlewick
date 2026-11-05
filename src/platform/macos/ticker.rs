@@ -34,8 +34,8 @@ const MARKER_GAP: f64 = 3.0;
 /// or down at a glance.
 const TREND_TINT: f64 = 0.45;
 
-/// The app's trend colors (src/index.css `--up`/`--down`), as sRGB bytes
-/// for the light and the dark appearance.
+/// The app's trend colors (`ui::theme`), as sRGB bytes for the light and the
+/// dark appearance.
 use crate::ui::theme::{GREEN, RED};
 
 /// A color that resolves to its light or dark value for whatever appearance

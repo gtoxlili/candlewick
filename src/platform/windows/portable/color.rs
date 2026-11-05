@@ -1,7 +1,7 @@
 //! The colors the taskbar ticker, tray icon and dropdown marks draw with:
 //! Windows 11's own text and fill tokens for each taskbar mode, and the
-//! app's trend colors (src/index.css `--up`/`--down`), the same the macOS
-//! menu bar and the pages use.
+//! app's trend colors (`ui::theme`), the same the macOS menu bar and the
+//! windows use.
 
 use crate::{
     bar::Hue,

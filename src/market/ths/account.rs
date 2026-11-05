@@ -604,7 +604,7 @@ struct Challenge {
     image_url: String,
 }
 
-/// The code's picture as a data URL the settings page can show.
+/// The code's picture as a data URL the settings window can show.
 async fn qr_image(url: &str) -> Result<String, Error> {
     let response = http::send(|client| client.get(url)).await?;
     if !response.status().is_success() {

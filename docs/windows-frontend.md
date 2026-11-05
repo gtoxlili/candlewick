@@ -1,99 +1,10 @@
-# Windows 版的页面
+# Windows 上的窗口
 
-设置、行情和持仓窗口的页面在两个平台上是同一份代码。平台差异集中在几处：`src/lib/platform.ts`、`src/index.css` 里的 Windows 段、`TitleBar` 与 `CaptionButtons`、`Switch`，以及 `Picker`。Rust 侧的实现见 [windows.md](windows.md)。不开应用、直接在浏览器里改页面的方法见 [holdings.md](holdings.md) 的「在 Chrome 里迭代」。
+设置、行情和持仓三个窗口和 macOS 上是同一份 GPUI 视图（`src/ui/`），窗口参数在 `src/window.rs`：设置 460×640、不能缩放，行情和持仓 980×640（最小 760×480 和 800×500），都居中打开，每种窗口只有一个，再次打开是把已有的提到前面。
 
-## 平台常量
+- 标题栏：窗口自己画（GPUI Kit 的 `TitleBar`，34px 高），左边是标题，右边是最小化、最大化 / 还原和关闭。这块区域交给系统当标题栏：拖动、贴靠、双击最大化、右键系统菜单都由 Windows 处理；三个按钮用系统的非客户区命中测试，和资源管理器窗口上的按钮行为一致，Windows 11 上最大化按钮悬停会弹出贴靠布局。
+- 材质：窗口背板是 Mica（`WindowBackgroundAppearance::MicaBackdrop`）。GPUI 只在 Windows 11 22H2 及以后设置它。
+- 字体：Segoe UI Variable Text，系统没有这个字体时用 Segoe UI；正文 14px（macOS 上是 13px）。
+- 最后一个窗口关掉后应用只剩任务栏：托盘、任务栏行情条和菜单照常，进程进入效率模式（EcoQoS）；再打开窗口时退出。
 
-页面按平台分别构建。`vite.config.ts` 根据 Tauri CLI 传来的 `TAURI_ENV_PLATFORM` 注入构建时常量 `__WINDOWS__`，类型声明在 `src/globals.d.ts`；直接运行 `vite` 时按本机系统取值。这个常量在每个模块里都会被替换成字面量 `true` 或 `false`，另一个平台的分支在打包前就会被删掉，只在那个分支里用到的模块也不会进包。比如 macOS 的包里既没有 `CaptionButtons`，也没有 Tauri 的窗口接口。
-
-不要把它包成导出常量再用，比如 `export const IS_WINDOWS = __WINDOWS__`。这样的常量到打包后期才会折叠，分支虽然删了，分支里引入的模块却已经进了包。标题栏图标用 `?inline` 引入也是这个原因：图片文件在模块加载时就会输出，内联之后才能随分支一起去掉。
-
-构建目标也随平台切换：macOS 是 `safari26`，Windows 是 `chrome125`，和安装程序要求的 WebView2 最低版本一致。Tailwind 按源码里出现的类名生成样式，不区分平台，所以每个平台的 CSS 里都带着对方的规则，只是不会命中。
-
-## 运行时信息
-
-窗口背后的材质要到运行时才知道。Rust 在页面加载前注入 `window.__CANDLEWICK__`：
-
-```ts
-{ backdrop: "mica" | "solid" }
-```
-
-`backdrop` 表示窗口背后有没有 Mica，只有 Windows 11 有。
-
-每个入口都在 `createRoot` 之前调用 `setupPlatform()`，再等 `setupI18n()` 向应用问到界面语言（见 [i18n.md](i18n.md)）。`setupPlatform()` 负责：
-
-- 给根元素加 `data-platform`
-- Windows 上加 `data-backdrop`
-- Windows 上维护 `data-active`，窗口失焦时为 `false`
-- Windows 上屏蔽输入框以外的右键菜单，WebView2 自带的「返回、刷新、打印、检查」不该出现在应用窗口里
-
-## 根元素属性
-
-| 属性 | 取值 | 用途 |
-|---|---|---|
-| `data-platform` | `macos`、`windows` | 选择平台样式 |
-| `data-backdrop` | `mica`、`solid` | `solid` 时页面自己画窗口底色 |
-| `data-active` | `true`、`false` | 失焦时标题栏变淡 |
-
-## 设计变量
-
-配色两个平台共用一套，是 Candlewick 自己的，不跟随系统强调色，见 [design.md](design.md)。
-
-字体栈两个平台共用：`-apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", …`。macOS 上命中系统字体，中文回退到苹方。Windows 上命中 Segoe UI Variable（Windows 10 上是 Segoe UI），中文回退到微软雅黑。日文界面（`<html lang="ja">`）把 Hiragino Sans、Yu Gothic UI、Meiryo UI 排在中文字体前面，汉字用日文字形。
-
-小号文字用 `text-2xs`，macOS 上是 11px，Windows 上是 12px，后者是 Windows 字号阶梯里最小的一级。Windows 上 `text-xs`、`text-sm`、`text-base` 分别是 12、14、14px，对应 Fluent 的 Caption 与 Body。
-
-Windows 独有的几个变量只用于模仿系统自身的控件，写在 `:root[data-platform="windows"]` 里：
-
-| 变量 | 浅色 | 深色 | 对应 token |
-|---|---|---|---|
-| `--window` | `#f3f3f3` | `#202020` | SolidBackgroundFillColorBase（Windows 10 的纯色底） |
-| `--subtle-fill-secondary` | `rgb(0 0 0 / .0373)` | `rgb(255 255 255 / .0605)` | SubtleFillColorSecondary（标题栏按钮、下拉项） |
-| `--subtle-fill-tertiary` | `rgb(0 0 0 / .0241)` | `rgb(255 255 255 / .0419)` | SubtleFillColorTertiary |
-| `--flyout-stroke` | `rgb(0 0 0 / .0578)` | `rgb(0 0 0 / .2)` | SurfaceStrokeColorFlyout |
-| `--flyout-shadow` | 2px 与 16px 两层 | 同左，更深 | Flyout 的阴影 |
-
-需要强调色时用 `var(--primary)`（即 `--glow`）。涨跌色 `--up`、`--down` 和 Windows 任务栏、菜单标记上的颜色是同一组值。
-
-## 组件
-
-`TitleBar` 有两种用法：
-
-```tsx
-<TitleBar title={t("settings.title")} divider={scrolled} /> // 普通标题
-<TitleBar className={cn(TITLE_INSET, "gap-2")} maximizable> // 自定义内容
-  …
-</TitleBar>
-```
-
-- `title`：macOS 上居中加粗；Windows 上左侧是 16px 的应用图标（`src/assets/window-icon-*.png`，按缩放取 1x、2x、3x），后面跟 12px 的标题
-- `maximizable`：只影响 Windows，决定有没有最大化按钮
-- `TITLE_INSET`：标题栏内容的起始位置，macOS 上要让出红绿灯（`pl-[80px]`），Windows 上是 `pl-4`
-- Windows 上，标题栏末尾自动带上 `CaptionButtons`
-
-Windows 上的标题栏靠 CSS `app-region: drag` 成为系统标题栏，拖动、贴靠、双击最大化和右键系统菜单都交给系统处理。代价是标题栏里的元素默认收不到鼠标事件。`index.css` 给 `button`、`a`、`input`、`select`、`textarea`、`label` 以及 `role="button"`、`role="tab"` 设了 `no-drag`。往标题栏里放别的可交互元素时，要么用这些标签，要么把选择器补进那条规则。`data-tauri-drag-region` 是给 macOS 拖动用的，在 Windows 上是后备。
-
-`CaptionButtons` 只在 Windows 上渲染，照 Windows 11 的标题栏按钮做：46×32px，字形是 Segoe Fluent Icons（Windows 10 上退回 Segoe MDL2 Assets）的 E921、E922、E923、E8BB，悬停和按下用上表的两个 subtle fill，关闭按钮悬停时是 `#C42B1C` 底配白色字形。按钮不进 Tab 顺序，和系统按钮一样用 Alt+空格和 Alt+F4 操作。最大化状态通过 `onResized` 同步，最大化后显示「还原」。窗口失焦时，标题栏内容和未悬停的按钮一起降到 45% 不透明度。
-
-`Picker` 是从一段页面内容上弹出的单选菜单，行情窗口的标的切换和盘口的合并档位都用它。macOS 上是在内容上盖一个透明的 `<select>`，弹出系统菜单；Windows 上用 shadcn 的 Select（`src/components/ui/select.tsx`，由 shadcn CLI 生成，不改动），触发器保留页面自己的样式，箭头换成 Windows 组合框的单向下箭头。弹出的列表在 `index.css` 里按 Windows 11 组合框的下拉层来画：8px 圆角的亚克力浮层，32px 的选项，悬停和按下用 subtle fill，当前项左侧是强调色竖条，打开时当前项对齐到触发器上。它盖在标题栏上时，CSS 把它排除在可拖动区域之外。
-
-`Switch` 按平台选用两套类名。Windows 那套照 Windows 11 的开关：40×20px 的描边轨道，关闭时是 12px 的实心圆点；打开时轨道填强调色，圆点变成 `--primary-foreground`。悬停时圆点放大到约 14px，按下时横向拉长。`size="sm"` 是 32×16px，圆点 10px。
-
-## 文案
-
-文字都在 `locales/`，见 [i18n.md](i18n.md)。两个平台说法不同的消息，Windows 那句是同名加 `_windows` 后缀（「菜单栏」与「任务栏」：自选里的开关、显示名称、显示涨跌幅、显示总资产、自选的说明，以及开机启动开关的名称）。
-
-## 权限
-
-`src-tauri/capabilities/caption-buttons.json` 用 `platforms: ["windows"]` 限定只在 Windows 上生效，给设置、行情和持仓窗口开放 `minimize`、`toggle-maximize`、`is-maximized`、`close`。
-
-## 和 macOS 表现不同的地方
-
-- 触控板捏合在 WebView2 里是带 `ctrlKey` 的 `wheel` 事件，`PriceChart` 已经处理；WebKit 的 `gesture*` 事件在 Windows 上不会触发
-- 滚动条用的是 Rust 侧开启的 WebView2 Fluent 覆盖式滚动条，页面不用写滚动条样式
-- 窗口最小化时，应用会把 WebView2 设为不可见，页面的 `visibilityState` 随之变为 `hidden`，暂停推流、停止动画都和 macOS 一致
-
-## 已知限制
-
-- 最大化按钮悬停时不会弹出 Windows 11 的贴靠布局面板，WebView2 的相关接口还在预览阶段
-- 输入框和焦点框沿用 macOS 风格的样式
+配色两个平台共用一套，见 [design.md](design.md)。

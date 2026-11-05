@@ -110,7 +110,7 @@ mod tests {
         }
     }
 
-    // The settings file and the pages name a language by its tag, or `system`.
+    // The settings file and the windows name a language by its tag, or `system`.
     #[test]
     fn languages_are_written_as_tags() {
         for (language, json) in [

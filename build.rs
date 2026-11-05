@@ -170,8 +170,8 @@ mod text {
     /// A key's Windows wording, where the platforms differ ("menu bar",
     /// "taskbar"): `onePinned_windows` beside `onePinned`.
     const WINDOWS: &str = "_windows";
-    /// i18next-style plural suffixes; a catalog with one in a key is an
-    /// error, since `t!` picks no plural form.
+    /// Plural suffixes; a catalog with one in a key is an error, since `t!`
+    /// picks no plural form.
     const PLURALS: [&str; 6] = ["_zero", "_one", "_two", "_few", "_many", "_other"];
 
     /// A language's messages by dotted key.

@@ -178,9 +178,9 @@ struct PriceFilter {
     tick_size: String,
 }
 
-/// Bybit numbers spot trades `{engine}{16-digit counter}`, past what the
-/// webview's numbers hold exactly. The counter alone fits and still grows
-/// with every trade of a pair.
+/// Bybit numbers spot trades `{engine}{16-digit counter}`, past what a JSON
+/// reader holds exactly. The counter alone fits and still grows with every
+/// trade of a pair.
 fn trade_id(exec_id: &str) -> Option<u64> {
     exec_id.parse::<u64>().ok().map(|id| id % 10u64.pow(16))
 }

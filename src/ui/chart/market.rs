@@ -1017,7 +1017,6 @@ mod tests {
         assert!(visible_stats(&market.chart_data(), 0.0, 600.0, 600.0, false).is_none());
     }
 
-    // Values ran through the TypeScript with these candles and window.
     #[test]
     fn visible_stats_cover_only_the_window() {
         let page = || {

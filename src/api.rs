@@ -78,8 +78,8 @@ pub fn save_settings(app: &App, settings: Settings) -> CmdResult<Settings> {
     Ok(settings)
 }
 
-/// The language the app speaks now, for a page as it loads; `locale` events
-/// tell it of changes (`window::relabel`).
+/// The language the app speaks now, for a window as it opens; the `Locale`
+/// topic tells it of changes (`window::relabel`).
 pub fn get_locale() -> Locale {
     i18n::current()
 }
@@ -427,7 +427,7 @@ pub fn chart_stream(app: &App, id: String, events: UnboundedSender<LiveEvent>) -
     let task_app = app.clone();
     app.spawn(async move {
         stream.await;
-        // A stream also ends on its own once its page is gone.
+        // A stream also ends on its own once its window is gone.
         task_app.shared().streams.lock().unwrap_or_else(|e| e.into_inner()).remove(&handle);
     });
     Ok(handle)

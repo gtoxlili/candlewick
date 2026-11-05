@@ -8,14 +8,14 @@ use crate::market::Candle;
 
 use super::model::{Anchor, Drawing, FIB_LEVELS};
 
-/// A point in CSS pixels.
+/// A point in logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
 }
 
-/// A rectangle in CSS pixels.
+/// A rectangle in logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
     pub x: f64,
@@ -38,7 +38,7 @@ impl Rect {
     }
 }
 
-/// One frame as drawn: the plot's rect in CSS pixels, the eased time and
+/// One frame as drawn: the plot's rect in logical pixels, the eased time and
 /// value ranges, and the candle under the pointer.
 #[derive(Clone, Copy, Debug)]
 pub struct Frame {

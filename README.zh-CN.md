@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/128x128@2x.png" width="128" height="128" alt="Candlewick 应用图标：一条发光的实时价格线，末端是一个脉动的圆点">
+  <img src="icons/128x128@2x.png" width="128" height="128" alt="Candlewick 应用图标：一条发光的实时价格线，末端是一个脉动的圆点">
 </p>
 
 <h1 align="center">Candlewick</h1>
@@ -62,7 +62,7 @@
 
 **访问不了交易所的网站也能用吗？** 能。它走系统代理，主地址不通时会自动换备用地址。
 
-**占用多少资源？** 在 Mac 上约 19 MB 内存，CPU 不到单核的 1%。
+**占用多少资源？** 没有窗口时它只维持行情连接，收到新报价才重绘菜单栏。
 
 **会收集数据吗？** 不会。它只连你用到的交易所、DEX Screener、GeckoTerminal、长桥和同花顺，以及 GitHub（检查更新，可在设置里关掉）。凭证和 Key 只保存在本机，Candlewick 从不下单。打开「AI 助手接入」后，本机的 AI 助手能读取数据，别的电脑和网页都读不到。
 
@@ -70,30 +70,29 @@
 
 ## 从源码构建
 
-需要 Rust 1.98+、Node.js 和 pnpm。在 Mac 上还需要 macOS 15 或更高，在 Windows 上还需要 Visual Studio 的 C++ 生成工具。
+需要一个 Rust 工具链，1.98 或更高。Windows 上要用 MSVC 工具链，并装上 Visual Studio 的 C++ 生成工具；Mac 上需要 macOS 15 或更高、Apple 芯片。
 
 ```sh
-pnpm install
-pnpm tauri dev     # 开发
-pnpm tauri build   # 安装包在 src-tauri/target/release/bundle/
+cargo run              # 从源码运行
+cargo build --release  # 可执行文件在 target/release/
 ```
 
-第一次构建会按哈希校验，把同花顺账号登录用的 thsdk 运行组件下载到 `thsdk/`。
+第一次构建会按哈希校验，把同花顺账号登录用的 thsdk 运行组件下载到 `thsdk/`。从源码直接运行时，应用在 macOS 上从 `target/Frameworks/` 加载它，Windows 上从可执行文件旁边加载，所以把 `thsdk/hq.dylib` 拷到那里（Windows 上是把 `hq.dll` 放到可执行文件旁边）；打包后它在 `Contents/Frameworks` 里。把 `CANDLEWICK_CONFIG_DIR` 指向一个自己的目录，开发时的运行就不会碰你真正的设置和 Key。
 
-Windows 版是怎么实现的，见 [docs/windows.md](docs/windows.md)。main 上每次改动应用的推送都会自动发布新版本，流程见 [docs/release.md](docs/release.md)。
+Windows 版见 [docs/windows.md](docs/windows.md)，发布流程见 [docs/release.md](docs/release.md)。
 
 ## 代码结构
 
-- `src-tauri/src/`：Rust 侧，包括菜单栏和任务栏显示的内容、窗口与设置
-- `src-tauri/src/platform/`：macOS 和 Windows 之间不同的部分
-- `src-tauri/src/market/`：行情与持仓，各数据源的实现。接入说明见 [docs/market-data-providers.md](docs/market-data-providers.md)
-- `src-tauri/src/portfolio.rs`：持仓估值
-- `src-tauri/src/agent/`：AI 助手接入，本机只读接口和 skill，见 [docs/agent-access.md](docs/agent-access.md)
-- `src/settings/`、`src/chart/` 与 `src/holdings/`：设置、行情和持仓窗口，图表基于 [Liveline](https://github.com/benjitaylor/liveline)
-- `locales/`：全部文字，英文、中文、日文各一份，每个窗口一个文件，见 [docs/i18n.md](docs/i18n.md)
-- `patches/liveline@0.0.7.patch`：给 Liveline 加上拖动、缩放和涨跌配色
+- `src/main.rs`：启动应用；GPUI 画窗口和跑事件循环，网络 I/O 在 tokio 运行时里
+- `src/ui/`：三个窗口的 GPUI 视图，配色在 `theme.rs`，几个窗口共用的控件也在这里
+- `src/api.rs`：窗口读写设置、Key、行情和持仓时调用的函数
+- `src/platform/`：macOS 菜单栏和 Windows 任务栏，以及两个系统之间其余不同的部分
+- `src/market/`：行情与持仓，各数据源的实现。接入说明见 [docs/market-data-providers.md](docs/market-data-providers.md)
+- `src/portfolio.rs`：持仓估值
+- `src/agent/`：AI 助手接入，本机只读接口和 skill，见 [docs/agent-access.md](docs/agent-access.md)
+- `locales/`：全部文字，英文、中文、日文各一份，按界面分文件，见 [docs/i18n.md](docs/i18n.md)
 
-基于 [Tauri 2](https://tauri.app)、Rust、React 19 和 Tailwind CSS 构建。
+基于 Rust 和 GPUI 构建，用的是 [gpui-fast](https://github.com/longbridge/gpui-fast) 与 [GPUI Kit](https://github.com/longbridge/gpui-kit)。
 
 ## 许可
 

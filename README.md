@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/128x128@2x.png" width="128" height="128" alt="Candlewick app icon: a glowing live price line ending in a pulsing dot">
+  <img src="icons/128x128@2x.png" width="128" height="128" alt="Candlewick app icon: a glowing live price line ending in a pulsing dot">
 </p>
 
 <h1 align="center">Candlewick</h1>
@@ -62,7 +62,7 @@ Tonghuashun's quotes refresh every few seconds while the market trades, and its 
 
 **Does it work where the exchange's website is blocked?** Yes. It goes through your system proxy and switches to backup addresses when the main ones don't answer.
 
-**How much does it use?** About 19 MB of memory and under 1% of one CPU core on a Mac.
+**How much does it use?** With no window open it holds the price connections and redraws the bar only when a quote arrives.
 
 **Does it collect any data?** No. It only talks to the exchanges, DEX Screener, GeckoTerminal, Longbridge and Tonghuashun you use, and to GitHub for updates (you can turn that off in the settings). Keys stay on your computer, and Candlewick never trades. With AI access on, AI agents on your computer can read its data; other computers and web pages can't.
 
@@ -70,29 +70,29 @@ Tonghuashun's quotes refresh every few seconds while the market trades, and its 
 
 ## Build from source
 
-You need Rust 1.98+, Node.js and pnpm, plus macOS 15 or later on a Mac, or the Visual Studio C++ build tools on Windows.
+You need a Rust toolchain, 1.98 or later. On Windows it must be the MSVC toolchain with the Visual Studio C++ build tools; on a Mac you need macOS 15 or later on Apple silicon.
 
 ```sh
-pnpm install
-pnpm tauri dev     # run in development
-pnpm tauri build   # the installer lands in src-tauri/target/release/bundle/
+cargo run              # run from source
+cargo build --release  # the binary lands in target/release/
 ```
 
-The first build downloads thsdk's runtime (for Tonghuashun sign-in) into `thsdk/`, pinned by hash.
+The first build downloads thsdk's runtime (for Tonghuashun sign-in) into `thsdk/`, pinned by hash. A run from source loads it from `target/Frameworks/` on macOS and from beside the executable on Windows, so copy `thsdk/hq.dylib` there (or `thsdk/hq.dll` beside the executable); a bundle carries it in `Contents/Frameworks`. Set `CANDLEWICK_CONFIG_DIR` to a directory of your own to keep a development run away from your real settings and keys.
 
-[docs/windows.md](docs/windows.md) explains how the Windows version works. Every push to main that changes the app becomes a release, and [docs/release.md](docs/release.md) has the details.
+[docs/windows.md](docs/windows.md) covers the Windows side and [docs/release.md](docs/release.md) covers releases.
 
 ## Project structure
 
-- `src-tauri/src/`: the Rust side, with what the bar shows, the windows and settings
-- `src-tauri/src/platform/`: the parts that differ between macOS and Windows
-- `src-tauri/src/market/`: prices and holdings, one implementation per source. How to add one: [docs/market-data-providers.md](docs/market-data-providers.md)
-- `src-tauri/src/portfolio.rs`: what holdings are worth
-- `src-tauri/src/agent/`: AI access, a local read-only API and its skill; see [docs/agent-access.md](docs/agent-access.md)
-- `src/settings/`, `src/chart/` and `src/holdings/`: the settings, chart and holdings windows, the chart built on [Liveline](https://github.com/benjitaylor/liveline)
-- `locales/`: every word in English, Chinese and Japanese, one file per window surface; see [docs/i18n.md](docs/i18n.md)- `patches/liveline@0.0.7.patch`: dragging, zooming and the color setting for Liveline
+- `src/main.rs`: starts the app; GPUI draws the windows and runs the event loop, a tokio runtime does the network I/O
+- `src/ui/`: the three windows as GPUI views, the palette in `theme.rs`, and the widgets they share
+- `src/api.rs`: what the windows call to read and change settings, keys, quotes and holdings
+- `src/platform/`: the macOS menu bar and the Windows taskbar, and the rest that differs between the two systems
+- `src/market/`: prices and holdings, one implementation per source. How to add one: [docs/market-data-providers.md](docs/market-data-providers.md)
+- `src/portfolio.rs`: what holdings are worth
+- `src/agent/`: AI access, a local read-only API and its skill; see [docs/agent-access.md](docs/agent-access.md)
+- `locales/`: every word in English, Chinese and Japanese, one file per surface; see [docs/i18n.md](docs/i18n.md)
 
-Built with [Tauri 2](https://tauri.app), Rust, React 19 and Tailwind CSS.
+Built with Rust and GPUI, through [gpui-fast](https://github.com/longbridge/gpui-fast) and [GPUI Kit](https://github.com/longbridge/gpui-kit).
 
 ## License
 

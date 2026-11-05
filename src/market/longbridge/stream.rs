@@ -294,7 +294,7 @@ mod tests {
         assert_eq!(a.id, again.id);
         assert_ne!(a.id, other.id);
         assert!(later.id > a.id && later.id > other.id);
-        assert!(a.id < 1 << 53, "exact as a JavaScript number");
+        assert!(a.id < 1 << 53, "exact as a JSON number");
     }
 
     #[test]

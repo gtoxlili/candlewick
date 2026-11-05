@@ -4,13 +4,13 @@
 
 ## 怎么接入一个新数据源
 
-所有取数都在 Rust 端，WebView 只通过 IPC 拿数据。
+所有取数都在 Rust 端，窗口调用 `src/api.rs` 的函数拿数据。
 
 加密货币交易所同一时间只用一家：设置里的 `Settings.exchange` 选定，自选只保留这家的币对（`Settings::validated` 会移除别家的，换交易所就是这样清掉旧币对的），搜索搜这家、长桥、同花顺和 DEX Screener。
 
 ### 加一家加密货币交易所
 
-三家交易所的公开行情形状相同，共用的部分在 `src-tauri/src/market/crypto/`：交易对搜索（`pairs.rs`）、菜单栏报价的 WS 驱动（`quotes.rs`）、行情窗口实时流的驱动（`live.rs`）和本地盘口（`book.rs`）。新交易所只写它不同的地方：
+三家交易所的公开行情形状相同，共用的部分在 `src/market/crypto/`：交易对搜索（`pairs.rs`）、菜单栏报价的 WS 驱动（`quotes.rs`）、行情窗口实时流的驱动（`live.rs`）和本地盘口（`book.rs`）。新交易所只写它不同的地方：
 
 1. `ProviderId` 加一个变体，并放进 `ProviderId::EXCHANGES`；`provider()` 返回实现。
 2. 实现 `crypto::Exchange`（`Provider` 随之而来）：
@@ -20,7 +20,7 @@
    - `quotes_path` / `quotes_subscribe` / `quote`：菜单栏报价连哪、连上后发什么订阅、怎么从一帧里读出最新价和 24 小时前的价格。
    - `live`：行情窗口的 `Session`。它是不碰 I/O 的状态机：`connected` 时清空并订阅，`frame` 处理每一帧，通过 `Out` 发帧、发事件、交成交、或者起一个后台请求（结果回到 `fetched`）。连接、重连退避、保活、成交攒批都由 `live::run` 负责，所以会话逻辑可以直接用帧文本做单测。
 3. 实现 `crypto::account::Account`（见下文「持仓」），并在 `market::watch_accounts` 和 `market::check_key` 里加上它。
-4. 前端 `src/lib/api.ts` 的 `Exchange` 和 `EXCHANGES` 加上它，设置页的选择器和 API Key 一栏就有了；它的名字写进三种语言的 `src-tauri/locales/*.json` 的 `common.provider`（托盘和页面共用，见 [i18n.md](i18n.md)）。
+4. 设置页的选择器和 API Key 一栏按 `ProviderId::EXCHANGES` 生成；它的名字写进三种语言的 `locales/<tag>/common.json` 的 `common.provider`（菜单栏和窗口共用，见 [i18n.md](i18n.md)）。
 
 ### 加别的数据源
 
@@ -34,21 +34,21 @@
 - `watch`：菜单栏（Windows 上是任务栏）报价的常驻任务，读取 `FeedControl` 里的 symbols、paused 和 credentials，写 `model.quotes`，用 `market::set_status` 报告状态。没有推送的数据源在这里轮询（DEX Screener 每 15 秒一轮，同花顺只在交易时段轮询）。
 - `chart_spec` / `history` / `recent_trades` / `stream`：行情窗口的能力说明、K 线翻页、最近成交和实时流。
 
-前端 `src/lib/api.ts` 的 `ProviderId`、`instrumentLabel` 加上对应分支，名字写进 `common.provider`。
+`ProviderId::name()` 加上它（返回 `t!("common.provider.…")`），`Instrument::pair_label` 与 `row_label`（`src/model.rs`）加上对应分支。
 
 `chart_spec` 和账户数据里只放代码和数字，不放给人看的文字：数据源给 `ProviderId`，周期给秒数，统计范围给 `StatsSpan`，合约类型给 `PositionKind`，由显示它的一方按界面语言说出来。错误信息例外，用 `t!` 按当时的语言写。链名和 DEX 名是专有名词，不翻译，所以 `Instrument.venue` 直接存显示用的名字（`Solana`、`Raydium`），搜索时由 Rust 填好。
 
 ### 几个容易踩错的约定
 
-- `IntervalSpec.aligned`：K 线是否与时钟对齐（`time % secs == 0`），前端据此自己分桶；不对齐的周期由前端每 30 秒或成交越界时向数据源补拉最新几根。`regular_only`：盘前盘后成交不计入该周期。
-- `history`：数据源每页上限比请求的 `limit` 小时就返回能给的（OKX 一页 300 根）；只有返回空才表示没有更早的了，前端据此停止往前翻。
+- `IntervalSpec.aligned`：K 线是否与时钟对齐（`time % secs == 0`），行情窗口据此自己分桶；不对齐的周期由窗口每 30 秒或成交越界时向数据源补拉最新几根。`regular_only`：盘前盘后成交不计入该周期。
+- `history`：数据源每页上限比请求的 `limit` 小时就返回能给的（OKX 一页 300 根）；只有返回空才表示没有更早的了，窗口据此停止往前翻。
 - `ChartSpec.day_offset`：日线开盘时刻相对 UTC 的秒数，用于日期标签。
 - `ChartSpec.book_steps`：盘口可选的合并档位，从细到粗；`LiveEvent::Book.books` 按同样顺序各给一份合并好的盘口。留空表示不合并，`books` 只放一份原样的盘口。
-- `ChartSpec.book` 为 false 表示这个数据源没有盘口（链上池子），行情窗口侧栏只放成交，AI 接口的 `/v1/market` 也不等盘口；`ChartSpec.onchain` 为 true 表示统计是池子的：`Stats.volume` 为空（只有美元成交额），`Stats.onchain` 带流动性、市值、FDV 和 24 小时买卖笔数。`Stats.high` / `low` / `volume` 都是 `Option`，数据源给不出的填 `None`，页面显示「—」。
+- `ChartSpec.book` 为 false 表示这个数据源没有盘口（链上池子），行情窗口侧栏只放成交，AI 接口的 `/v1/market` 也不等盘口；`ChartSpec.onchain` 为 true 表示统计是池子的：`Stats.volume` 为空（只有美元成交额），`Stats.onchain` 带流动性、市值、FDV 和 24 小时买卖笔数。`Stats.high` / `low` / `volume` 都是 `Option`，数据源给不出的填 `None`，窗口显示「—」。
 - `LiveEvent::Tick`：没有成交记录的价格（轮询到的报价），只推动正在形成的 K 线，不进成交列表。
 - `ChartSpec.volume_unit` 是成交数量的单位（池子是代币符号），与 `Stats.volume` 是否有值无关。
 - 本地盘口的价格存成 10^-18 为单位的 `u128` 整数（Bybit 的 tick 细到 10^-13，币安 BTC/IDR 价格到 15 亿），同一价格总能落到同一档；转回 `f64` 时与直接解析原字符串的结果一致。
-- `Trade.id` 必须随时间递增、对同一笔成交稳定（查询和推送会各来一次，前端按 id 去重），而且小于 2^53，否则 WebView 里的数字会把相邻的 id 并成一个。
+- `Trade.id` 必须随时间递增、对同一笔成交稳定（查询和推送会各来一次，行情窗口按 id 去重），而且小于 2^53，否则按 JSON 读到的数字会把相邻的 id 并成一个。
 - 需要账户的数据源：凭证放在 `credentials.rs` 管理的 `credentials.json`（0600），缺凭证时用 `Status::NoCredentials` 提示，不要重试空转。
 - `Quote.open` 是涨跌幅的参考价：币是 24 小时前的价格，股票是最近一次收盘价；`Quote.session` 标注盘前、盘后、夜盘。
 - 菜单栏每秒最多重绘一次：OKX 每个币对每秒最多推 10 次，币安是每秒一批。
@@ -65,7 +65,7 @@
 - 盘口按币安的 "How to manage a local order book correctly" 在本地维护：`/api/v3/depth?limit=5000`（权重 250）做快照，增量按 `U`/`u` 衔接，断档后退避重拉。快照之外的价位只有变动时才知道，所以合并时每边只算到快照覆盖的范围，价格走到快照边缘也重拉。合并档位是 tick 的 1、10、100、1000 倍（三家相同）。
 - K 线一页 1000 根，周期 1 秒到 1 天；交易对列表来自 `exchangeInfo`（数 MB），只在搜索时下载，设置窗口关闭即释放（三家相同）。
 
-### Bybit（V5 API，`src-tauri/src/market/bybit.rs`）
+### Bybit（V5 API，`src/market/bybit.rs`）
 
 旧版接口已下线，只用 V5（`category=spot`）。
 
@@ -77,7 +77,7 @@
 - K 线：`/v5/market/kline`，周期 `1`、`5`、`15`、`60`、`240`、`D`，没有 1 秒；一页 1000 根，倒序返回；`end` 包含在该时刻开盘的那根，所以传 `end - 1`。最近成交 `/v5/market/recent-trade` 现货最多 60 条。
 - 交易对：`/v5/market/instruments-info?category=spot` 一次返回全部（约 530 个，现货不分页），`status == "Trading"`，tick 在 `priceFilter.tickSize`，最细到 10^-13（BABYDOGEUSDT）。
 
-### OKX（`src-tauri/src/market/okx.rs`）
+### OKX（`src/market/okx.rs`）
 
 - REST：`openapi.okx.com`（文档现在给的地址），备用 `www.okx.com`；美国和澳洲用户的 `us.okx.com`、欧洲的 `eea.okx.com` 没有接入。响应包装 `{code, msg, data}`，`code != "0"` 为错误。
 - WS：`wss://ws.okx.com:8443/ws/v5/public`；同一主机的 443 端口实测也通，作为备用，给只放行 443 的代理用（文档没写）。30 秒没有数据就断开，所以每 20 秒发一个字符串 `ping`，回 `pong`。
@@ -88,7 +88,7 @@
 - K 线：最新一页用 `/api/v5/market/candles`，往前翻用 `/api/v5/market/history-candles` 加 `after`（早于该时刻），两者一页都最多 300 根、倒序返回、都支持 1 秒（历史 1 秒只到 3 个月前）。日线必须用 `1Dutc`：`1D` 按香港时间 0 点开盘。限频 40 次 / 2 秒和 20 次 / 2 秒。
 - 交易对：`/api/v5/public/instruments?instType=SPOT`（约 1150 个），`state == "live"`，tick 在 `tickSz`，最细到 10^-12。
 
-### 长桥 OpenAPI（自写客户端，`src-tauri/src/market/longbridge/`）
+### 长桥 OpenAPI（自写客户端，`src/market/longbridge/`）
 
 没用官方 SDK：实测它会让安装包增大 2.3 MB，常驻内存多 5 MB，还会另开一个线程数等于核数的全局 runtime（多 10 个线程）。协议细节以 SDK 源码为准（`longbridge-wscli`、`longbridge-httpcli`、`longbridge-proto`、`longbridge-candlesticks`，MIT/Apache）。
 
@@ -127,7 +127,7 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 - 实测一个大陆账户的权限：美股 LV1（纳斯达克实时成交和最优一档，含夜盘，仅限 OpenAPI）、港股 LV2（十档，限大陆）、A 股 LV1（五档，限大陆）。默认的港股基础行情（BMP）延迟 15 分钟、没有推送。
 - 条款：行情仅限个人非商业用途、不得转发。应用只作为用户自带凭证的客户端。
 
-### 同花顺金融数据 API（`src-tauri/src/market/ths/`）
+### 同花顺金融数据 API（`src/market/ths/`）
 
 只有 A 股一个市场：股票（沪、深、北）、指数（交易所的指数，以及同花顺自己的概念、行业板块）、ETF 和 LOF。不需要证券账户，用同花顺账号登录 `fuyao.aicubes.cn` 就能签发 Key，所以没有长桥账户也能看 A 股。用一把真实的 Key 实测过。
 
@@ -171,8 +171,8 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 
 同花顺的网页登录走不通：登录页对 curl 返回 401 和一段反爬脚本（chameleon），被 DevTools 控制的 Chrome 被拒（「Nginx forbidden」），普通浏览器能打开页面但登录不进去（2026-10-28）。所以用 thsdk 的运行组件，它走同花顺客户端自己的登录和自选同步协议。
 
-- 运行组件：PyPI 上 thsdk 包（MIT）里的闭源库 `hq.dylib` / `hq.dll`（Go 编译，各约 11 MB，压缩后约 4 MB），接口是 `CallAlloc(json) -> json` 加 `FreeResult`：请求 `{method, params?, timeout_ms?}`，回答 `{ok, data?, error?: {code, message, retry_after_ms?}}`。两次调用至少间隔 50 ms，太快会回 `rate_limited` 和要等的毫秒数。构建时 `build.rs` 按哈希下载 thsdk 2.0.2，取出目标平台的库和许可证放到 `thsdk/`（macOS 作为 framework 打进 `Contents/Frameworks`，随应用一起签名公证，Windows 放在 exe 旁边）。连 `cargo check` 都要它在（`tauri-build` 检查 framework 和 resources 是否存在）。
-- 隔离：库只在辅助进程里加载，也就是这个可执行文件带 `--thsdk-helper <库路径>` 启动，`main` 一开头就转去服务它，不碰 Tauri 和单实例。两边按行交换上面的 JSON；每次同步或扫码起一个，用完关掉 stdin 它就退出。闭源代码因此读不到主进程内存里的交易所 Key，它的 Go 运行时（线程、内存、信号处理）不常驻，崩了也只是辅助进程。同一会话目录同时只开一个。
+- 运行组件：PyPI 上 thsdk 包（MIT）里的闭源库 `hq.dylib` / `hq.dll`（Go 编译，各约 11 MB，压缩后约 4 MB），接口是 `CallAlloc(json) -> json` 加 `FreeResult`：请求 `{method, params?, timeout_ms?}`，回答 `{ok, data?, error?: {code, message, retry_after_ms?}}`。两次调用至少间隔 50 ms，太快会回 `rate_limited` 和要等的毫秒数。构建时 `build.rs` 按哈希下载 thsdk 2.0.2，取出目标平台的库和许可证放到 `thsdk/`；应用从 `Contents/Frameworks` 加载它，Windows 上从 exe 旁边加载。`build.rs` 在编译前取它，所以连 `cargo check` 都会下载。
+- 隔离：库只在辅助进程里加载，也就是这个可执行文件带 `--thsdk-helper <库路径>` 启动，`main` 一开头就转去服务它，不碰窗口、菜单栏和单实例。两边按行交换上面的 JSON；每次同步或扫码起一个，用完关掉 stdin 它就退出。闭源代码因此读不到主进程内存里的交易所 Key，它的 Go 运行时（线程、内存、信号处理）不常驻，崩了也只是辅助进程。同一会话目录同时只开一个。
 - 会话：存在配置目录的 `thsdk/account.session`（目录 0700），是运行组件自己的格式（Go gob，里面有它模拟的客户端标识）。`credentials.json` 只记 `thsSignedIn`。约一个月有效；过期后 `auth` 回 `session_unavailable`（读自选回 `not_authenticated`），菜单和设置页提示重新登录，不再重试。退出登录调 `logout` 并删掉文件。
 - 扫码：`auth_qrcode {session_dir, timeout_seconds, poll_interval_ms}` 返回 `{state: created, image_url, scan_url}`，之后不带参数每秒问一次（`waiting`…），`authenticated` 即成；放弃时传 `{cancel: true}`。`image_url`（`upass.10jqka.com.cn/scan/creatImg?qrid=…`）是一张 252×252 的 PNG，普通请求就能取到，转成 data URL 显示在设置页；三分钟没扫或关掉设置窗口就作废。
 - 读取：先 `auth {session_dir}` 恢复会话，再 `get_account_watchlist`（「我的自选」，`securities: [{code, market}]`）和 `get_account_watchlist_groups`（`{group_order, groups: {id: {name, securities}}}`，`group_order` 里 id 会重复）。市场是同花顺客户端的写法：`USHA`、`USZA` 是沪深 A 股，`USHJ`、`USZJ` 是沪深基金。每 10 分钟读一次，失败后按 1、2、4、8 分钟重试。
@@ -191,7 +191,7 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 - 估值：`portfolio.rs`。价格用 `quotes::snapshot` 取：开一条短连接 WS，订阅持仓币种的 `{币}/USDT` ticker，每个币对拿到第一帧就够，最多等 3 秒。没回应的币对保留上次的价格；连续两次没回应、而且两次都是连接撑到最后、别的币对都答了，才视为未上架，1 小时内不再问（`Kept::take`）。连接断了或一个都没答，是网络的问题，不算数。持仓窗口打开期间改为常驻一条 ticker 订阅（`account::Live`）：余额和仓位仍每 10 秒拉一次，价格逐笔到达后按 1 秒合并重新估值，总资产随行情跳动；窗口关闭即断开。拉全表 REST ticker 太大（币安约 1 MB，OKX 约 360 KB），不适合常驻轮询。没有 USDT 交易对的币用交易所自己给的 USD 估值（Bybit `usdValue`、OKX `eqUsd`），再没有就不计价。
 - 口径：合约账户按含未实现盈亏的保证金余额（权益）计入总资产，仓位不再重复计入。24 小时涨跌是「持仓不变的前提下过去 24 小时价格变动带来的盈亏」：币按 `数量 × (现价 − 24h 前价格)`，仓位按 `带符号的美元敞口 × 合约自身的 24h 涨跌比例`，合约行情逐个查询（乘数合约如 `1000PEPEUSDT` 在现货里没有对应币对）。期权不计 24h 涨跌。
 - 合并：`Portfolio::of` 把各交易所的估值合成一张图——每个账户的总额与钱包分布（`AccountView`），同一资产跨交易所合并成一行（`held` 列出每个交易所的每个钱包），仓位带交易所标记。持仓窗口、下拉菜单和 AI 接口都读这一个结构。
-- 展示：下拉菜单最上面一行总资产及其二级菜单（`bar::Holdings`），持仓窗口（`src/holdings/`，见 [holdings.md](holdings.md)），以及「菜单栏显示总资产」时的系统栏本身（`Settings::holdings_in_bar`）。
+- 展示：下拉菜单最上面一行总资产及其二级菜单（`bar::Holdings`），持仓窗口（`src/ui/holdings/`，见 [holdings.md](holdings.md)），以及「菜单栏显示总资产」时的系统栏本身（`Settings::holdings_in_bar`）。
 - 签名的服务器时间：各家拒绝时间偏差过大的请求时，取一次服务器时间（`crypto::account::Clock`）再重试一次。
 
 ### 币安
@@ -221,7 +221,7 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 - 仓位 `GET /api/v5/account/positions`：`pos` 的单位是张（杠杆是币）；`posSide` 为 `net` 时正负号表示方向；`notionalUsd` 是美元名义价值；`upl` 以 `ccy` 计。
 - 错误多数是 HTTP 401 加 `{code, msg}`，`code` 是字符串，但路径不存在时是数字，解析要两者都接受：`50102` 时间、`50105` passphrase、`50110` IP、`50111`/`50119` Key、`50113` 签名、`50120`/`50030` 无权限、`50101` 模拟盘 Key。
 
-### DEX Screener + GeckoTerminal（链上池子，`src-tauri/src/market/dexscreener/`）
+### DEX Screener + GeckoTerminal（链上池子，`src/market/dexscreener/`）
 
 只在 DEX 池子里交易的代币，和交易所的币对一样加进自选。品种代码是 `<链>/<池子地址>`（`solana/EP2ib6…`，和 DEX Screener 网址一致），`base` 是代币符号（`$WIF`），`quote` 固定 `USD`，`name` 是代币名，`venue` 是链和 DEX 的显示名。价格一律按美元，和 DEX Screener 页面默认一样；池子自己的计价币（SOL、WETH）不出现在界面上。两个服务都不要 key；用户可以另外填一个 CoinGecko 的 key，让 K 线和成交走自己的额度（见下文「CoinGecko key」）。
 
@@ -240,7 +240,7 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 限频，实测：
 
 - DEX Screener：文档说这几个端点 300 次/分，没碰到过。响应头 `cache-control: public, max-age=30`（搜索 60），`cf-cache-status: HIT`，也就是价格最快 30 秒一变，轮询再快也只是读缓存。
-- GeckoTerminal：文档说 30 次/分，从本机（香港出口，不经代理）实测连发 5 次后就开始 429，之后一分钟里大多是 429，偶尔放行一次；也就是实际上每分钟 5 次左右，而且可能和同一出口的其他用户共用。429 不带 `Retry-After`。所以 `gecko.rs` 收到 429 就关一道闸 30 秒（有 `Retry-After` 按它的，最长 120 秒），闸关着时请求直接本地失败、不上网，前端 5 秒一次的历史重试就不会把配额耗在被拒绝上；成交轮询碰到闸就等闸开再问。打开行情窗口的首批请求是 3 次（当前周期的 K 线、小时 K 线、成交），切周期和往前翻页各加 1 次，紧贴这个预算；预算用光时 K 线晚几十秒出现，报价和统计不受影响（走 DEX Screener）。
+- GeckoTerminal：文档说 30 次/分，从本机（香港出口，不经代理）实测连发 5 次后就开始 429，之后一分钟里大多是 429，偶尔放行一次；也就是实际上每分钟 5 次左右，而且可能和同一出口的其他用户共用。429 不带 `Retry-After`。所以 `gecko.rs` 收到 429 就关一道闸 30 秒（有 `Retry-After` 按它的，最长 120 秒），闸关着时请求直接本地失败、不上网，窗口 5 秒一次的历史重试就不会把配额耗在被拒绝上；成交轮询碰到闸就等闸开再问。打开行情窗口的首批请求是 3 次（当前周期的 K 线、小时 K 线、成交），切周期和往前翻页各加 1 次，紧贴这个预算；预算用光时 K 线晚几十秒出现，报价和统计不受影响（走 DEX Screener）。
 - 两家都需要 `Accept: application/json;version=20230302`？只有 GeckoTerminal 要（锁定响应格式版本），DEX Screener 不需要头。
 
 链 id 两家不一样（`ethereum` 对 `eth`，`polygon` 对 `polygon_pos`，`avalanche` 对 `avax`，`sui` 对 `sui-network`……），`chains.rs` 存了 70 来条对照表和显示名，来自 GeckoTerminal `/networks`（2026-10-11 共 226 条，3 页）和 DEX Screener 网址里的链 slug；表里没有的链按同名传给 GeckoTerminal，显示名首字母大写。地址：EVM 的 42 位十六进制统一小写（DEX Screener 返回校验和大小写混合），其他（Solana base58 区分大小写）原样保留。

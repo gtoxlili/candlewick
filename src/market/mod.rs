@@ -3,8 +3,8 @@
 //! A [`Provider`] finds instruments, keeps the menu bar quotes of its
 //! watchlist entries current, and serves the chart window: candle history,
 //! recent trades and a live stream of trades, order book and day statistics.
-//! The webviews never reach a service themselves; they call the commands in
-//! `commands.rs`, which route by instrument id (`binance:BTCUSDT`). Supporting
+//! The windows never reach a service themselves; they call the functions in
+//! `api.rs`, which route by instrument id (`binance:BTCUSDT`). Supporting
 //! another service means adding a provider here, nothing else; a crypto
 //! exchange only needs what sets it apart from the others (`crypto::Exchange`).
 
@@ -230,7 +230,7 @@ pub struct Candidate {
     pub liquidity: Option<f64>,
 }
 
-/// What the chart window offers for an instrument: data, not text; the page
+/// What the chart window offers for an instrument: data, not text; the window
 /// names it in its own language.
 #[derive(Debug, Clone)]
 pub struct ChartSpec {
@@ -338,8 +338,8 @@ pub struct Book {
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Trade {
-    /// Increases with every trade of the instrument. Below 2^53, so the
-    /// webview reads it exactly.
+    /// Increases with every trade of the instrument. Below 2^53, so a JSON
+    /// reader keeps it exact.
     pub id: u64,
     pub price: f64,
     pub qty: f64,
