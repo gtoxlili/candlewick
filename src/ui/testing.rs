@@ -492,6 +492,7 @@ pub fn run() {
     holdings_samples(&mut cx, &app);
     longbridge_samples(&mut cx, &app);
     keys_samples(&mut cx, &app);
+    crate::ui::settings::settings_samples(&mut cx, &app, &render_png);
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);
     cx.run_until_parked();

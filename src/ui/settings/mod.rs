@@ -10,6 +10,10 @@ mod ths;
 mod watchlist;
 
 pub(crate) use self::longbridge::LongbridgeSection;
+/// Samples of the settings window for the offscreen test renderer.
+#[cfg(test)]
+pub use about::samples as settings_samples;
+
 use self::{
     about::{AgentNote, AppFooter, DisplaySection},
     coingecko::CoinGeckoSection,
