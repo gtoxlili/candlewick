@@ -75,7 +75,7 @@ impl ChartView {
             hover: cx.new(|_| HoverCard { model: model.clone() }),
             stats: cx.new(|_| StatsGrid { model: model.clone() }),
             flow: cx.new(|_| FlowHeader { model: model.clone() }),
-            toolbar: cx.new(|_| AnalysisBar { model: model.clone() }),
+            toolbar: cx.new(|cx| AnalysisBar::new(model.clone(), window, cx)),
             model,
             _observers: observers,
         }
@@ -141,7 +141,7 @@ impl Render for ChartView {
                                     .flex()
                                     .items_center()
                                     .child(div().flex_1().min_w_0().children(tabs))
-                                    .child(div().w(px(150.)).h_full().child(self.toolbar.clone()))
+                                    .child(div().h_full().child(self.toolbar.clone()))
                                     .child(div().w(px(70.)).h_full().child(self.mode.clone())),
                             )
                             .child(

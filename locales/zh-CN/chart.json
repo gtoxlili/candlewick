@@ -71,6 +71,7 @@
       "boll": "布林带"
     },
     "period": "周期",
+    "periodOf": "%{label} 周期",
     "ohlc": {
       "open": "开盘",
       "high": "最高",

@@ -1,6 +1,6 @@
 //! Offscreen checks for window and widget rendering.
 
-use std::{path::Path, sync::Arc};
+use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc};
 
 use crate::{
     api,
@@ -12,7 +12,7 @@ use crate::{
 use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Context, Entity, HeadlessAppContext, IntoElement,
     ParentElement, Render, SharedString, Styled, Window, WindowBounds, WindowOptions,
-    assets::Assets, div, px, size, test::TestWindowExt,
+    assets::AllAssets, div, px, size, test::TestWindowExt,
 };
 
 struct Backdrop<V> {
@@ -128,6 +128,13 @@ fn overlay_sample(cx: &mut HeadlessAppContext, app: &App) {
         plot_y: 20.,
         plot_w: 680.,
         plot_h: 360.,
+        width: 800.,
+        height: 400.,
+        now: start + step * 100.,
+        candle_width: step,
+        hover_x: None,
+        scrub: 0.,
+        line_mode: 0.,
         hover: None,
     };
     let handle = app.clone();
@@ -353,10 +360,128 @@ fn longbridge_samples(cx: &mut HeadlessAppContext, app: &App) {
     cx.run_until_parked();
 }
 
+/// The analysis toolbar over the chart: nothing drawn, drawings with an undo
+/// step, a tool pressed, and the indicators menu open. Both themes, the menu
+/// also in Japanese.
+fn chart_toolbar_samples(cx: &mut HeadlessAppContext, app: &App) {
+    use crate::ui::chart::{
+        ChartView,
+        analysis::Tool,
+        market::Market,
+        model::{Anchor, Drawing, DrawingKind},
+        model_state::ChartModel,
+    };
+
+    let mut options =
+        cx.update(|cx| crate::window::window_options(cx, "chart", "chart".to_owned()));
+    options.focus = false;
+    options.show = false;
+    let handle = app.clone();
+    let created = Rc::new(RefCell::new(None));
+    let filled = created.clone();
+    let window = cx.update(|cx| {
+        gpui_kit::open_window(options, cx, |window, cx| {
+            let id = crate::api::get_chart_instrument(&handle).unwrap();
+            let instrument = crate::api::chart_instrument(&handle, id.clone()).unwrap();
+            let spec = crate::api::chart_spec(&handle, id).unwrap();
+            let market = Market::new(spec.intervals[0]);
+            let chart =
+                cx.new(|_| ChartModel::with_market(handle.clone(), Some(instrument), spec, market));
+            *filled.borrow_mut() = Some(chart.clone());
+            cx.new(|cx| ChartView::with_model(handle.clone(), chart, window, cx))
+        })
+        .unwrap()
+        .0
+    });
+    let model = created.borrow().clone().expect("the chart model");
+    cx.update_window(window, |_, window, _| {
+        assert_eq!(window.viewport_size(), size(px(980.), px(640.)));
+    })
+    .unwrap();
+
+    for (theme, dark) in [("light", false), ("dark", true)] {
+        cx.update(|cx| ui::theme::apply(app, dark, cx));
+        render_png(cx, window, &format!("chart-toolbar-plain-{theme}"));
+    }
+
+    // Two drawings, one of them removed again: an eraser and an undo step.
+    let drawings = vec![
+        Drawing::Level { id: "level".to_owned(), price: 100.0 },
+        Drawing::Trend {
+            id: "trend".to_owned(),
+            a: Anchor { time: 1_000.0, price: 98.0 },
+            b: Anchor { time: 1_300.0, price: 104.0 },
+        },
+    ];
+    cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            let analysis = model.analysis_mut();
+            analysis.set_instrument(Some("sample".to_owned()), drawings);
+            analysis.selected = Some("level".to_owned());
+            analysis.remove_selected();
+            cx.notify();
+        });
+    });
+    for (theme, dark) in [("light", false), ("dark", true)] {
+        cx.update(|cx| ui::theme::apply(app, dark, cx));
+        render_png(cx, window, &format!("chart-toolbar-drawings-{theme}"));
+    }
+
+    // A drawing tool pressed, and an indicator on so the menu trigger lifts.
+    cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            let analysis = model.analysis_mut();
+            analysis.set_tool(Tool::Drawing(DrawingKind::Trend));
+            analysis.set_indicator("ma1", Some(true), Some(7));
+            analysis.take_changed();
+            analysis.take_persist();
+            cx.notify();
+        });
+    });
+    for (theme, dark) in [("light", false), ("dark", true)] {
+        cx.update(|cx| ui::theme::apply(app, dark, cx));
+        render_png(cx, window, &format!("chart-toolbar-tool-{theme}"));
+    }
+
+    // The trigger opens the menu.
+    cx.update_window(window, |_, window, cx| {
+        assert!(window.try_find("chart-indicator-menu").is_none());
+        window.click("chart-indicators-button", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for (theme, dark) in [("light", false), ("dark", true)] {
+        cx.update(|cx| ui::theme::apply(app, dark, cx));
+        render_png(cx, window, &format!("chart-toolbar-menu-{theme}"));
+    }
+    cx.update_window(window, |_, window, _| {
+        assert!(window.try_find("chart-indicator-menu").is_some(), "the menu opens");
+    })
+    .unwrap();
+    cx.update(|_| crate::i18n::set(crate::i18n::Locale::Ja));
+    app.notify(crate::app::Topic::Locale);
+    cx.run_until_parked();
+    for (theme, dark) in [("light", false), ("dark", true)] {
+        cx.update(|cx| ui::theme::apply(app, dark, cx));
+        render_png(cx, window, &format!("chart-toolbar-menu-ja-{theme}"));
+    }
+    cx.update(|_| crate::i18n::set(crate::i18n::Locale::En));
+    app.notify(crate::app::Topic::Locale);
+
+    // A tool in the pill reaches the model, and the click away closes the menu.
+    cx.update_window(window, |_, window, cx| window.click(("chart-tool", 4usize), cx)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| model.read(cx).analysis().tool), Tool::Drawing(DrawingKind::Measure));
+    cx.update_window(window, |_, window, _| {
+        assert!(window.try_find("chart-indicator-menu").is_none(), "a click away closes the menu");
+    })
+    .unwrap();
+}
+
 pub fn run() {
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
-        Arc::new(Assets),
+        Arc::new(AllAssets),
         gpui_kit::platform::current_headless_renderer,
     );
     cx.update(gpui_kit::init);
@@ -452,6 +577,8 @@ pub fn run() {
         .unwrap();
         windows.push((kind, window));
     }
+    chart_toolbar_samples(&mut cx, &app);
+
     let original = crate::api::get_settings(&app);
     let error = ui::settings::parts::update_settings(&app, |settings| {
         settings.watchlist.push(settings.watchlist[0].clone());
