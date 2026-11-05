@@ -3,74 +3,25 @@
 //! where there is no book. They read the market, spec and analysis through
 //! [`ChartModel`] and change choices through its commands.
 
+mod hover;
 mod order_book;
+mod stats;
 mod trades;
 
+pub use hover::HoverCard;
 pub use order_book::OrderBookPanel;
+pub use stats::{FlowHeader, StatsGrid};
 pub use trades::TradesPanel;
 
 use crate::{
     format,
-    market::{Book, Level},
+    market::{Book, Level, Onchain},
     ui::chart::model_state::ChartModel,
 };
-use gpui_kit::{
-    Context, Entity, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, div, px, relative,
-};
+use gpui_kit::{Entity, IntoElement, ParentElement, SharedString, Styled, div, px, relative};
 
+use super::market::VisibleStats;
 use crate::model::Instrument;
-
-pub struct HoverCard {
-    pub model: Entity<ChartModel>,
-}
-
-impl HoverCard {
-    pub fn new(model: Entity<ChartModel>) -> Self {
-        Self { model }
-    }
-}
-
-impl Render for HoverCard {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _ = self.model.read(cx);
-        div().id("HoverCard")
-    }
-}
-
-pub struct StatsGrid {
-    pub model: Entity<ChartModel>,
-}
-
-impl StatsGrid {
-    pub fn new(model: Entity<ChartModel>) -> Self {
-        Self { model }
-    }
-}
-
-impl Render for StatsGrid {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _ = self.model.read(cx);
-        div().id("StatsGrid")
-    }
-}
-
-pub struct FlowHeader {
-    pub model: Entity<ChartModel>,
-}
-
-impl FlowHeader {
-    pub fn new(model: Entity<ChartModel>) -> Self {
-        Self { model }
-    }
-}
-
-impl Render for FlowHeader {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _ = self.model.read(cx);
-        div().id("FlowHeader")
-    }
-}
 
 /// Decimals for prices in this window: the pair's tick precision when the
 /// instrument states it, else about six significant digits of the last price.
@@ -98,6 +49,12 @@ pub fn bid_share(book: &Book) -> Option<f64> {
     (bids + asks > 0.0).then(|| bids / (bids + asks) * 100.0)
 }
 
+/// Share of the day's swaps that bought the token, 0–100.
+pub fn buy_share(onchain: &Onchain) -> Option<f64> {
+    let total = f64::from(onchain.buys + onchain.sells);
+    (total > 0.0).then(|| f64::from(onchain.buys) / total * 100.0)
+}
+
 /// Width of the price column; the size column takes the rest, the trailing
 /// column (total or clock) has the last share. The same for heads and rows.
 pub(crate) const PRICE_COLUMN: f32 = 0.36;
@@ -115,6 +72,49 @@ pub(crate) fn step_decimals(step: f64) -> usize {
 
 /// Column heads and the loading spinner, shared with the trades panel.
 pub(crate) use self::order_book::{header_row, loading};
+
+/// One readable line about the stretch on screen, plus, while live, the order
+/// book's pressure, or for a pool which way the day's swaps lean. `None`
+/// until the stretch can be read.
+pub fn insight(
+    visible: Option<VisibleStats>,
+    book: Option<&Book>,
+    onchain: Option<&Onchain>,
+) -> Option<String> {
+    let visible = visible?;
+    let stretch = if visible.live {
+        t!("chart.lastSpan", span = format::duration(visible.span))
+    } else {
+        format::range(visible.from, visible.to)
+    };
+    let mut parts = vec![
+        format!("{stretch} {}", format::change_signed(visible.change_pct)),
+        t!("chart.amplitude", value = format!("{:.2}", visible.amplitude_pct)),
+    ];
+    if visible.live {
+        if let Some(share) = book.and_then(bid_share) {
+            let other = 100.0 - share;
+            parts.push(if share >= 55.0 {
+                t!("chart.bidsLead", share = format!("{share:.0}"))
+            } else if share <= 45.0 {
+                t!("chart.asksLead", share = format!("{other:.0}"))
+            } else {
+                t!("chart.balanced").to_owned()
+            });
+        }
+        if let Some(share) = onchain.and_then(buy_share) {
+            let other = 100.0 - share;
+            parts.push(if share >= 55.0 {
+                t!("chart.buyersLead", share = format!("{share:.0}"))
+            } else if share <= 45.0 {
+                t!("chart.sellersLead", share = format!("{other:.0}"))
+            } else {
+                t!("chart.flowBalanced").to_owned()
+            });
+        }
+    }
+    Some(parts.join(" · "))
+}
 
 /// The bid/ask (or buy/sell) split bar: a share filling from the left in the
 /// up color, the rest in the down color.
@@ -154,7 +154,7 @@ pub(crate) fn app_of(model: &Entity<ChartModel>, cx: &gpui_kit::App) -> crate::a
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::market::{Book, Level};
+    use crate::market::{Book, Level, Onchain};
 
     fn level(price: f64, qty: f64) -> Level {
         Level { price, qty }
@@ -165,6 +165,10 @@ mod tests {
             bids: bids.iter().map(|(p, q)| level(*p, *q)).collect(),
             asks: asks.iter().map(|(p, q)| level(*p, *q)).collect(),
         }
+    }
+
+    fn onchain(buys: u32, sells: u32) -> Onchain {
+        Onchain { liquidity: None, market_cap: None, fdv: None, buys, sells }
     }
 
     #[test]
@@ -188,6 +192,36 @@ mod tests {
         assert_eq!(bid_share(&book(&[(1.0, 3.0)], &[(2.0, 1.0)])), Some(75.0));
         assert_eq!(bid_share(&book(&[], &[(2.0, 1.0)])), Some(0.0));
         assert_eq!(bid_share(&book(&[], &[])), None);
+        assert_eq!(buy_share(&onchain(7, 3)), Some(70.0));
+        assert_eq!(buy_share(&onchain(0, 0)), None);
+    }
+
+    #[test]
+    fn insight_reads_the_stretch_and_live_pressure() {
+        let visible = VisibleStats {
+            live: true,
+            span: 3600.0,
+            from: 0.0,
+            to: 0.0,
+            change_pct: 1.234,
+            amplitude_pct: 2.5,
+        };
+        let plain = insight(Some(visible), None, None).unwrap();
+        assert!(plain.contains("+1.23%") && plain.contains("2.50%"));
+        assert_eq!(plain.matches(" · ").count(), 1);
+        let bids = book(&[(1.0, 6.0)], &[(2.0, 4.0)]);
+        let led = insight(Some(visible), Some(&bids), Some(&onchain(3, 7))).unwrap();
+        assert!(led.contains("60%") && led.contains("70%"));
+        assert_eq!(led.matches(" · ").count(), 3);
+        let even = book(&[(1.0, 5.0)], &[(2.0, 5.0)]);
+        let balanced = insight(Some(visible), Some(&even), Some(&onchain(5, 5))).unwrap();
+        assert!(!balanced.contains("60%") && !balanced.contains("70%"));
+        assert_eq!(balanced.matches(" · ").count(), 3);
+        assert!(insight(None, Some(&bids), None).is_none());
+        let past = VisibleStats { live: false, span: 0.0, ..visible };
+        let line = insight(Some(past), Some(&bids), Some(&onchain(3, 7))).unwrap();
+        assert!(!line.contains("60%") && !line.contains("70%"));
+        assert_eq!(line.matches(" · ").count(), 1);
     }
 
     #[test]
