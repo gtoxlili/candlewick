@@ -70,6 +70,7 @@
       "boll": "ボリンジャーバンド"
     },
     "period": "期間",
+    "periodOf": "%{label} の期間",
     "ohlc": {
       "open": "始値",
       "high": "高値",

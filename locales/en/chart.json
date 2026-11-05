@@ -70,6 +70,7 @@
       "boll": "Bollinger Bands"
     },
     "period": "Period",
+    "periodOf": "%{label} period",
     "ohlc": {
       "open": "Open",
       "high": "High",
