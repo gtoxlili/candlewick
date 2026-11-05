@@ -9,7 +9,7 @@ mod assets;
 mod hero;
 mod tiles;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(target_os = "macos", feature = "test-support"))]
 pub mod fixtures;
 
 #[cfg(test)]

@@ -98,7 +98,7 @@ impl Render for DisplaySection {
 /// the offscreen renderer: two setting combinations and a refused save, in
 /// both themes and both checked languages. `render` draws and saves one
 /// frame.
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(target_os = "macos", feature = "test-support"))]
 pub fn samples(
     cx: &mut gpui_kit::HeadlessAppContext,
     app: &App,

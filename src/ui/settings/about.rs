@@ -32,7 +32,7 @@ pub struct AgentNote {
     /// What a save or the login item call said, as the group shows it.
     error: Option<String>,
     /// The status the offscreen renderer shows instead of the app's.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(all(target_os = "macos", feature = "test-support"))]
     status: Option<AgentStatus>,
     _observers: Vec<Task<()>>,
 }
@@ -51,7 +51,7 @@ impl AgentNote {
             login_busy: false,
             login_task: None,
             error: None,
-            #[cfg(any(test, feature = "test-support"))]
+            #[cfg(all(target_os = "macos", feature = "test-support"))]
             status: None,
             _observers: observers,
         }
@@ -89,7 +89,7 @@ impl AgentNote {
 
     /// Whether agents have the skill, and who has it.
     fn status(&self) -> AgentStatus {
-        #[cfg(any(test, feature = "test-support"))]
+        #[cfg(all(target_os = "macos", feature = "test-support"))]
         if let Some(status) = &self.status {
             return status.clone();
         }
@@ -228,7 +228,7 @@ fn agent_list(agents: &[&'static str], locale: Locale) -> String {
 pub struct AppFooter {
     app: App,
     /// The update view the offscreen renderer shows instead of the app's.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(all(target_os = "macos", feature = "test-support"))]
     preview: Option<UpdateView>,
     _observers: Vec<Task<()>>,
 }
@@ -241,14 +241,14 @@ impl AppFooter {
         ];
         Self {
             app,
-            #[cfg(any(test, feature = "test-support"))]
+            #[cfg(all(target_os = "macos", feature = "test-support"))]
             preview: None,
             _observers: observers,
         }
     }
 
     fn view(&self) -> UpdateView {
-        #[cfg(any(test, feature = "test-support"))]
+        #[cfg(all(target_os = "macos", feature = "test-support"))]
         if let Some(preview) = &self.preview {
             return preview.clone();
         }
@@ -376,7 +376,7 @@ fn update_note(state: &UpdateState) -> Option<String> {
 }
 
 /// Every state the footer draws, with the name its sample images use.
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, all(target_os = "macos", feature = "test-support")))]
 fn update_states() -> Vec<(&'static str, UpdateState)> {
     use UpdateState::*;
     vec![
@@ -395,7 +395,7 @@ fn update_states() -> Vec<(&'static str, UpdateState)> {
 /// Images of the settings window with every update state, and of the
 /// General group with the agent note, for the offscreen renderer. `render`
 /// draws and saves one frame.
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(target_os = "macos", feature = "test-support"))]
 pub fn samples(
     cx: &mut gpui_kit::HeadlessAppContext,
     app: &App,

@@ -100,7 +100,7 @@ impl ChartModel {
     }
 
     /// Construct a chart with prepared data and no observers, stream, or network requests.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, all(target_os = "macos", feature = "test-support")))]
     pub fn with_market(
         app: App,
         instrument: Option<Instrument>,
@@ -122,12 +122,12 @@ impl ChartModel {
     pub fn app(&self) -> &App {
         &self.app
     }
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, all(target_os = "macos", feature = "test-support")))]
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
     /// The page to ask for next, when a test drives the history itself.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, all(target_os = "macos", feature = "test-support")))]
     pub(crate) fn begin_older(&mut self) -> Option<OlderPage> {
         self.begin_older_at(std::time::Instant::now())
     }
@@ -167,7 +167,7 @@ impl ChartModel {
             cx.notify();
         }
     }
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(all(target_os = "macos", feature = "test-support"))]
     pub fn market_mut(&mut self) -> Option<&mut Market> {
         self.market.as_mut()
     }

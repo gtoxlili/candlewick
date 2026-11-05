@@ -169,5 +169,7 @@ debug = false
 
 [dev-dependencies]
 gpui-kit = { version = "0.9", default-features = false, features = ["gpui-fast", "component", "assets", "test-support"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
 # Turns the feature on for `cargo test` without a flag.
 candlewick = { path = ".", features = ["test-support"] }
