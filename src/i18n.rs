@@ -147,8 +147,7 @@ mod tests {
         }
     }
 
-    // `APP_MESSAGES` leaves out the surfaces whose windows aren't built yet
-    // (build.rs keeps that list).
+    // A message no code says is dead weight in every language.
     #[test]
     fn app_messages_are_used() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));

@@ -2,10 +2,8 @@
   "holdings": {
     "title": "保有資産",
     "manageKeys": "API キーを管理",
-    "sort": "並べ替え",
     "byValue": "評価額順",
     "byChange": "24h 損益順",
-    "accountsAndPositions": "口座とポジション",
     "positionsCount": "ポジション %{n}",
     "readingAccounts": "各口座を読み込み中…",
     "crypto": "暗号資産",

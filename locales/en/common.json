@@ -1,5 +1,4 @@
 {
-  "loading": "Loading",
   "market": {
     "US": "US",
     "HK": "HK",
@@ -11,11 +10,5 @@
     "hour": "%{n}h",
     "day": "%{n}D",
     "week": "%{n}W"
-  },
-  "windowControls": {
-    "minimize": "Minimize",
-    "maximize": "Maximize",
-    "restore": "Restore",
-    "close": "Close"
   }
 }

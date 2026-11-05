@@ -173,19 +173,6 @@ mod text {
     /// i18next-style plural suffixes; a catalog with one in a key is an
     /// error, since `t!` picks no plural form.
     const PLURALS: [&str; 6] = ["_zero", "_one", "_two", "_few", "_many", "_other"];
-    /// Key prefixes of messages nothing says yet: the windows that will say
-    /// them don't exist. Each window's task shortens this list; when it is
-    /// empty, every message is said somewhere.
-    const UNSAID: [&str; 8] = [
-        "common.",
-        "loading",
-        "market.",
-        "interval.",
-        "windowControls.",
-        "settings.",
-        "chart.",
-        "holdings.",
-    ];
 
     /// A language's messages by dotted key.
     type Catalog = BTreeMap<String, String>;
@@ -199,13 +186,10 @@ mod text {
         let app = app.on_platform(windows);
         let mut code = app.code();
         // What the code names to say each message, for the test that every
-        // message is said somewhere.
-        let said: BTreeSet<&str> = app
-            .source()
-            .keys()
-            .map(String::as_str)
-            .filter(|key| !UNSAID.iter().any(|prefix| key.starts_with(prefix)))
-            .collect();
+        // message is said somewhere. Taken after `on_platform`, so a message
+        // whose wording differs on Windows is the message the code names, not
+        // its `_windows` variant.
+        let said: BTreeSet<&str> = app.source().keys().map(String::as_str).collect();
         let named = said.into_iter().fold(String::new(), |mut list, key| {
             write!(list, "{key:?}, ").unwrap();
             list

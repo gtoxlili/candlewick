@@ -1,5 +1,4 @@
 {
-  "loading": "加载中",
   "market": {
     "US": "美股",
     "HK": "港股",
@@ -11,11 +10,5 @@
     "hour": "%{n}小时",
     "day": "%{n}日",
     "week": "%{n}周"
-  },
-  "windowControls": {
-    "minimize": "最小化",
-    "maximize": "最大化",
-    "restore": "还原",
-    "close": "关闭"
   }
 }

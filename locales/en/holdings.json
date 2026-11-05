@@ -2,10 +2,8 @@
   "holdings": {
     "title": "Holdings",
     "manageKeys": "Manage API keys",
-    "sort": "Sort",
     "byValue": "By value",
     "byChange": "By 24h P&L",
-    "accountsAndPositions": "Accounts and positions",
     "positionsCount": "Positions %{n}",
     "readingAccounts": "Reading your accounts…",
     "crypto": "Crypto",

@@ -1,6 +1,5 @@
 {
   "settings": {
-    "title": "设置",
     "cancel": "取消",
     "save": "保存",
     "replace": "更换",
@@ -37,7 +36,6 @@
       "secretKey": "Secret Key",
       "passphrase": "Passphrase",
       "create": "在%{exchange}创建 API Key",
-      "verifying": "正在验证",
       "inBar": "菜单栏显示总资产",
       "inBar_windows": "任务栏显示总资产",
       "inBarDetail": "代替自选的价格；也可在自选里重新置顶一个。",
@@ -59,7 +57,6 @@
     "ths": {
       "footnote": "填写后可添加 A 股、指数、同花顺板块和场内基金。",
       "getKey": "到同花顺金融数据 API 获取 Key",
-      "checking": "正在验证 Key…",
       "watchlist": "同花顺自选",
       "watchlistDetail": "登录后显示在菜单栏菜单里，只读不改",
       "watchlistDetail_windows": "登录后显示在任务栏菜单里，只读不改",
@@ -119,12 +116,8 @@
       "japanese": "日本語"
     },
     "update": {
-      "versionUnavailable": "暂时无法读取版本信息",
-      "actionFailed": "操作未完成，请重试",
-      "retry": "操作失败，重试",
       "checkAgain": "再次检查更新",
       "checkForNew": "检查是否有新版本",
-      "upToDateCheckAgain": "已是最新版本，再次检查更新",
       "unavailable": "更新不可用",
       "upToDate": "已是最新版本",
       "check": "检查更新",
@@ -135,11 +128,9 @@
       "checkFailed": "检查失败，重试",
       "updateFailed": "更新失败，重试",
       "noteDisabled": "此副本不支持应用内更新",
-      "noteChecking": "正在检查更新…",
       "noteUnreachable": "暂时无法检查更新，请稍后重试",
       "noteDownloading": "正在下载 %{version}…",
       "noteReady": "%{version} 已下载，重新启动后生效",
-      "noteRestarting": "正在重新启动…",
       "noteFailed": "%{version} 更新失败，请重试"
     }
   }

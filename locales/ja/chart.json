@@ -2,9 +2,6 @@
   "chart": {
     "book": "板",
     "trades": "約定",
-    "bookAndTrades": "板と約定",
-    "interval": "時間足",
-    "chartType": "チャートの種類",
     "line": "ライン",
     "candles": "ローソク足",
     "live": "リアルタイム",
@@ -28,11 +25,7 @@
     "bidsLead": "買い優勢 %{share}%",
     "asksLead": "売り優勢 %{share}%",
     "balanced": "売り買い拮抗",
-    "hint": "ドラッグで過去へ · スクロールまたはピンチで拡大縮小 · ダブルクリックでリセット",
-    "backToLive": "最新に戻る",
     "emptyData": "表示するデータがありません",
-    "noCandles": "ローソク足のデータはまだありません",
-    "unreachable": "%{source} に接続できません。再試行中…",
     "price": "価格",
     "priceIn": "価格 (%{unit})",
     "size": "数量",
@@ -44,7 +37,6 @@
     "bid": "買 %{share}%",
     "ask": "%{share}% 売",
     "spread": "スプレッド %{value}",
-    "grouping": "価格のまとめ単位",
     "buyers": "買い %{share}%",
     "sellers": "%{share}% 売り",
     "buyersLead": "買い優勢 %{share}%",
@@ -53,7 +45,6 @@
     "liquidity": "流動性",
     "marketCap": "時価総額",
     "fdv": "FDV",
-    "tools": "描画ツール",
     "tool": {
       "cursor": "カーソル",
       "level": "水平線",
@@ -61,7 +52,6 @@
       "fib": "フィボナッチ・リトレースメント",
       "measure": "計測"
     },
-    "drawingHint": "クリックでもう一端を置く · Esc で取り消し",
     "clearDrawings": "描画を消去",
     "undo": "元に戻す",
     "indicators": "インジケーター",
@@ -70,7 +60,6 @@
       "ema": "指数移動平均",
       "boll": "ボリンジャーバンド"
     },
-    "period": "期間",
     "periodOf": "%{label} の期間",
     "ohlc": {
       "open": "始値",

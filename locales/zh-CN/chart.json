@@ -2,9 +2,6 @@
   "chart": {
     "book": "盘口",
     "trades": "成交",
-    "bookAndTrades": "盘口与成交",
-    "interval": "K 线周期",
-    "chartType": "图表类型",
     "line": "折线",
     "candles": "K 线",
     "live": "实时",
@@ -28,11 +25,7 @@
     "bidsLead": "买盘偏强 %{share}%",
     "asksLead": "卖盘偏强 %{share}%",
     "balanced": "买卖均衡",
-    "hint": "拖动查看更早的走势 · 滚动或双指缩放 · 双击复位",
-    "backToLive": "回到最新",
     "emptyData": "暂无数据",
-    "noCandles": "暂无 K 线数据",
-    "unreachable": "无法连接%{source}，正在重试…",
     "price": "价格",
     "priceIn": "价格(%{unit})",
     "size": "数量",
@@ -44,7 +37,6 @@
     "bid": "买 %{share}%",
     "ask": "%{share}% 卖",
     "spread": "价差 %{value}",
-    "grouping": "合并深度",
     "buyers": "买入 %{share}%",
     "sellers": "%{share}% 卖出",
     "buyersLead": "买方偏强 %{share}%",
@@ -53,7 +45,6 @@
     "liquidity": "流动性",
     "marketCap": "市值",
     "fdv": "完全稀释市值",
-    "tools": "画线工具",
     "tool": {
       "cursor": "光标",
       "level": "水平线",
@@ -61,7 +52,6 @@
       "fib": "斐波那契回撤",
       "measure": "测量"
     },
-    "drawingHint": "点击放置另一端 · Esc 取消",
     "clearDrawings": "清除画线",
     "undo": "撤销",
     "indicators": "指标",
@@ -70,7 +60,6 @@
       "ema": "指数均线",
       "boll": "布林带"
     },
-    "period": "周期",
     "periodOf": "%{label} 周期",
     "ohlc": {
       "open": "开盘",

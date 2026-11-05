@@ -2,10 +2,8 @@
   "holdings": {
     "title": "持仓",
     "manageKeys": "管理 API Key",
-    "sort": "排序",
     "byValue": "按价值",
     "byChange": "按 24h 盈亏",
-    "accountsAndPositions": "账户与仓位",
     "positionsCount": "合约 %{n}",
     "readingAccounts": "正在读取各账户…",
     "crypto": "加密资产",
