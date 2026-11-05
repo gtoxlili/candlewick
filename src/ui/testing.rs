@@ -78,6 +78,60 @@ fn render_png(cx: &mut HeadlessAppContext, window: AnyWindowHandle, name: &str) 
     }
 }
 
+/// The holdings window over a realistic portfolio: both window sizes, both
+/// themes, and every language at the sizes its strings must fit.
+fn holdings_samples(cx: &mut HeadlessAppContext, app: &App) {
+    use crate::i18n::Locale;
+
+    {
+        let mut model = app.shared().model();
+        model.accounts = crate::ui::holdings::fixtures::accounts();
+    }
+    app.notify(crate::app::Topic::Portfolio);
+    cx.run_until_parked();
+
+    let mut sample_windows = Vec::new();
+    for (width, height) in [(980., 640.), (800., 500.)] {
+        let mut options = cx.update(|cx| {
+            let mut options = crate::window::window_options(cx, "holdings", "holdings".to_owned());
+            options.window_bounds = Some(WindowBounds::Windowed(Bounds {
+                origin: Default::default(),
+                size: size(px(width), px(height)),
+            }));
+            options.focus = false;
+            options.show = false;
+            options
+        });
+        options.focus = false;
+        options.show = false;
+        let handle = app.clone();
+        let window = cx.update(|cx| {
+            gpui_kit::open_window(options, cx, |window, cx| {
+                let view = cx.new(|cx| ui::holdings::HoldingsView::new(handle.clone(), window, cx));
+                backdrop(view, &handle, cx)
+            })
+            .unwrap()
+            .0
+        });
+        sample_windows.push((width, window));
+    }
+
+    for (tag, locale) in [("en", Locale::En), ("zh", Locale::ZhCn), ("ja", Locale::Ja)] {
+        cx.update(|_| crate::i18n::set(locale));
+        app.notify(crate::app::Topic::Locale);
+        cx.run_until_parked();
+        for (name, dark) in [("light", false), ("dark", true)] {
+            cx.update(|cx| ui::theme::apply(app, dark, cx));
+            for (width, window) in &sample_windows {
+                render_png(cx, *window, &format!("holdings-{width:.0}-{name}-{tag}"));
+            }
+        }
+    }
+    cx.update(|_| crate::i18n::set(Locale::En));
+    app.notify(crate::app::Topic::Locale);
+    cx.run_until_parked();
+}
+
 pub fn run() {
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
@@ -213,7 +267,7 @@ pub fn run() {
         render_png(&mut cx, chart, &format!("chart-ja-{name}"));
     }
     crate::i18n::set(locale);
-
+    holdings_samples(&mut cx, &app);
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);
     cx.run_until_parked();

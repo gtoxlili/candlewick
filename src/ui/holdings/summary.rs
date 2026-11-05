@@ -2,9 +2,6 @@
 //! what moved it, and the figures in the tiles. Pure functions over the
 //! app's portfolio, so the window only lays them out.
 
-// Removed when a window uses this module.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use crate::portfolio::{Asset, Portfolio, PositionValue};
 
 /// Assets worth less than this (USDT) are "small": folded away by default.
