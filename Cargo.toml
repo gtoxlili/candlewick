@@ -53,8 +53,12 @@ dirs = "6"
 cargo-packager-updater = { version = "0.2.3", default-features = false }
 minisign-verify = "0.2"
 
-# The status item uses AppKit; Windows draws its own (platform/windows).
+# The status item uses AppKit; Windows draws its own (platform/windows). A
+# downloaded update is unpacked and swapped in on macOS only (update/install.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
+plist = "1"
+tar = "0.4"
+tempfile = "3"
 tray-icon = { version = "0.25", default-features = false }
 png = "0.18"
 objc2 = "0.6"
