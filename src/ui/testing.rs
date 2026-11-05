@@ -7,12 +7,12 @@ use crate::{
     app::App,
     market::longbridge::{Account, MarketAccess},
     model::{ColorScheme, Settings, Shared},
-    ui::{self, theme::Palette, widgets},
+    ui::{self, assets::Assets, theme::Palette, widgets},
 };
 use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Context, Entity, HeadlessAppContext, IntoElement,
-    ParentElement, Render, SharedString, Styled, Window, WindowBounds, WindowOptions,
-    assets::AllAssets, div, px, size, test::TestWindowExt,
+    ParentElement, Render, SharedString, Styled, Window, WindowBounds, WindowOptions, div, px,
+    size, test::TestWindowExt,
 };
 
 struct Backdrop<V> {
@@ -726,7 +726,7 @@ fn panels_samples(cx: &mut HeadlessAppContext, app: &App) {
 pub fn run() {
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
-        Arc::new(AllAssets),
+        Arc::new(Assets),
         gpui_kit::platform::current_headless_renderer,
     );
     cx.update(gpui_kit::init);

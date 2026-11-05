@@ -6,6 +6,7 @@ use gpui_kit::{Context, FontFeatures, Styled, Task, Window, WindowAppearance};
 
 use crate::app::{App, Topic};
 
+pub mod assets;
 pub mod chart;
 pub mod holdings;
 pub mod prefs;
