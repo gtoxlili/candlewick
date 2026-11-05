@@ -130,6 +130,11 @@ pub(super) struct State {
     pub hover_x: Option<f64>,
     pub close_y: Option<f64>,
     pub tip: Option<(f64, f64)>,
+    /// Whether the live value sits off the plot while the view is pinned in
+    /// history: the dashed value line is not drawn then.
+    pub off_plot: bool,
+    /// Candles whose geometry this frame built, for tests.
+    pub candles_visited: usize,
     pub moving: bool,
     pub display_width: f64,
     pub bull: f64,
@@ -193,6 +198,8 @@ impl Default for State {
             hover_x: None,
             close_y: None,
             tip: None,
+            off_plot: false,
+            candles_visited: 0,
             moving: false,
             display_width: 0.0,
             bull: 0.5,
@@ -300,6 +307,7 @@ impl State {
     /// Advance the chart by a bounded frame duration and write the geometry actually drawn.
     pub fn advance(&mut self, dt_ms: f64, input: Input<'_>, view: &mut View) {
         let dt = dt_ms.clamp(0.0, 50.0);
+        self.candles_visited = 0;
         let snap = input.reduce_motion;
         let now_ms = input.now * 1000.0;
         self.breath = 0.22 + 0.08 * (now_ms / 1200.0 * std::f64::consts::PI).sin();
@@ -454,7 +462,9 @@ impl State {
             self.tip = None;
             self.points.clear();
             self.controls.clear();
-            self.moving |= !snap;
+            // The wave behind the empty state is the loading animation; an
+            // empty chart that has finished loading holds still.
+            self.moving |= self.loading > 0.0;
             return;
         }
         let (visible, live) = if use_stash {
@@ -549,7 +559,7 @@ impl State {
         let collapse = smoothstep(self.reveal) * (1.0 - self.line_mode);
         let candle_alpha = self.reveal * (1.0 - self.line_presence);
         if self.width_elapsed < 300.0 {
-            add_candles(
+            self.candles_visited += add_candles(
                 &mut self.candles,
                 &self.old,
                 self.old_live,
@@ -567,7 +577,7 @@ impl State {
                 &y,
             );
         }
-        add_candles(
+        self.candles_visited += add_candles(
             &mut self.candles,
             visible,
             live,
@@ -623,6 +633,7 @@ impl State {
         let tip_value = line_close.map(|v| v + (tick.unwrap_or(v) - v) * self.density);
         let tip_x = x(input.now);
         self.tip = None;
+        self.off_plot = tip_value.is_some() && tip_x > LEFT + plot_w + 1.0 && view.end.is_some();
         if tip_x <= LEFT + plot_w + 1.0
             && let (Some(value), Some(last)) = (tip_value, self.points.last_mut())
         {
@@ -767,13 +778,6 @@ impl State {
                 (input.line.partition_point(|p| p.time <= self.end) + 1).min(input.line.len());
             self.stash_line.extend_from_slice(&input.line[first.min(last)..last]);
         }
-        if !snap
-            && (live.is_some() && self.line_presence < 0.99
-                || self.loading > 0.0
-                || (self.tip.is_some() && self.line_presence > 0.8 && self.reveal > 0.6))
-        {
-            self.moving = true;
-        }
     }
 }
 
@@ -794,10 +798,12 @@ fn add_candles(
     hover: Option<f64>,
     x: &impl Fn(f64) -> f64,
     y: &impl Fn(f64) -> f64,
-) {
+) -> usize {
     let body = (width * plot_w / (right - left) * 0.7).max(1.0);
     let wick = (body * 0.15).clamp(0.8, 2.0);
+    let mut visited = 0;
     for (c, is_live) in candles.iter().copied().map(|c| (c, false)).chain(live.map(|c| (c, true))) {
+        visited += 1;
         let px = x(c.time + width / 2.0);
         if px + body / 2.0 < LEFT || px - body / 2.0 > LEFT + plot_w {
             continue;
@@ -817,6 +823,7 @@ fn add_candles(
             live: is_live,
         });
     }
+    visited
 }
 
 #[cfg(test)]
@@ -927,6 +934,76 @@ mod tests {
                 state.points.capacity()
             )
         );
+    }
+
+    #[test]
+    fn a_narrow_window_over_a_long_history_visits_only_what_it_draws() {
+        let candles: Vec<_> = (0..50_000)
+            .map(|i| {
+                let price = 100.0 + (f64::from(i) * 0.07).sin() * 5.0;
+                Candle {
+                    time: f64::from(i) * 60.0,
+                    open: price,
+                    high: price + 2.0,
+                    low: price - 2.0,
+                    close: price + 1.0,
+                }
+            })
+            .collect();
+        let mut state = State::default();
+        // 200 one-minute candles on screen, at the end of the history.
+        let mut view = Viewport::new(3_000_000.0, 60.0, 200.0).view;
+        view.end = Some(2_999_000.0);
+        view.snap = true;
+        let mut data = input(&candles);
+        data.now = 3_000_000.0;
+        for _ in 0..40 {
+            state.advance(16.67, data, &mut view);
+        }
+        assert!(
+            state.candles_visited <= 205,
+            "built geometry for {} candles of 50,000",
+            state.candles_visited
+        );
+        assert!(state.candles.len() <= 201);
+        let started = std::time::Instant::now();
+        for _ in 0..100 {
+            state.advance(16.67, data, &mut view);
+        }
+        let per_frame = started.elapsed() / 100;
+        assert!(per_frame < std::time::Duration::from_millis(5), "{per_frame:?} per frame");
+        assert!(!state.moving, "the chart settles");
+    }
+
+    #[test]
+    fn a_chart_following_the_live_edge_settles_between_ticks() {
+        let candles: Vec<_> =
+            (0..120).map(|i| candle(3600.0 - f64::from(119 - i) * 60.0, 100.0)).collect();
+        let mut state = State::default();
+        let mut view = Viewport::new(3600.0, 60.0, 60.0).view;
+        let mut data = input(&candles);
+        for frame in 0..300 {
+            data.now = 3600.0 + f64::from(frame) * 0.016_67;
+            state.advance(16.67, data, &mut view);
+        }
+        assert!(!state.moving, "the live edge alone does not ask for frames");
+    }
+
+    #[test]
+    fn a_live_candle_that_stops_ticking_lets_the_chart_settle() {
+        let candles: Vec<_> =
+            (0..60).map(|i| candle(f64::from(i) * 60.0, 100.0 + f64::from(i))).collect();
+        let mut state = State::default();
+        let mut view = Viewport::new(3600.0, 60.0, 60.0).view;
+        let mut data = input(&candles);
+        data.now = 3660.0;
+        data.live = Some(candle(3600.0, 160.0));
+        data.price = Some(161.0);
+        data.line = &[];
+        for _ in 0..300 {
+            state.advance(16.67, data, &mut view);
+        }
+        assert!(!state.moving, "a quiet live candle does not ask for frames");
     }
 
     #[test]

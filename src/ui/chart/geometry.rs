@@ -1,9 +1,6 @@
 //! Between the chart's coordinates and the canvas: mapping a frame, snapping
 //! the pointer to candles, and finding the drawing under it.
 
-#![cfg_attr(not(test), allow(dead_code))]
-// Removed when a window uses this module.
-
 use crate::market::Candle;
 
 use super::model::{Anchor, Drawing, FIB_LEVELS};
@@ -64,6 +61,58 @@ pub struct Frame {
     pub line_mode: f64,
     /// The candle under the pointer; `None` while not hovering.
     pub hover: Option<Candle>,
+}
+
+impl Frame {
+    /// Whether two frames map time and price to the same pixels, within a
+    /// twentieth of a pixel: what another layer painting over the chart
+    /// depends on. `now` moves on every frame whether or not anything was
+    /// drawn differently, and the live edge drifts with it, so an exact
+    /// comparison would repaint those layers on every tick.
+    pub fn same_geometry(&self, other: &Self) -> bool {
+        let candle = |c: Option<Candle>| c.map(|c| (c.time, c.open, c.high, c.low, c.close));
+        let span = (self.right - self.left).abs().max(1e-9);
+        let range = (self.max - self.min).abs().max(1e-12);
+        let dx = |a: f64, b: f64| ((b - a) / span * self.plot_w).abs() < 0.05;
+        let dy = |a: f64, b: f64| ((b - a) / range * self.plot_h).abs() < 0.05;
+        let near = |a: f64, b: f64, tolerance: f64| (a - b).abs() < tolerance;
+        self.plot_x == other.plot_x
+            && self.plot_y == other.plot_y
+            && self.plot_w == other.plot_w
+            && self.plot_h == other.plot_h
+            && dx(self.left, other.left)
+            && dx(self.right, other.right)
+            && dy(self.min, other.min)
+            && dy(self.max, other.max)
+            && near(self.candle_width, other.candle_width, 1e-6)
+            && self.hover_x.is_none() == other.hover_x.is_none()
+            && self.hover_x.zip(other.hover_x).is_none_or(|(a, b)| near(a, b, 0.05))
+            && near(self.scrub, other.scrub, 0.002)
+            && near(self.line_mode, other.line_mode, 0.002)
+            && candle(self.hover) == candle(other.hover)
+    }
+}
+
+impl PartialEq for Frame {
+    fn eq(&self, other: &Self) -> bool {
+        let candle = |c: Option<Candle>| c.map(|c| (c.time, c.open, c.high, c.low, c.close));
+        self.left == other.left
+            && self.right == other.right
+            && self.min == other.min
+            && self.max == other.max
+            && self.plot_x == other.plot_x
+            && self.plot_y == other.plot_y
+            && self.plot_w == other.plot_w
+            && self.plot_h == other.plot_h
+            && self.width == other.width
+            && self.height == other.height
+            && self.now == other.now
+            && self.candle_width == other.candle_width
+            && self.hover_x == other.hover_x
+            && self.scrub == other.scrub
+            && self.line_mode == other.line_mode
+            && candle(self.hover) == candle(other.hover)
+    }
 }
 
 /// Time and price to pixels and back, for one frame.

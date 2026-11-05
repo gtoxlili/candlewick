@@ -3,9 +3,6 @@
 //! the view reports what it shows: whether it follows the live edge, a request
 //! to page in older candles, and the zoom to remember.
 
-#![cfg_attr(not(test), allow(dead_code))]
-// Removed when a window uses this module.
-
 pub const DEFAULT_BARS: f64 = 60.0;
 const MIN_BARS: f64 = 15.0;
 const MAX_BARS: f64 = 360.0;

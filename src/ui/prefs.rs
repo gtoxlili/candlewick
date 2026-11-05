@@ -1,8 +1,5 @@
 //! Persistent choices for native windows.
 
-#![cfg_attr(not(test), allow(dead_code))]
-// Removed when a window uses this module.
-
 use std::{collections::BTreeMap, fs, io, path::Path};
 
 use serde::{Deserialize, Serialize};

@@ -3,9 +3,6 @@
 //! indicators switched on and their values. The chart hands it pointer events
 //! and the latest frame; painting reads it every frame.
 
-#![cfg_attr(not(test), allow(dead_code))]
-// Removed when a window uses this module.
-
 use crate::market::Candle;
 
 use super::{

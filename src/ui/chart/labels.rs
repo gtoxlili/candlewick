@@ -1,9 +1,6 @@
 //! Time labels on the chart: the axis, the start of a candle, and the stretch
 //! a hover card names.
 
-#![cfg_attr(not(test), allow(dead_code))]
-// Removed when a window uses this module.
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::format::{LocalTime, local_time_parts};

@@ -723,6 +723,579 @@ fn panels_samples(cx: &mut HeadlessAppContext, app: &App) {
     cx.run_until_parked();
 }
 
+/// A market with a long enough history for a chart, a forming candle, and
+/// nothing that reaches the network.
+fn live_market(
+    spec: &crate::market::ChartSpec,
+) -> (ui::chart::market::Market, Vec<crate::market::Candle>) {
+    use crate::market::{Candle, FeedState, LiveEvent, Stats};
+    use ui::chart::market::Market;
+
+    let interval = spec
+        .intervals
+        .iter()
+        .copied()
+        .find(|interval| interval.secs == 60)
+        .unwrap_or(spec.intervals[0]);
+    let secs = f64::from(interval.secs);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    let end = (now / secs).floor() * secs;
+    let candles: Vec<Candle> = (0..300)
+        .map(|i| {
+            let i = i as f64;
+            let open = 84_000.0 + (i * 0.11).sin() * 140.0 + (i * 0.031).cos() * 30.0;
+            let close =
+                84_000.0 + ((i + 1.0) * 0.11).sin() * 140.0 + ((i + 1.0) * 0.031).cos() * 30.0;
+            Candle {
+                time: end - secs * (300.0 - i),
+                open,
+                high: open.max(close) + 25.0 + (i % 5.0) * 6.0,
+                low: open.min(close) - 20.0 - (i % 3.0) * 5.0,
+                close,
+            }
+        })
+        .collect();
+    let mut market = Market::new(interval);
+    let token = market.begin_history();
+    market.finish_history(token, candles.clone());
+    market.apply(LiveEvent::State { state: FeedState::Live });
+    let last = candles.last().map_or(0.0, |candle| candle.close);
+    let first = candles.first().map_or(last, |candle| candle.open);
+    market.apply(LiveEvent::Stats {
+        stats: Stats {
+            last,
+            high: Some(last + 180.0),
+            low: Some(last - 160.0),
+            volume: Some(12.0),
+            turnover: 1.0e9,
+            change: last - first,
+            change_pct: (last - first) / first * 100.0,
+            onchain: None,
+        },
+    });
+    if spec.book {
+        market.apply(LiveEvent::Book { books: panels_book(&spec.book_steps, last) });
+    }
+    market.apply(LiveEvent::Trades { trades: panels_trades(last, end) });
+    // The forming candle, opened by the first tick of its bucket.
+    market.apply(LiveEvent::Tick { price: last + 12.0, time: (end + 1.0) * 1000.0 });
+    (market, candles)
+}
+
+fn chart_live_model(
+    cx: &mut HeadlessAppContext,
+    app: &App,
+) -> (
+    Entity<ui::chart::model_state::ChartModel>,
+    Vec<crate::market::Candle>,
+    crate::market::ChartSpec,
+) {
+    let id = crate::api::get_chart_instrument(app).expect("a chart instrument");
+    let instrument = crate::api::chart_instrument(app, id.clone()).expect("the instrument");
+    let spec = crate::api::chart_spec(app, id).expect("a chart spec");
+    let (market, candles) = live_market(&spec);
+    let kept = spec.clone();
+    let handle = app.clone();
+    let model = cx.update(move |cx| {
+        cx.new(move |_| {
+            ui::chart::model_state::ChartModel::with_market(handle, Some(instrument), spec, market)
+        })
+    });
+    (model, candles, kept)
+}
+
+fn chart_live_window(
+    cx: &mut HeadlessAppContext,
+    app: &App,
+    width: f64,
+    height: f64,
+    model: Entity<ui::chart::model_state::ChartModel>,
+) -> AnyWindowHandle {
+    let handle = app.clone();
+    let mut options = cx.update(|cx| {
+        let mut options = crate::window::window_options(cx, "chart", "chart-live".to_owned());
+        options.window_bounds = Some(WindowBounds::Windowed(Bounds {
+            origin: Default::default(),
+            size: size(px(width as f32), px(height as f32)),
+        }));
+        options
+    });
+    options.focus = false;
+    options.show = false;
+    cx.update(|cx| {
+        gpui_kit::open_window(options, cx, |window, cx| {
+            let view =
+                cx.new(|cx| ui::chart::ChartView::with_model(handle.clone(), model, window, cx));
+            backdrop(view, &handle, cx)
+        })
+        .unwrap()
+        .0
+    })
+}
+
+/// Draw one frame and deliver the frame requests it made. Returns how many
+/// animation frames the chart asked for.
+fn chart_frame(cx: &mut HeadlessAppContext, window: AnyWindowHandle) -> usize {
+    // One frame of animation time: the chart measures how long it has been
+    // since it last advanced, and the offscreen renderer draws instantly.
+    cx.advance_clock(std::time::Duration::from_millis(16));
+    cx.update_window(window, |_, window, cx| {
+        window.draw(cx).clear(cx);
+        window.simulate_next_frame(cx)
+    })
+    .unwrap()
+}
+
+/// Draw frames until the chart stops asking for more. Returns whether it
+/// settled within `limit` frames.
+fn chart_settle(cx: &mut HeadlessAppContext, window: AnyWindowHandle, limit: usize) -> bool {
+    for _ in 0..limit {
+        let pending = chart_frame(cx, window);
+        cx.run_until_parked();
+        if pending == 0 {
+            return true;
+        }
+    }
+    false
+}
+
+fn chart_png(cx: &mut HeadlessAppContext, window: AnyWindowHandle, name: &str) {
+    // The offscreen renderer refreshes the window, which lays every view out
+    // again; settle first so the captured frame is the one the chart paints.
+    chart_settle(cx, window, 400);
+    render_png(cx, window, name);
+}
+
+/// Where the overlay painted the price tag of the level drawing, in window
+/// pixels. Tags are the only 18-pixel-tall quads drawn in the drawing colour.
+fn level_tag_y(window: &Window, scale: f32, color: gpui_kit::Hsla) -> Option<f64> {
+    let background = gpui_kit::solid_background(color);
+    window
+        .painted_quads()
+        .iter()
+        .filter(|quad| quad.background == background)
+        .filter(|quad| (quad.bounds.size.height.0 - 18.0 * scale).abs() < 0.5)
+        .map(|quad| f64::from(quad.bounds.origin.y.0))
+        .next()
+}
+
+/// The largest quad painted in `color`, in CSS pixels from the window's
+/// origin: the hover card's background.
+fn card_quad(window: &Window, color: gpui_kit::Hsla) -> Option<(f64, f64, f64, f64)> {
+    let background = gpui_kit::solid_background(color);
+    window
+        .painted_quads()
+        .iter()
+        .filter(|quad| quad.background == background)
+        .max_by_key(|quad| quad.bounds.size.width.0 as i64 * quad.bounds.size.height.0 as i64)
+        .map(|quad| {
+            let scale = f64::from(window.scale_factor());
+            let bounds = quad.bounds;
+            (
+                f64::from(bounds.origin.x.0) / scale,
+                f64::from(bounds.origin.y.0) / scale,
+                f64::from(bounds.size.width.0) / scale,
+                f64::from(bounds.size.height.0) / scale,
+            )
+        })
+}
+
+/// The hover card reads the frame the canvas writes: a frame whose plot is
+/// narrower flips the card to the other side of the pointer, and the card is
+/// repainted when the canvas notifies it of that change.
+fn hover_frame_sample(cx: &mut HeadlessAppContext, app: &App) {
+    use ui::chart::{geometry::Frame, model::Anchor, model_state::ChartModel, panels::HoverCard};
+
+    let (model, candles, spec) = chart_live_model(cx, app);
+    let secs = f64::from(spec.intervals[0].secs);
+    let last = candles.last().copied().expect("candles");
+    let pointer = ui::chart::geometry::Point { x: 200.0, y: 40.0 };
+    let frame = |plot_w: f64| Frame {
+        left: last.time - secs * 60.0,
+        right: last.time + secs,
+        min: 83_000.0,
+        max: 85_000.0,
+        plot_x: 16.0,
+        plot_y: 16.0,
+        plot_w,
+        plot_h: 300.0,
+        width: plot_w + 80.0,
+        height: 348.0,
+        now: last.time + secs,
+        candle_width: secs,
+        hover_x: Some(pointer.x),
+        scrub: 1.0,
+        line_mode: 0.0,
+        hover: Some(last),
+    };
+    model.update(cx, |model, cx| {
+        model.frame.set(Some(frame(600.0)));
+        model.analysis_mut().pointer = Some(pointer);
+        model.analysis_mut().snapped =
+            Some(Anchor { time: last.time + secs / 2.0, price: last.close });
+        cx.notify();
+    });
+
+    let handle = app.clone();
+    let shaped = cx.update(|cx| {
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: Default::default(),
+                size: size(px(800.), px(400.)),
+            })),
+            focus: false,
+            show: false,
+            ..Default::default()
+        };
+        gpui_kit::open_window(options, cx, |_, cx| {
+            let card = cx.new(|_| HoverCard::new(model.clone()));
+            backdrop(card, &handle, cx)
+        })
+        .unwrap()
+        .0
+    });
+    let palette = cx.update(|cx| ui::theme::Palette::current(app, cx));
+    render_png(cx, shaped, "chart-hover-frame-wide");
+    let wide = cx
+        .update_window(shaped, |_, window, _| card_quad(window, palette.popover))
+        .unwrap()
+        .expect("the card is painted");
+    assert!(wide.2 >= 176.0, "the card is at least its minimum width");
+    // The card is placed against the plot the frame describes and the pointer
+    // in the same coordinates the overlay reports it in.
+    let pointer_x = pointer.x;
+    assert!(
+        (wide.0 - (pointer_x + 14.0)).abs() < 1.0,
+        "the card sits beside the pointer: {wide:?}"
+    );
+
+    // A narrower plot no longer leaves room to the pointer's right.
+    model.update(cx, |model, cx| {
+        model.frame.set(Some(frame(300.0)));
+        cx.notify();
+    });
+    cx.update_window(shaped, |_, window, cx| window.draw(cx).clear(cx)).unwrap();
+    let narrow = cx
+        .update_window(shaped, |_, window, _| card_quad(window, palette.popover))
+        .unwrap()
+        .expect("the card is painted");
+    assert!(
+        (narrow.0 - (pointer_x - 14.0 - narrow.2).max(6.0)).abs() < 1.0,
+        "the card flips to the pointer's other side: {narrow:?}"
+    );
+}
+
+/// The chart window as a running window: a live feed of ticks, a candle
+/// rollover, an older history page, a pan, a zoom, a trend line drawn with the
+/// tool hotkey, an indicator switched on, the frame requests a settled chart
+/// makes, and the overlay and hover card following the frame the canvas wrote.
+fn chart_live_samples(cx: &mut HeadlessAppContext, app: &App) {
+    use crate::market::LiveEvent;
+    use ui::chart::{
+        analysis::Tool,
+        geometry::mapping,
+        model::{Anchor, Drawing},
+        model_state::ChartModel,
+    };
+
+    let original = crate::i18n::current();
+    let (model, candles, spec) = chart_live_model(cx, app);
+    let window = chart_live_window(cx, app, 980.0, 640.0, model.clone());
+    assert!(chart_settle(cx, window, 400), "the chart settles after loading");
+
+    // A settled chart asks for no frames at all.
+    assert_eq!(chart_frame(cx, window), 0, "a chart at rest requests no frames");
+
+    // A window that changes size lays the chart out again at the new size.
+    let wide = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame").plot_w;
+    cx.update_window(window, |_, window, cx| {
+        window.resize(gpui_kit::size(px(760.), px(480.)));
+        window.bounds_changed(cx);
+    })
+    .unwrap();
+    assert!(chart_settle(cx, window, 400));
+    let narrow = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame").plot_w;
+    assert!(narrow < wide - 100.0, "the plot follows the window: {wide} -> {narrow}");
+    cx.update_window(window, |_, window, cx| {
+        window.resize(gpui_kit::size(px(980.), px(640.)));
+        window.bounds_changed(cx);
+    })
+    .unwrap();
+    assert!(chart_settle(cx, window, 400));
+
+    // The overlay paints on the right axis the price of the level drawn here;
+    // its position is the one the frame the canvas wrote maps.
+    let a = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame");
+    // Near the bottom of the range: a rolling range moves it visibly.
+    let level = a.min + (a.max - a.min) * 0.05;
+    cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            model.analysis_mut().drawings =
+                vec![Drawing::Level { id: "level".to_owned(), price: level }];
+            cx.notify();
+        });
+    });
+    chart_frame(cx, window);
+
+    // The forming candle eases toward a tick, and the frame moves with it.
+    cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+            // A spike far above the range: the eased range has to follow it
+            // over several frames.
+            let spike = a.max + (a.max - a.min) * 4.0;
+            model.apply_event(LiveEvent::Tick { price: spike, time: now * 1000.0 }, cx);
+        });
+    });
+    assert!(chart_frame(cx, window) >= 1, "a tick starts the chart's animation");
+    let frame_a = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame");
+    let scale = cx.update_window(window, |_, window, _| window.scale_factor()).unwrap();
+    let color = cx.update(|cx| ui::theme::Palette::current(app, cx).violet);
+    let painted_a = cx
+        .update_window(window, |_, window, _| level_tag_y(window, scale, color))
+        .unwrap()
+        .expect("the level tag is painted");
+    // The next frames run on the chart's own requests; nothing notifies the
+    // model between them, so only the frame it writes can move the overlay.
+    for _ in 0..5 {
+        assert!(chart_frame(cx, window) >= 1, "the chart animates without the model");
+    }
+    let frame_b = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame");
+    assert_ne!(frame_a, frame_b, "the canvas keeps writing new frames");
+    let painted_b = cx
+        .update_window(window, |_, window, _| level_tag_y(window, scale, color))
+        .unwrap()
+        .expect("the level tag is painted");
+    let moved = mapping(&frame_b).y(level) - mapping(&frame_a).y(level);
+    assert!(moved.abs() > 2.0, "the frame moved far enough to see ({moved})");
+    assert!(
+        (painted_b - painted_a - f64::from(scale) * moved).abs() < f64::from(scale),
+        "the overlay follows the frame it is notified of: painted {} vs {}",
+        painted_b - painted_a,
+        f64::from(scale) * moved
+    );
+
+    // A candle rollover and an older page leave the chart on its live edge and
+    // painting.
+    let end = candles.last().map_or(0.0, |candle| candle.time);
+    let secs = f64::from(spec.intervals[0].secs);
+    cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            model.apply_event(
+                LiveEvent::Tick { price: 90_000.0, time: (end + 2.0 * secs) * 1000.0 },
+                cx,
+            );
+        });
+    });
+    assert!(chart_settle(cx, window, 400));
+    let older: Vec<_> = (0..60)
+        .map(|i| crate::market::Candle {
+            time: candles[0].time - secs * (60.0 - i as f64),
+            open: 83_000.0,
+            high: 83_200.0,
+            low: 82_800.0,
+            close: 83_100.0,
+        })
+        .collect();
+    let accepted = cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            let page = model.begin_older().expect("a page to page in");
+            let accepted = model.accept_history(model.generation(), page.load, older, true);
+            model.viewport_changed(cx);
+            accepted
+        })
+    });
+    assert!(accepted, "the older page is accepted");
+    assert!(chart_settle(cx, window, 400));
+
+    // Pointer gestures: a pan leaves the live edge, a zoom changes the span,
+    // and the double click returns to the live edge at the default zoom.
+    let overlay = cx.update_window(window, |_, window, _| window.find("Overlay")).unwrap();
+    let bounds = overlay.bounds();
+    let at = |x: f32, y: f32| bounds.origin + gpui_kit::point(px(x), px(y));
+    let mid = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    cx.update_window(window, |_, window, cx| {
+        // Dragging the content to the right moves the window into history.
+        window.drag(at(mid.0 * 0.35, mid.1 * 0.4), at(mid.0 * 0.65, mid.1 * 0.4), cx);
+    })
+    .unwrap();
+    assert!(chart_settle(cx, window, 400));
+    let panned = cx.update(|cx| model.read(cx).viewport().view.end.is_some());
+    assert!(panned, "the drag pans the chart into history");
+    let visible = cx.update(|cx| model.read(cx).visible_stats());
+    assert!(visible.is_some(), "the window reports the stretch it shows");
+    assert!(!visible.unwrap().live, "and it is no longer the live stretch");
+    let span_before = cx.update(|cx| model.read(cx).viewport().view.span);
+    cx.update_window(window, |_, window, cx| {
+        // A wheel turned down, as AppKit reports it: a negative delta.
+        window.scroll(
+            "Overlay",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-40.))),
+            cx,
+        );
+    })
+    .unwrap();
+    assert!(chart_settle(cx, window, 400));
+    let span_after = cx.update(|cx| model.read(cx).viewport().view.span);
+    assert!(span_after > span_before, "the wheel zooms out: {span_before} -> {span_after}");
+
+    // A double click returns to live and the default zoom. The chart ignores
+    // one within half a second of a drag, as a double click after flinging the
+    // view would otherwise undo the fling.
+    std::thread::sleep(std::time::Duration::from_millis(520));
+    cx.update_window(window, |_, window, cx| {
+        window.double_click("Overlay", cx);
+    })
+    .unwrap();
+    assert!(chart_settle(cx, window, 400));
+    let (live, span) = cx.update(|cx| {
+        let viewport = model.read(cx).viewport();
+        (viewport.live(), viewport.view.span)
+    });
+    assert!(live, "a double click follows the live edge again");
+    assert!((span - 60.0 * 60.0).abs() < 1.0, "the default span: {span}");
+
+    // The tool hotkey reaches the model through the window's key context, and
+    // two clicks draw a trend line.
+    cx.update_window(window, |_, window, cx| window.press("alt-t", cx)).unwrap();
+    assert_eq!(
+        cx.update(|cx| model.read(cx).analysis().tool),
+        Tool::Drawing(ui::chart::model::DrawingKind::Trend)
+    );
+    let before = cx.update(|cx| model.read(cx).analysis().drawings.len());
+    cx.update_window(window, |_, window, cx| {
+        window.click_at("Overlay", gpui_kit::point(px(mid.0 * 0.4), px(mid.1 * 0.45)), cx);
+        window.click_at("Overlay", gpui_kit::point(px(mid.0 * 0.6), px(mid.1 * 0.3)), cx);
+    })
+    .unwrap();
+    assert!(chart_settle(cx, window, 400));
+    assert_eq!(
+        cx.update(|cx| model.read(cx).analysis().drawings.len()),
+        before + 1,
+        "the trend line is drawn"
+    );
+    // Escape leaves the tool, and the keyboard shortcut removes the drawing.
+    cx.update_window(window, |_, window, cx| window.press("escape", cx)).unwrap();
+    assert_eq!(cx.update(|cx| model.read(cx).analysis().tool), Tool::Cursor);
+    cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            // Selecting by id picks the drawing the clicks made.
+            let last = model.analysis().drawings.last().map(|drawing| drawing.id().to_owned());
+            model.analysis_mut().selected = last;
+            cx.notify();
+        });
+    });
+    cx.update_window(window, |_, window, cx| window.press("backspace", cx)).unwrap();
+    assert_eq!(
+        cx.update(|cx| model.read(cx).analysis().drawings.len()),
+        before,
+        "delete removes the selected drawing"
+    );
+    cx.update_window(window, |_, window, cx| window.press("cmd-z", cx)).unwrap();
+    assert_eq!(
+        cx.update(|cx| model.read(cx).analysis().drawings.len()),
+        before + 1,
+        "undo brings it back"
+    );
+
+    // An indicator switched on from the menu.
+    cx.update_window(window, |_, window, cx| window.click("chart-indicators-button", cx)).unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.click("chart-indicator-ma1", cx)).unwrap();
+    cx.run_until_parked();
+    assert!(
+        cx.update(|cx| model.read(cx).analysis().indicators.iter().any(|s| s.id == "ma1" && s.on)),
+        "the menu switches the indicator on"
+    );
+    assert!(chart_settle(cx, window, 400));
+    assert_eq!(chart_frame(cx, window), 0, "still at rest after all of that");
+
+    // What the window looks like in both themes and both chart types, at both
+    // sizes the window manager allows. Fresh models: no spike, no drawings,
+    // no open menu.
+    for (width, height, size) in [(980.0, 640.0, "980"), (760.0, 480.0, "760")] {
+        let (shot, _, _) = chart_live_model(cx, app);
+        let shot_window = chart_live_window(cx, app, width, height, shot.clone());
+        assert!(chart_settle(cx, shot_window, 400));
+        for (name, dark) in [("light", false), ("dark", true)] {
+            cx.update(|cx| ui::theme::apply(app, dark, cx));
+            chart_png(cx, shot_window, &format!("chart-live-{size}-candle-{name}"));
+        }
+        if size == "980" {
+            // A hovered candle: the crosshair, its tags and the card against
+            // the candles they point at.
+            let (frame, candle) = cx.update(|cx| {
+                let model = shot.read(cx);
+                let frame = model.frame.get().expect("a painted frame");
+                let middle = (frame.left + frame.right) / 2.0;
+                let candle = model
+                    .analysis()
+                    .candles()
+                    .iter()
+                    .copied()
+                    .find(|candle| candle.time + frame.candle_width >= middle)
+                    .expect("a candle under the pointer");
+                (frame, candle)
+            });
+            let map = mapping(&frame);
+            let pointer = ui::chart::geometry::Point {
+                x: map.x(candle.time + frame.candle_width / 2.0),
+                y: map.y(candle.close),
+            };
+            cx.update(|cx| {
+                shot.update(cx, |model, cx| {
+                    model.analysis_mut().pointer = Some(pointer);
+                    model.analysis_mut().snapped = Some(Anchor {
+                        time: candle.time + frame.candle_width / 2.0,
+                        price: candle.close,
+                    });
+                    cx.notify();
+                });
+            });
+            for (name, dark) in [("light", false), ("dark", true)] {
+                cx.update(|cx| ui::theme::apply(app, dark, cx));
+                chart_png(cx, shot_window, &format!("chart-live-{size}-hover-{name}"));
+            }
+            cx.update(|cx| {
+                shot.update(cx, |model, cx| {
+                    model.analysis_mut().pointer = None;
+                    model.analysis_mut().snapped = None;
+                    model.set_mode(ui::prefs::Mode::Line, cx);
+                });
+            });
+            assert!(chart_settle(cx, shot_window, 400));
+            for (name, dark) in [("light", false), ("dark", true)] {
+                cx.update(|cx| ui::theme::apply(app, dark, cx));
+                chart_png(cx, shot_window, &format!("chart-live-{size}-line-{name}"));
+            }
+        }
+    }
+    // A symbol whose history loaded empty: the chart says so instead of
+    // painting an empty plot.
+    let id = crate::api::get_chart_instrument(app).expect("a chart instrument");
+    let instrument = crate::api::chart_instrument(app, id.clone()).expect("the instrument");
+    let spec = crate::api::chart_spec(app, id).expect("a chart spec");
+    let mut market = ui::chart::market::Market::new(spec.intervals[0]);
+    let token = market.begin_history();
+    market.finish_history(token, Vec::new());
+    let handle = app.clone();
+    let empty = cx.update(move |cx| {
+        cx.new(move |_| ChartModel::with_market(handle, Some(instrument), spec, market))
+    });
+    let empty_window = chart_live_window(cx, app, 980.0, 640.0, empty);
+    for (name, dark) in [("light", false), ("dark", true)] {
+        cx.update(|cx| ui::theme::apply(app, dark, cx));
+        chart_png(cx, empty_window, &format!("chart-live-empty-{name}"));
+    }
+    crate::i18n::set(original);
+    app.notify(crate::app::Topic::Locale);
+    cx.run_until_parked();
+}
+
 pub fn run() {
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
@@ -923,6 +1496,8 @@ pub fn run() {
     keys_samples(&mut cx, &app);
     crate::ui::settings::settings_samples(&mut cx, &app, &render_png);
     panels_samples(&mut cx, &app);
+    hover_frame_sample(&mut cx, &app);
+    chart_live_samples(&mut cx, &app);
     display_samples(&mut cx, &app);
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);

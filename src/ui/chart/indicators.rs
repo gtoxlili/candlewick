@@ -1,9 +1,6 @@
 //! Moving averages and Bollinger Bands over the candles on hand. Each series
 //! has one value per candle and NaN until it has enough history.
 
-#![cfg_attr(not(test), allow(dead_code))]
-// Removed when a window uses this module.
-
 use crate::market::Candle;
 
 /// The indicators the toolbar offers.

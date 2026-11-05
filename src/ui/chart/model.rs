@@ -1,9 +1,6 @@
 //! What someone draws on the chart, in the chart's own coordinates: epoch
 //! seconds and price, so a drawing stays put across intervals, zooms and pans.
 
-#![cfg_attr(not(test), allow(dead_code))]
-// Removed when a window uses this module.
-
 use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
