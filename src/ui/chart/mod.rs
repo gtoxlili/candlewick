@@ -70,11 +70,11 @@ impl ChartView {
             mode: cx.new(|_| ModeToggle { model: model.clone() }),
             live: cx.new(|_| LiveBadge { model: model.clone() }),
             picker: cx.new(|_| InstrumentPicker { model: model.clone() }),
-            order_book: cx.new(|_| OrderBookPanel { model: model.clone() }),
-            trades: cx.new(|_| TradesPanel { model: model.clone() }),
-            hover: cx.new(|_| HoverCard { model: model.clone() }),
-            stats: cx.new(|_| StatsGrid { model: model.clone() }),
-            flow: cx.new(|_| FlowHeader { model: model.clone() }),
+            order_book: cx.new(|_| OrderBookPanel::new(model.clone())),
+            trades: cx.new(|_| TradesPanel::new(model.clone())),
+            hover: cx.new(|_| HoverCard::new(model.clone())),
+            stats: cx.new(|_| StatsGrid::new(model.clone())),
+            flow: cx.new(|_| FlowHeader::new(model.clone())),
             toolbar: cx.new(|_| AnalysisBar { model: model.clone() }),
             model,
             _observers: observers,
@@ -180,8 +180,27 @@ impl Render for ChartView {
                             .pt_2()
                             .flex()
                             .flex_col()
-                            .child(div().h(px(32.)).px_3().child(if has_book {
-                                div().into_any_element()
+                            .child(div().flex_shrink_0().px_3().child(if has_book {
+                                let selected = usize::from(model.side_tab() == SideTab::Trades);
+                                let entity = self.model.clone();
+                                div()
+                                    .pb(px(10.))
+                                    .child(widgets::pill_tabs(
+                                        "chart-side-tab",
+                                        [t!("chart.book").into(), t!("chart.trades").into()],
+                                        selected,
+                                        move |index, _, cx| {
+                                            let tab = if *index == 0 {
+                                                SideTab::Book
+                                            } else {
+                                                SideTab::Trades
+                                            };
+                                            entity.update(cx, |model, cx| {
+                                                model.set_side_tab(tab, cx)
+                                            });
+                                        },
+                                    ))
+                                    .into_any_element()
                             } else {
                                 self.flow.clone().into_any_element()
                             }))
