@@ -1,7 +1,7 @@
 //! Which stretch of time the chart shows. Gestures move targets on one value
 //! the chart reads every frame, so panning and zooming need no other redraw;
-//! events report what the page itself shows: whether the view follows the live
-//! edge, a request to page in older candles, and the zoom to remember.
+//! the view reports what it shows: whether it follows the live edge, a request
+//! to page in older candles, and the zoom to remember.
 
 #![cfg_attr(not(test), allow(dead_code))]
 // Removed when a window uses this module.
@@ -19,7 +19,7 @@ pub fn clamp_bars(bars: f64) -> f64 {
 }
 
 /// The targets the chart eases toward, and what its last frame drew: epoch
-/// seconds and CSS pixels. The chart writes `left` to `buffer` every frame;
+/// seconds and logical pixels. The chart writes `left` to `buffer` every frame;
 /// it reads `span`, `end` and takes `snap`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct View {
@@ -32,7 +32,7 @@ pub struct View {
     /// The edges drawn, in epoch seconds.
     pub left: Option<f64>,
     pub right: Option<f64>,
-    /// The plot area's left x and width, in CSS pixels.
+    /// The plot area's left x and width, in logical pixels.
     pub plot_x: Option<f64>,
     pub plot_w: Option<f64>,
     /// The chart clock at the last frame, in epoch seconds.
@@ -41,7 +41,7 @@ pub struct View {
     pub buffer: f64,
 }
 
-/// What a gesture changed that the page itself shows.
+/// What a gesture changed that the view itself shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ViewportEvent {
     /// The view started or stopped following the live edge.
@@ -194,7 +194,7 @@ impl Viewport {
     }
 
     /// `factor` above 1 shows more time. At the live edge the newest candle stays
-    /// put; in history the time under `x` (CSS pixels in the chart) does.
+    /// put; in history the time under `x` (logical pixels in the chart) does.
     pub fn zoom(&mut self, factor: f64, x: f64) {
         self.stop_glide();
         let span = clamp_bars(self.view.span * factor / self.secs) * self.secs;

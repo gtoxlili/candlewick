@@ -25,7 +25,7 @@ const EXPLORER_ADVANCED: PCWSTR =
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Look {
     pub taskbar: Tone,
-    /// Windows, menus and pages.
+    /// Windows' mode for apps; the dropdown's marks draw with it.
     pub apps: Tone,
     /// A high-contrast theme's text and highlight colors.
     pub contrast: Option<(Rgba, Rgba)>,

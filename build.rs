@@ -170,12 +170,11 @@ mod text {
     /// A key's Windows wording, where the platforms differ ("menu bar",
     /// "taskbar"): `onePinned_windows` beside `onePinned`.
     const WINDOWS: &str = "_windows";
-    /// i18next-style plural suffixes; a catalog with one in a key is an
-    /// error, since `t!` picks no plural form.
+    /// Plural suffixes; a catalog with one in a key is an error, since `t!`
+    /// picks no plural form.
     const PLURALS: [&str; 6] = ["_zero", "_one", "_two", "_few", "_many", "_other"];
-    /// Key prefixes of messages nothing says yet: the windows that will say
-    /// them don't exist. Each window's task shortens this list; when it is
-    /// empty, every message is said somewhere.
+    /// Key prefixes the every-message-is-said check leaves out, because no
+    /// code says those messages.
     const UNSAID: [&str; 8] = [
         "common.",
         "loading",

@@ -145,7 +145,7 @@ pub fn access() -> Option<Access> {
     state().access.clone()
 }
 
-/// Probes a key as the settings page asks, and remembers the answer if it
+/// Probes a key as the settings window asks, and remembers the answer if it
 /// is the configured key's.
 pub async fn check(key: &str) -> Result<Access, Error> {
     let found = probe(key).await?;

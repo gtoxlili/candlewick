@@ -104,7 +104,7 @@ impl Feed {
                 events.push(LiveEvent::Trades {
                     trades: vec![Trade {
                         // Seconds, then the day's volume: increasing, and
-                        // below 2^53 for the webview.
+                        // below 2^53 so a JSON reader keeps it exact.
                         id: ((now as u64) << 20) | (snapshot.volume as u64 & 0xF_FFFF),
                         price: snapshot.last,
                         qty: snapshot.volume - last.volume,

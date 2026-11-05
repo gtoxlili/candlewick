@@ -236,7 +236,7 @@ impl Analysis {
             .collect()
     }
 
-    /// The primary button went down at `p` (CSS pixels in the chart). With a
+    /// The primary button went down at `p` (logical pixels in the chart). With a
     /// drawing tool it places a point; on a drawing it starts a drag; else the
     /// chart may pan. `free` (Alt) turns snapping off.
     pub fn pointer_down(

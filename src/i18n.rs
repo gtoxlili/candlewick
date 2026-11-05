@@ -110,7 +110,7 @@ mod tests {
         }
     }
 
-    // The settings file and the pages name a language by its tag, or `system`.
+    // The settings file and the windows name a language by its tag, or `system`.
     #[test]
     fn languages_are_written_as_tags() {
         for (language, json) in [
@@ -147,8 +147,7 @@ mod tests {
         }
     }
 
-    // `APP_MESSAGES` leaves out the surfaces whose windows aren't built yet
-    // (build.rs keeps that list).
+    // `APP_MESSAGES` leaves out the key prefixes `build.rs` lists as unsaid.
     #[test]
     fn app_messages_are_used() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
