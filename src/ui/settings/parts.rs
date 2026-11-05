@@ -102,6 +102,12 @@ pub struct CredentialInput {
     pub state: gpui_kit::Entity<gpui_kit::component::input::InputState>,
 }
 
+/// A link to an outside page, offered beside the editor's actions.
+pub struct CredentialLink {
+    pub label: SharedString,
+    pub url: String,
+}
+
 /// A credential action called on the UI thread.
 pub type CredentialAction = Box<dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)>;
 /// A credential save action receiving values in field order.
@@ -116,6 +122,8 @@ pub struct CredentialField {
     pub busy: bool,
     pub inputs: Vec<CredentialInput>,
     pub error: Option<SharedString>,
+    /// A link shown at the left of the editing actions, if any.
+    pub link: Option<CredentialLink>,
     pub on_edit: CredentialAction,
     pub on_cancel: CredentialAction,
     pub on_save: CredentialSave,
@@ -125,14 +133,40 @@ pub struct CredentialField {
 impl CredentialField {
     /// Render the saved credential or its edit form.
     pub fn render(self, app: &App, cx: &gpui_kit::App) -> Div {
-        use gpui_kit::component::{Disableable, button::Button, input::Input};
+        use gpui_kit::component::{
+            Disableable,
+            button::{Button, ButtonVariants as _},
+            input::Input,
+            spinner::Spinner,
+        };
         let p = Palette::current(app, cx);
         let mut result = div().flex().flex_col().gap_2().px_3().py_2();
         if self.editing {
             let complete =
                 self.inputs.iter().all(|input| !input.state.read(cx).value().trim().is_empty());
             let states: Vec<_> = self.inputs.iter().map(|input| input.state.clone()).collect();
+            // The same row as when closed, so the name stays in sight while
+            // the form is open: several credentials share one form.
+            let mut header = div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().whitespace_nowrap().child(self.label));
+            if let Some(saved) = self.saved {
+                header = header.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_color(p.muted)
+                        .text_xs()
+                        .child(saved),
+                );
+            }
+            result = result.child(header);
             for input in self.inputs {
+                let label = input.label;
                 result = result.child(
                     div()
                         .flex()
@@ -143,36 +177,45 @@ impl CredentialField {
                                 .text_xs()
                                 .text_color(p.muted)
                                 .whitespace_nowrap()
-                                .child(input.label),
+                                .child(label.clone()),
                         )
-                        .child(Input::new(&input.state).disabled(self.busy)),
+                        .child(Input::new(&input.state).aria_label(label).disabled(self.busy)),
                 );
             }
             let cancel = self.on_cancel;
             let save = self.on_save;
+            let link = self.link.map(|link| {
+                let url = link.url;
+                Button::new((self.id, 5usize))
+                    .label(link.label)
+                    .link()
+                    .compact()
+                    .on_click(move |_, _, _| crate::platform::open_url(&url))
+            });
+            let mut save_button = Button::new((self.id, 1usize)).label(t!("settings.save"));
+            if self.busy {
+                save_button = save_button.icon(Spinner::new()).loading(true);
+            }
+            let incomplete = self.busy || !complete;
+            let mut actions = div().flex().items_center().gap_2();
+            if let Some(link) = link {
+                actions = actions.child(link).child(div().flex_1());
+            } else {
+                actions = actions.justify_end();
+            }
             result = result.child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
+                actions
                     .child(
                         Button::new((self.id, 0usize))
                             .label(t!("settings.cancel"))
                             .disabled(self.busy)
                             .on_click(move |_, window, cx| cancel(window, cx)),
                     )
-                    .child(
-                        Button::new((self.id, 1usize))
-                            .label(t!("settings.save"))
-                            .disabled(self.busy || !complete)
-                            .on_click(move |_, window, cx| {
-                                let values = states
-                                    .iter()
-                                    .map(|state| state.read(cx).value().to_string())
-                                    .collect();
-                                save(values, window, cx);
-                            }),
-                    ),
+                    .child(save_button.disabled(incomplete).on_click(move |_, window, cx| {
+                        let values =
+                            states.iter().map(|state| state.read(cx).value().to_string()).collect();
+                        save(values, window, cx);
+                    })),
             );
         } else {
             let edit = self.on_edit;

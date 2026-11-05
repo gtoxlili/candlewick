@@ -268,6 +268,7 @@ pub fn run() {
     }
     crate::i18n::set(locale);
     holdings_samples(&mut cx, &app);
+    keys_samples(&mut cx, &app);
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);
     cx.run_until_parked();
@@ -279,4 +280,117 @@ pub fn run() {
     let reversed = Palette::new(false, ColorScheme::RedUp);
     assert_eq!(normal.up, reversed.down);
     assert_eq!(normal.down, reversed.up);
+}
+
+/// The exchange API keys section, alone at the settings width and inside the
+/// settings window: with no key, a saved key, a save being confirmed and a
+/// refused key, in both themes and both checked languages.
+fn keys_samples(cx: &mut HeadlessAppContext, app: &App) {
+    use crate::{
+        credentials::ApiKey,
+        i18n::Locale,
+        market::ProviderId,
+        ui::settings::{SettingsView, keys::ApiKeysSection},
+    };
+
+    type Sample = (AnyWindowHandle, Entity<ApiKeysSection>);
+
+    fn open_section(cx: &mut HeadlessAppContext, app: &App) -> Sample {
+        let handle = app.clone();
+        let mut section = None;
+        let window = cx.update(|cx| {
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin: Default::default(),
+                    size: size(px(460.), px(640.)),
+                })),
+                focus: false,
+                show: false,
+                ..Default::default()
+            };
+            let (window, _) = gpui_kit::open_window(options, cx, |window, cx| {
+                let view = cx.new(|cx| ApiKeysSection::new(handle.clone(), window, cx));
+                section = Some(view.clone());
+                backdrop(view, &handle, cx)
+            })
+            .unwrap();
+            window
+        });
+        (window, section.unwrap())
+    }
+
+    fn open_settings(cx: &mut HeadlessAppContext, app: &App) -> Sample {
+        let handle = app.clone();
+        let mut view = None;
+        let window = cx.update(|cx| {
+            let mut options = crate::window::window_options(cx, "settings", "settings".to_owned());
+            options.focus = false;
+            options.show = false;
+            let (window, _) = gpui_kit::open_window(options, cx, |window, cx| {
+                let entity = cx.new(|cx| SettingsView::new(handle.clone(), window, cx));
+                view = Some(entity.clone());
+                backdrop(entity, &handle, cx)
+            })
+            .unwrap();
+            window
+        });
+        let section = cx.update(|cx| view.unwrap().read(cx).keys());
+        (window, section)
+    }
+
+    fn state(
+        cx: &mut HeadlessAppContext,
+        (window, section): &Sample,
+        editing: Option<ProviderId>,
+        saving: bool,
+        problem: Option<&str>,
+    ) {
+        cx.update_window(*window, |_, window, cx| {
+            section.update(cx, |section, cx| {
+                section.testing_state(editing, saving, problem.map(SharedString::from), window, cx);
+            });
+        })
+        .unwrap();
+    }
+
+    // With no key saved: three "Not set" rows and no holdings rows.
+    let mut samples = vec![("keys-none", open_section(cx, app), open_settings(cx, app))];
+    // With a key saved: its masked form and the holdings rows appear.
+    app.shared().credentials().exchanges.insert(
+        ProviderId::Binance,
+        ApiKey {
+            key: "aV3ryLongSavedKey123456".into(),
+            secret: "the-secret".into(),
+            passphrase: None,
+        },
+    );
+    samples.push(("keys-saved", open_section(cx, app), open_settings(cx, app)));
+    // Editing OKX (three inputs) while the exchange confirms the key.
+    let (section, window) = (open_section(cx, app), open_settings(cx, app));
+    state(cx, &section, Some(ProviderId::Okx), true, None);
+    state(cx, &window, Some(ProviderId::Okx), true, None);
+    samples.push(("keys-saving", section, window));
+    // Editing Bybit after the exchange refused the key.
+    let (section, window) = (open_section(cx, app), open_settings(cx, app));
+    let refused = Some("The exchange refused this key.");
+    state(cx, &section, Some(ProviderId::Bybit), false, refused);
+    state(cx, &window, Some(ProviderId::Bybit), false, refused);
+    samples.push(("keys-error", section, window));
+
+    for (tag, locale) in [("en", Locale::En), ("ja", Locale::Ja)] {
+        cx.update(|_| crate::i18n::set(locale));
+        app.notify(crate::app::Topic::Locale);
+        cx.run_until_parked();
+        for (name, dark) in [("light", false), ("dark", true)] {
+            cx.update(|cx| ui::theme::apply(app, dark, cx));
+            for (kind, (window, _), (settings, _)) in &samples {
+                render_png(cx, *window, &format!("{kind}-{name}-{tag}"));
+                render_png(cx, *settings, &format!("settings-{kind}-{name}-{tag}"));
+            }
+        }
+    }
+    cx.update(|_| crate::i18n::set(Locale::En));
+    app.notify(crate::app::Topic::Locale);
+    cx.run_until_parked();
+    app.shared().credentials().exchanges.clear();
 }

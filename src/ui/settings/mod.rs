@@ -2,7 +2,7 @@
 
 mod about;
 mod coingecko;
-mod keys;
+pub mod keys;
 mod language;
 mod longbridge;
 pub mod parts;
@@ -38,6 +38,12 @@ pub struct SettingsView {
     _observers: Vec<Task<()>>,
 }
 impl SettingsView {
+    /// The exchange keys section, for offscreen render checks.
+    #[cfg(test)]
+    pub fn keys(&self) -> Entity<ApiKeysSection> {
+        self.keys.clone()
+    }
+
     pub fn new(app: App, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut observers = super::setup(&app, window, cx);
         observers
