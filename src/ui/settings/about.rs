@@ -1,4 +1,4 @@
-//! Display settings, the General group's rows, and the settings footer.
+//! The General group's rows and the settings footer.
 
 use super::parts;
 use crate::{
@@ -17,27 +17,6 @@ use gpui_kit::{
     },
     div, px,
 };
-
-macro_rules! placeholder {
-    ($name:ident, $title:tt) => {
-        pub struct $name {
-            app: App,
-            _observers: Vec<Task<()>>,
-        }
-        impl $name {
-            pub fn new(app: App, _: &mut Window, cx: &mut Context<Self>) -> Self {
-                let observers = vec![ui::observe(&app, Topic::Locale, cx, |_, _| {})];
-                Self { app, _observers: observers }
-            }
-        }
-        impl Render for $name {
-            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-                parts::placeholder(t!($title), &self.app, cx)
-            }
-        }
-    };
-}
-placeholder!(DisplaySection, "settings.display.title");
 
 /// The General group's rows under the language: opening at login, automatic
 /// updates, and agent access with the line about who can read the app's
