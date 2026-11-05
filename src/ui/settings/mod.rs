@@ -2,6 +2,7 @@
 
 mod about;
 mod coingecko;
+mod display;
 pub mod keys;
 mod language;
 mod longbridge;
@@ -13,10 +14,14 @@ pub(crate) use self::longbridge::LongbridgeSection;
 /// Samples of the settings window for the offscreen test renderer.
 #[cfg(test)]
 pub use about::samples as settings_samples;
+/// Samples of the Display section for the offscreen test renderer.
+#[cfg(test)]
+pub use display::samples as display_samples;
 
 use self::{
-    about::{AgentNote, AppFooter, DisplaySection},
+    about::{AgentNote, AppFooter},
     coingecko::CoinGeckoSection,
+    display::DisplaySection,
     keys::ApiKeysSection,
     language::LanguageRow,
     ths::ThsSection,
@@ -46,6 +51,12 @@ impl SettingsView {
     #[cfg(test)]
     pub fn keys(&self) -> Entity<ApiKeysSection> {
         self.keys.clone()
+    }
+
+    /// The display section, for offscreen render checks.
+    #[cfg(test)]
+    pub fn display(&self) -> Entity<DisplaySection> {
+        self.display.clone()
     }
 
     pub fn new(app: App, window: &mut Window, cx: &mut Context<Self>) -> Self {

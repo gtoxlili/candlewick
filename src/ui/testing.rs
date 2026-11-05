@@ -923,6 +923,7 @@ pub fn run() {
     keys_samples(&mut cx, &app);
     crate::ui::settings::settings_samples(&mut cx, &app, &render_png);
     panels_samples(&mut cx, &app);
+    display_samples(&mut cx, &app);
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);
     cx.run_until_parked();
@@ -1047,4 +1048,10 @@ fn keys_samples(cx: &mut HeadlessAppContext, app: &App) {
     app.notify(crate::app::Topic::Locale);
     cx.run_until_parked();
     app.shared().credentials().exchanges.clear();
+}
+
+/// The Display section alone and inside the settings window, in both themes
+/// and both checked languages.
+fn display_samples(cx: &mut HeadlessAppContext, app: &App) {
+    crate::ui::settings::display_samples(cx, app, &render_png);
 }

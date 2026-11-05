@@ -25,18 +25,6 @@ pub fn group(app: &App, cx: &gpui_kit::App) -> Div {
     div().flex().flex_col().rounded_xl().border_1().border_color(p.border).bg(p.panel)
 }
 
-/// A placeholder for an unfinished section.
-pub fn placeholder(
-    title: impl Into<SharedString>,
-    app: &App,
-    cx: &gpui_kit::App,
-) -> impl IntoElement {
-    section(title, app, cx).child(
-        group(app, cx)
-            .child(div().px_3().py_2().text_color(Palette::current(app, cx).muted).child("…")),
-    )
-}
-
 /// Apply a settings change and return the saved settings or its displayable error.
 pub fn update_settings(app: &App, change: impl FnOnce(&mut Settings)) -> Result<Settings, String> {
     let mut settings = api::get_settings(app);
