@@ -43,6 +43,9 @@
     },
     "stocks": {
       "footnote": "入力すると、米国株・香港株・中国 A 株を追加できます。",
+      "appKey": "App Key",
+      "appSecret": "App Secret",
+      "accessToken": "Access Token",
       "signingIn": "%{source} にログイン中…",
       "noAccess": "相場の閲覧権限なし",
       "checkAccess": "相場の閲覧権限を確認",

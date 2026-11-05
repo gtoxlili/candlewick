@@ -9,12 +9,12 @@ pub mod parts;
 mod ths;
 mod watchlist;
 
+pub(crate) use self::longbridge::LongbridgeSection;
 use self::{
     about::{AgentNote, AppFooter, DisplaySection},
     coingecko::CoinGeckoSection,
     keys::ApiKeysSection,
     language::LanguageRow,
-    longbridge::LongbridgeSection,
     ths::ThsSection,
     watchlist::WatchlistSection,
 };
@@ -56,6 +56,11 @@ impl SettingsView {
             _observers: observers,
         }
     }
+
+    /// The Longbridge section shown in this window.
+    pub(crate) fn longbridge(&self) -> Entity<LongbridgeSection> {
+        self.longbridge.clone()
+    }
 }
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -74,7 +79,7 @@ impl Render for SettingsView {
                     .gap_5()
                     .child(self.watchlist.clone())
                     .child(self.keys.clone())
-                    .child(self.longbridge.clone())
+                    .child(self.longbridge())
                     .child(self.ths.clone())
                     .child(self.coingecko.clone())
                     .child(self.display.clone())
