@@ -1,6 +1,5 @@
 {
   "settings": {
-    "title": "設定",
     "cancel": "キャンセル",
     "save": "保存",
     "replace": "変更",
@@ -37,7 +36,6 @@
       "secretKey": "Secret Key",
       "passphrase": "Passphrase",
       "create": "%{exchange} で API キーを作成",
-      "verifying": "確認中",
       "inBar": "メニューバーに総資産を表示",
       "inBar_windows": "タスクバーに総資産を表示",
       "inBarDetail": "ウォッチリストの価格の代わりに表示します。ウォッチリストからいつでも戻せます。",
@@ -59,7 +57,6 @@
     "ths": {
       "footnote": "入力すると、中国 A 株・指数・業種・ETF を追加できます。",
       "getKey": "同花順データ API でキーを取得",
-      "checking": "キーを確認中…",
       "watchlist": "同花順のウォッチリスト",
       "watchlistDetail": "ログインするとメニューに表示・読み取りのみ",
       "watchlistDetail_windows": "ログインするとメニューに表示・読み取りのみ",
@@ -119,12 +116,8 @@
       "japanese": "日本語"
     },
     "update": {
-      "versionUnavailable": "バージョン情報を読み込めません",
-      "actionFailed": "完了しませんでした。もう一度お試しください",
-      "retry": "失敗しました。再試行",
       "checkAgain": "もう一度確認",
       "checkForNew": "新しいバージョンを確認",
-      "upToDateCheckAgain": "最新です。もう一度確認",
       "unavailable": "アップデートは利用できません",
       "upToDate": "最新です",
       "check": "アップデートを確認",
@@ -135,11 +128,9 @@
       "checkFailed": "確認に失敗。再試行",
       "updateFailed": "アップデートに失敗。再試行",
       "noteDisabled": "このコピーはアプリ内でアップデートできません",
-      "noteChecking": "アップデートを確認中…",
       "noteUnreachable": "現在アップデートを確認できません。しばらくしてからお試しください",
       "noteDownloading": "%{version} をダウンロード中…",
       "noteReady": "%{version} をダウンロードしました。再起動すると反映されます",
-      "noteRestarting": "再起動中…",
       "noteFailed": "%{version} へのアップデートに失敗しました。もう一度お試しください"
     }
   }

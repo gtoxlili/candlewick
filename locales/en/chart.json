@@ -2,9 +2,6 @@
   "chart": {
     "book": "Order book",
     "trades": "Trades",
-    "bookAndTrades": "Order book and trades",
-    "interval": "Interval",
-    "chartType": "Chart type",
     "line": "Line",
     "candles": "Candles",
     "live": "Live",
@@ -28,11 +25,7 @@
     "bidsLead": "Bids lead %{share}%",
     "asksLead": "Asks lead %{share}%",
     "balanced": "Balanced book",
-    "hint": "Drag to look back · Scroll or pinch to zoom · Double-click to reset",
-    "backToLive": "Back to live",
     "emptyData": "No data to display",
-    "noCandles": "No candles yet",
-    "unreachable": "Can't reach %{source}. Retrying…",
     "price": "Price",
     "priceIn": "Price (%{unit})",
     "size": "Size",
@@ -44,7 +37,6 @@
     "bid": "Bid %{share}%",
     "ask": "%{share}% Ask",
     "spread": "Spread %{value}",
-    "grouping": "Price grouping",
     "buyers": "Buys %{share}%",
     "sellers": "%{share}% Sells",
     "buyersLead": "Buyers lead %{share}%",
@@ -53,7 +45,6 @@
     "liquidity": "Liquidity",
     "marketCap": "Market cap",
     "fdv": "FDV",
-    "tools": "Drawing tools",
     "tool": {
       "cursor": "Cursor",
       "level": "Horizontal line",
@@ -61,7 +52,6 @@
       "fib": "Fibonacci retracement",
       "measure": "Measure"
     },
-    "drawingHint": "Click to place the other end · Esc to cancel",
     "clearDrawings": "Clear drawings",
     "undo": "Undo",
     "indicators": "Indicators",
@@ -70,7 +60,6 @@
       "ema": "Exponential MA",
       "boll": "Bollinger Bands"
     },
-    "period": "Period",
     "periodOf": "%{label} period",
     "ohlc": {
       "open": "Open",

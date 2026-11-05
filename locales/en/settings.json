@@ -1,6 +1,5 @@
 {
   "settings": {
-    "title": "Settings",
     "cancel": "Cancel",
     "save": "Save",
     "replace": "Replace",
@@ -37,7 +36,6 @@
       "secretKey": "Secret Key",
       "passphrase": "Passphrase",
       "create": "Create an API key on %{exchange}",
-      "verifying": "Verifying",
       "inBar": "Show total in menu bar",
       "inBar_windows": "Show total in taskbar",
       "inBarDetail": "Takes the place of a watchlist price; turn one back on in the watchlist anytime.",
@@ -59,7 +57,6 @@
     "ths": {
       "footnote": "Fill this in to add China A-shares, indexes, boards and ETFs.",
       "getKey": "Get a key from the Tonghuashun data API",
-      "checking": "Checking the key…",
       "watchlist": "Tonghuashun watchlist",
       "watchlistDetail": "Shows in the menu bar menu once signed in; read only",
       "watchlistDetail_windows": "Shows in the taskbar menu once signed in; read only",
@@ -119,12 +116,8 @@
       "japanese": "日本語"
     },
     "update": {
-      "versionUnavailable": "Couldn't read the version",
-      "actionFailed": "That didn't work. Try again.",
-      "retry": "Failed, retry",
       "checkAgain": "Check again",
       "checkForNew": "Check for a new version",
-      "upToDateCheckAgain": "Up to date. Check again",
       "unavailable": "Updates unavailable",
       "upToDate": "Up to date",
       "check": "Check for updates",
@@ -135,11 +128,9 @@
       "checkFailed": "Check failed, retry",
       "updateFailed": "Update failed, retry",
       "noteDisabled": "This copy can't update itself",
-      "noteChecking": "Checking for updates…",
       "noteUnreachable": "Can't check for updates right now. Try again later.",
       "noteDownloading": "Downloading %{version}…",
       "noteReady": "%{version} is ready and takes over on restart",
-      "noteRestarting": "Restarting…",
       "noteFailed": "Couldn't update to %{version}. Try again."
     }
   }
