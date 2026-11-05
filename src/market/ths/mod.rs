@@ -50,7 +50,8 @@ pub fn configure(key: Option<String>) {
 
 pub use self::{
     account::{
-        AccountView, SignIn, cancel_sign_in, sign_in, sign_in_view, sign_out, view as account_view,
+        AccountView, SignIn, SignInState, SyncState, cancel_sign_in, sign_in, sign_in_view,
+        sign_out, view as account_view,
     },
     thsdk::serve_if_asked,
 };
