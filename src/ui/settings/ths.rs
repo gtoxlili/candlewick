@@ -5,8 +5,12 @@ use std::sync::Arc;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use gpui_kit::{
     AppContext, Context, Entity, Image, ImageFormat, IntoElement, ParentElement, Render, Styled,
-    Task, Window,
-    component::{button::Button, input::InputState, spinner::Spinner},
+    Subscription, Task, Window,
+    component::{
+        button::Button,
+        input::{InputEvent, InputState},
+        spinner::Spinner,
+    },
     div, img, px, white,
 };
 
@@ -25,6 +29,8 @@ pub struct ThsSection {
     busy: bool,
     error: Option<String>,
     qr: Option<(String, Arc<Image>)>,
+    save_task: Option<Task<()>>,
+    _subscription: Subscription,
     _observers: Vec<Task<()>>,
 }
 
@@ -42,7 +48,22 @@ impl ThsSection {
             .map(|topic| ui::observe(&app, topic, cx, |_, _| {}))
             .collect();
         let key = cx.new(|cx| InputState::new(window, cx).masked(true));
-        Self { app, key, editing: false, busy: false, error: None, qr: None, _observers: observers }
+        let subscription = cx.subscribe(&key, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
+        Self {
+            app,
+            key,
+            editing: false,
+            busy: false,
+            error: None,
+            qr: None,
+            save_task: None,
+            _subscription: subscription,
+            _observers: observers,
+        }
     }
 
     fn save(&mut self, key: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
@@ -51,7 +72,7 @@ impl ThsSection {
         let app = self.app.clone();
         let io_app = app.clone();
         let task = ui::run(&app, async move { api::set_ths(&io_app, key).await });
-        cx.spawn_in(window, async move |view, cx| {
+        self.save_task = Some(cx.spawn_in(window, async move |view, cx| {
             let result = task.await;
             let _ = view.update_in(cx, |this, window, cx| {
                 this.busy = false;
@@ -65,8 +86,7 @@ impl ThsSection {
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
         cx.notify();
     }
 
@@ -149,11 +169,14 @@ impl Render for ThsSection {
         let configured = state.key.is_some() && !self.editing;
         let field = CredentialField {
             id: "ths-key",
-            label: "API Key".into(),
+            label: t!("settings.onchain.field").into(),
             saved: state.key.clone().map(Into::into),
             editing: self.editing || state.key.is_none(),
             busy: self.busy,
-            inputs: vec![CredentialInput { label: "API Key".into(), state: self.key.clone() }],
+            inputs: vec![CredentialInput {
+                label: t!("settings.onchain.field").into(),
+                state: self.key.clone(),
+            }],
             error: self.error.clone().map(Into::into),
             link: None,
             on_edit: Box::new(move |_, cx| {

@@ -28,6 +28,7 @@ pub struct AgentNote {
     login_item: bool,
     /// A login item call is in flight; the switch waits for it.
     login_busy: bool,
+    login_task: Option<Task<()>>,
     /// What a save or the login item call said, as the group shows it.
     error: Option<String>,
     /// The status the offscreen renderer shows instead of the app's.
@@ -48,6 +49,7 @@ impl AgentNote {
             app,
             login_item,
             login_busy: false,
+            login_task: None,
             error: None,
             #[cfg(any(test, feature = "test-support"))]
             status: None,
@@ -63,7 +65,7 @@ impl AgentNote {
         self.error = None;
         let app = self.app.clone();
         let job = ui::run(&app, async move { api::set_login_item(enabled) });
-        cx.spawn(async move |view, cx| {
+        self.login_task = Some(cx.spawn(async move |view, cx| {
             let result = job.await;
             let _ = view.update(cx, |this, cx| {
                 this.login_busy = false;
@@ -77,8 +79,7 @@ impl AgentNote {
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 
     fn set(&mut self, change: impl FnOnce(&mut Settings), cx: &mut Context<Self>) {

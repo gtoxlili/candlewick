@@ -14,16 +14,14 @@ pub mod panels;
 pub mod toolbar;
 pub mod viewport;
 
-use std::sync::Once;
-
 use crate::{
     app::{App, Topic},
     ui::{prefs::SideTab, theme::Palette, widgets},
 };
 use canvas::PriceCanvas;
 use gpui_kit::{
-    AppContext, Context, Entity, InteractiveElement as _, IntoElement, KeyBinding, ParentElement,
-    Render, SharedString, Styled, Task, Window,
+    AppContext, Context, Entity, Global, InteractiveElement as _, IntoElement, KeyBinding,
+    ParentElement, Render, SharedString, Styled, Task, Window,
     component::{Sizable as _, TitleBar},
     div, px,
 };
@@ -82,14 +80,18 @@ impl ChartView {
         }));
         let overlay = cx.new(|cx| Overlay::new(model.clone(), cx));
         let hover = cx.new(|_| HoverCard::new(model.clone()));
+        let canvas =
+            cx.new(|_| PriceCanvas::new(model.clone(), [overlay.entity_id(), hover.entity_id()]));
+        overlay.update(cx, |overlay, _| {
+            overlay.set_peers([canvas.entity_id(), hover.entity_id()]);
+        });
         bind_keys(cx);
         // The chart takes the keyboard while the window is up: with nothing
         // focused, a key event would never reach the window's element tree.
         window.focus(&overlay.read(cx).focus_handle(), cx);
         let view = Self {
             app,
-            canvas: cx
-                .new(|_| PriceCanvas::new(model.clone(), [overlay.entity_id(), hover.entity_id()])),
+            canvas,
             overlay,
             hero: cx.new(|_| Hero { model: model.clone() }),
             mode: cx.new(|_| ModeToggle { model: model.clone() }),
@@ -334,24 +336,28 @@ impl Render for ChartView {
     }
 }
 
-/// The chart window's keys. Registered once for the app; the chart's root
+struct ChartKeysBound;
+impl Global for ChartKeysBound {}
+
+/// The chart window's keys. Registered once per `GpuiApp`; the chart's root
 /// element carries the `Chart` context they are scoped to.
 fn bind_keys(cx: &mut gpui_kit::App) {
-    static BOUND: Once = Once::new();
-    BOUND.call_once(|| {
-        cx.bind_keys([
-            KeyBinding::new("escape", actions::Cancel, Some("Chart")),
-            KeyBinding::new("backspace", actions::DeleteDrawing, Some("Chart")),
-            KeyBinding::new("delete", actions::DeleteDrawing, Some("Chart")),
-            KeyBinding::new("cmd-z", actions::Undo, Some("Chart")),
-            KeyBinding::new("ctrl-z", actions::Undo, Some("Chart")),
-            KeyBinding::new("alt-v", actions::ToolCursor, Some("Chart")),
-            KeyBinding::new("alt-h", actions::ToolLevel, Some("Chart")),
-            KeyBinding::new("alt-t", actions::ToolTrend, Some("Chart")),
-            KeyBinding::new("alt-f", actions::ToolFib, Some("Chart")),
-            KeyBinding::new("alt-m", actions::ToolMeasure, Some("Chart")),
-        ]);
-    });
+    if cx.has_global::<ChartKeysBound>() {
+        return;
+    }
+    cx.set_global(ChartKeysBound);
+    cx.bind_keys([
+        KeyBinding::new("escape", actions::Cancel, Some("Chart")),
+        KeyBinding::new("backspace", actions::DeleteDrawing, Some("Chart")),
+        KeyBinding::new("delete", actions::DeleteDrawing, Some("Chart")),
+        KeyBinding::new("cmd-z", actions::Undo, Some("Chart")),
+        KeyBinding::new("ctrl-z", actions::Undo, Some("Chart")),
+        KeyBinding::new("alt-v", actions::ToolCursor, Some("Chart")),
+        KeyBinding::new("alt-h", actions::ToolLevel, Some("Chart")),
+        KeyBinding::new("alt-t", actions::ToolTrend, Some("Chart")),
+        KeyBinding::new("alt-f", actions::ToolFib, Some("Chart")),
+        KeyBinding::new("alt-m", actions::ToolMeasure, Some("Chart")),
+    ]);
 }
 
 /// The interval, analysis and chart-type controls. At the narrowest window

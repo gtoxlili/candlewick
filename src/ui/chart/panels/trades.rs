@@ -11,7 +11,8 @@ use crate::{
 };
 use gpui_kit::{
     AnyElement, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, Task, Window, div, prelude::FluentBuilder, px, relative,
+    SharedString, Styled, Task, UniformListScrollHandle, Window,
+    component::scroll::ScrollableElement as _, div, prelude::FluentBuilder, px, relative,
 };
 
 use crate::ui::chart::model_state::ChartModel;
@@ -21,6 +22,7 @@ const FLASH: Duration = Duration::from_millis(600);
 
 pub struct TradesPanel {
     pub model: Entity<ChartModel>,
+    scroll: UniformListScrollHandle,
     /// The newest trade seen; newer ones flash until the deadline passes.
     seen_through: Option<u64>,
     flash_until: Option<Instant>,
@@ -29,7 +31,13 @@ pub struct TradesPanel {
 
 impl TradesPanel {
     pub fn new(model: Entity<ChartModel>) -> Self {
-        Self { model, seen_through: None, flash_until: None, timer: None }
+        Self {
+            model,
+            scroll: UniformListScrollHandle::new(),
+            seen_through: None,
+            flash_until: None,
+            timer: None,
+        }
     }
 
     /// Lights trades newer than the newest seen and schedules the unlight.
@@ -100,15 +108,20 @@ impl Render for TradesPanel {
                 .into_any_element()
         } else {
             // The list is virtualized: only the visible rows are built.
-            gpui_kit::uniform_list("trades", rows.len(), move |range, _, _| {
+            let list = gpui_kit::uniform_list("trades", rows.len(), move |range, _, _| {
                 range
                     .map(|ix| trade_row(ix, &rows[ix], flash_from, flashing, decimals, palette))
                     .collect::<Vec<_>>()
             })
-            .flex_1()
-            .min_h_0()
-            .size_full()
-            .into_any_element()
+            .track_scroll(&self.scroll)
+            .size_full();
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(list)
+                .vertical_scrollbar(&self.scroll)
+                .into_any_element()
         };
         div()
             .id("TradesPanel")

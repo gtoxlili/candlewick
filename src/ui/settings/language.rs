@@ -65,20 +65,24 @@ impl LanguageRow {
         let select = cx.new(|cx| {
             SelectState::new(choices(), Some(IndexPath::new(index(language))), window, cx)
         });
-        let subscription =
-            cx.subscribe_in(&select, window, |this, _, event: &SelectEvent<Vec<Choice>>, _, cx| {
+        let subscription = cx.subscribe_in(
+            &select,
+            window,
+            |this, _, event: &SelectEvent<Vec<Choice>>, window, cx| {
                 if let SelectEvent::Confirm(Some(language)) = event {
                     this.error =
                         parts::update_settings(&this.app, |settings| settings.language = *language)
                             .err();
                     // Force synchronization on failure as the picker already selected the rejected value.
                     this.shown_language = *language;
+                    this.sync(window, cx);
                     cx.notify();
                 }
-            });
+            },
+        );
         let observers = vec![
-            ui::observe(&app, Topic::Locale, cx, |_, _| {}),
-            ui::observe(&app, Topic::Settings, cx, |_, _| {}),
+            ui::observe_in(&app, Topic::Locale, window, cx, Self::sync),
+            ui::observe_in(&app, Topic::Settings, window, cx, Self::sync),
         ];
         Self {
             app,
@@ -90,9 +94,8 @@ impl LanguageRow {
             _subscription: subscription,
         }
     }
-}
-impl Render for LanguageRow {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+
+    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let language = api::get_settings(&self.app).language;
         let locale = api::get_locale();
         if locale != self.shown_locale || language != self.shown_language {
@@ -103,6 +106,10 @@ impl Render for LanguageRow {
             self.shown_locale = locale;
             self.shown_language = language;
         }
+    }
+}
+impl Render for LanguageRow {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let label = t!("settings.general.language");
         let mut row = gpui_kit::div().flex().flex_col().child(parts::picker_row(
             label,

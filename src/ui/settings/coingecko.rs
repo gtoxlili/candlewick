@@ -11,8 +11,13 @@ use crate::{
 };
 use gpui_kit::{
     AppContext as _, Context, Div, Entity, IntoElement, ParentElement, Render, SharedString,
-    Styled, Task, Window,
-    component::{Sizable, Size, input::InputState, link::Link, spinner::Spinner},
+    Styled, Subscription, Task, Window,
+    component::{
+        Sizable, Size,
+        input::{InputEvent, InputState},
+        link::Link,
+        spinner::Spinner,
+    },
     div,
 };
 
@@ -26,12 +31,18 @@ pub struct CoinGeckoSection {
     busy: bool,
     error: Option<SharedString>,
     task: Option<Task<()>>,
+    _subscription: Subscription,
     _observers: Vec<Task<()>>,
 }
 
 impl CoinGeckoSection {
     pub fn new(app: App, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let key = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let subscription = cx.subscribe(&key, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
         let observers = vec![
             ui::observe(&app, Topic::Settings, cx, |this, _| {
                 this.view = api::get_coingecko(&this.app);
@@ -46,6 +57,7 @@ impl CoinGeckoSection {
             busy: false,
             error: None,
             task: None,
+            _subscription: subscription,
             _observers: observers,
         };
         if this.view.key.is_some() && this.view.access.is_none() {

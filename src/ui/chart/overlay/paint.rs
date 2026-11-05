@@ -28,7 +28,10 @@ impl TextCache {
         }
         let run = TextRun {
             len: key.0.len(),
-            font: window.text_style().font(),
+            font: gpui_kit::Font {
+                features: crate::ui::tabular_features(),
+                ..window.text_style().font()
+            },
             color,
             background_color: None,
             underline: None,

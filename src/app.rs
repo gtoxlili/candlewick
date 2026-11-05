@@ -125,6 +125,7 @@ impl App {
         self.0.windows.store(count, Ordering::Release);
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn request_restart(&self) {
         self.on_gpui(|cx| cx.restart());
     }

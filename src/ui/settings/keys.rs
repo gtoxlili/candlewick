@@ -12,7 +12,9 @@ use crate::{
 };
 use gpui_kit::{
     AppContext as _, Context, Div, Entity, IntoElement, ParentElement, Render, SharedString,
-    Styled, Task, Window, component::input::InputState, div, px,
+    Styled, Subscription, Task, Window,
+    component::input::{InputEvent, InputState},
+    div, px,
 };
 
 /// Which part of an API key an input edits.
@@ -85,8 +87,10 @@ pub struct ApiKeysSection {
     editing: Option<ProviderId>,
     /// One input per field of the edited key, in field order.
     inputs: Vec<(KeyPart, Entity<InputState>)>,
+    input_subscriptions: Vec<Subscription>,
     /// The exchange is confirming a key: every row waits with it.
     saving: bool,
+    save_task: Option<Task<()>>,
     /// Why the exchange refused a key, or could not remove it.
     key_problem: Option<(ProviderId, SharedString)>,
     /// Why the holdings switch or window could not be saved or opened.
@@ -98,7 +102,9 @@ impl ApiKeysSection {
     pub fn new(app: App, _: &mut Window, cx: &mut Context<Self>) -> Self {
         let keys = api::get_exchange_keys(&app);
         let observers = vec![
-            ui::observe(&app, Topic::Settings, cx, |_, _| {}),
+            ui::observe(&app, Topic::Settings, cx, |this, _| {
+                this.keys = api::get_exchange_keys(&this.app);
+            }),
             ui::observe(&app, Topic::Locale, cx, |_, _| {}),
         ];
         Self {
@@ -106,7 +112,9 @@ impl ApiKeysSection {
             keys,
             editing: None,
             inputs: Vec::new(),
+            input_subscriptions: Vec::new(),
             saving: false,
+            save_task: None,
             key_problem: None,
             holdings_problem: None,
             _observers: observers,
@@ -117,11 +125,21 @@ impl ApiKeysSection {
     fn begin_edit(&mut self, exchange: ProviderId, window: &mut Window, cx: &mut Context<Self>) {
         self.editing = Some(exchange);
         self.key_problem = None;
+        self.input_subscriptions.clear();
         self.inputs = key_fields(exchange)
             .into_iter()
             .map(|field| {
                 let secret = field.secret;
-                (field.part, cx.new(|cx| InputState::new(window, cx).masked(secret)))
+                let input = cx.new(|cx| InputState::new(window, cx).masked(secret));
+                self.input_subscriptions.push(cx.subscribe(
+                    &input,
+                    |_, _, event: &InputEvent, cx| {
+                        if matches!(event, InputEvent::Change) {
+                            cx.notify();
+                        }
+                    },
+                ));
+                (field.part, input)
             })
             .collect();
         cx.notify();
@@ -131,6 +149,7 @@ impl ApiKeysSection {
     fn cancel_edit(&mut self, cx: &mut Context<Self>) {
         self.editing = None;
         self.inputs.clear();
+        self.input_subscriptions.clear();
         self.key_problem = None;
         cx.notify();
     }
@@ -156,7 +175,7 @@ impl ApiKeysSection {
         let io_app = self.app.clone();
         let check =
             ui::run(&self.app, async move { api::set_exchange_key(&io_app, exchange, key).await });
-        cx.spawn(async move |view, cx| {
+        self.save_task = Some(cx.spawn(async move |view, cx| {
             let outcome = check.await;
             let _ = view.update(cx, |this, cx| {
                 this.saving = false;
@@ -165,14 +184,14 @@ impl ApiKeysSection {
                         this.keys = keys;
                         this.editing = None;
                         this.inputs.clear();
+                        this.input_subscriptions.clear();
                     }
                     Ok(Err(error)) => this.key_problem = Some((exchange, error.to_string().into())),
                     Err(error) => this.key_problem = Some((exchange, error.to_string().into())),
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 
     fn set_holdings_in_bar(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -435,5 +454,86 @@ mod tests {
             "OKX's Japanese page is the default one"
         );
         assert_eq!(api_page(ProviderId::Okx, ZhCn), "https://www.okx.com/zh-hans/account/my-api");
+    }
+
+    #[test]
+    fn typing_and_settings_notifications_refresh_section() {
+        use super::ApiKeysSection;
+        use crate::{
+            app::{App, Topic},
+            credentials::ApiKey,
+            model::{Settings, Shared},
+        };
+        use gpui_kit::{AppContext, TestAppContext, WindowOptions};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let cx = TestAppContext::single();
+        cx.update(gpui_kit::init);
+        let (shared, _) = Shared::new(
+            Settings::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
+        let app = cx.update(|cx| App::new(cx, runtime.handle().clone(), shared));
+        let notifications = Arc::new(AtomicUsize::new(0));
+        let counter = notifications.clone();
+        let mut section_slot = None;
+        let window = cx.update(|cx| {
+            let (window, _) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                let view = cx.new(|cx| ApiKeysSection::new(app.clone(), window, cx));
+                cx.observe(&view, move |_, _| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                })
+                .detach();
+                section_slot = Some(view.clone());
+                view
+            })
+            .unwrap();
+            window
+        });
+        let section = section_slot.unwrap();
+
+        cx.update(|cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    section.update(cx, |this, cx| this.begin_edit(ProviderId::Binance, window, cx));
+                })
+                .unwrap();
+        });
+        cx.run_until_parked();
+        let before = notifications.load(Ordering::SeqCst);
+
+        cx.update(|cx| {
+            let inputs: Vec<_> =
+                section.read(cx).inputs.iter().map(|(_, input)| input.clone()).collect();
+            window
+                .update(cx, |_, window, cx| {
+                    for input in inputs {
+                        input.update(cx, |state, cx| state.insert("secret-value", window, cx));
+                    }
+                })
+                .unwrap();
+        });
+        cx.run_until_parked();
+        assert!(
+            notifications.load(Ordering::SeqCst) > before,
+            "input changes notify the section so the Save button re-renders enabled"
+        );
+
+        app.shared().credentials().exchanges.insert(
+            ProviderId::Binance,
+            ApiKey { key: "binance-key-1234".into(), secret: "secret".into(), passphrase: None },
+        );
+        app.notify(Topic::Settings);
+        cx.run_until_parked();
+        assert!(
+            cx.read(|cx| section.read(cx).keys.iter().any(|entry| entry.key.is_some())),
+            "Topic::Settings refreshes cached exchange keys"
+        );
     }
 }

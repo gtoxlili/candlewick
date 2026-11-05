@@ -6,7 +6,8 @@ use std::sync::Arc;
 use crate::{format, portfolio::Asset};
 use gpui_kit::{
     DefiniteLength, FontWeight, InteractiveElement as _, ParentElement,
-    StatefulInteractiveElement as _, Styled, UniformListScrollHandle, div, px, uniform_list,
+    StatefulInteractiveElement as _, Styled, UniformListScrollHandle,
+    component::scroll::ScrollableElement as _, div, px, uniform_list,
 };
 
 use super::{series_color, summary};
@@ -108,12 +109,14 @@ pub(super) fn where_held(asset: &Asset, several: bool) -> String {
 }
 
 /// The list panel: header, the virtualized rows, and the small-asset toggle.
+#[allow(clippy::too_many_arguments)]
 pub fn panel(
     rows: &Arc<Vec<Row>>,
     costed: bool,
     small_count: usize,
     small_value: f64,
     show_small: bool,
+    scroll: &UniformListScrollHandle,
     palette: Palette,
     toggle_small: impl Fn(&mut gpui_kit::App) + 'static,
 ) -> gpui_kit::Div {
@@ -161,7 +164,8 @@ pub fn panel(
     let list = uniform_list("assets", rows.len(), move |range, _, _| {
         range.map(|index| row_element(&list_rows[index], columns, costed, palette)).collect()
     })
-    .track_scroll(&UniformListScrollHandle::new());
+    .track_scroll(scroll)
+    .size_full();
 
     let mut panel = widgets::panel(div(), palette)
         .mx(px(16.))
@@ -171,7 +175,7 @@ pub fn panel(
         .flex_col()
         .overflow_hidden()
         .child(header)
-        .child(list.flex_1().min_h_0());
+        .child(div().relative().flex_1().min_h_0().child(list).vertical_scrollbar(scroll));
     if small_count > 0 {
         let label = match (show_small, small_count == 1) {
             (true, true) => t!("holdings.smallHideOne", count = small_count).to_owned(),

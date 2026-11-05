@@ -295,13 +295,11 @@ impl Updater {
                 self.set(app, UpdateState::Failed { version });
                 return;
             };
-            // The installer replaces the files of the running app, so this
-            // process leaves first; the installer starts the new version.
-            crate::agent::shutdown(app);
-            platform::bar::shutdown();
-            match app.spawn_blocking(move || install::install(&bytes)).await {
+            match app.spawn_blocking(move || install::install(&bytes).map_err(|e| (bytes, e))).await
+            {
                 Ok(Ok(())) => {}
-                Ok(Err(e)) => {
+                Ok(Err((bytes, e))) => {
+                    *lock(&self.pending) = Some(bytes);
                     log::warn!("update {version} did not start: {e}");
                     self.set(app, UpdateState::Failed { version });
                     return;
@@ -312,6 +310,10 @@ impl Updater {
                     return;
                 }
             }
+            // The installer replaces the files of the running app, so this
+            // process leaves now; the installer starts the new version.
+            crate::agent::shutdown(app);
+            platform::bar::shutdown();
             log::info!("update {version} is installing; the installer starts the new version");
             std::process::exit(0);
         }

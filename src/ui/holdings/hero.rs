@@ -33,22 +33,22 @@ pub fn hero(
                 .font_weight(FontWeight::SEMIBOLD)
                 .whitespace_nowrap()
                 .child(format::price(total, 2));
-            let number = match (flash.1, change) {
+            let number = match flash.1 {
                 // A new total replays the flash: the number starts in the
-                // day's color and fades back to the text color.
-                (Some(down), Some(change)) => {
-                    let flash_color = if change < 0. || down { palette.down } else { palette.up };
+                // tick's color and fades back to the text color.
+                Some(down) => {
+                    let flash_color = if down { palette.down } else { palette.up };
                     let foreground = palette.foreground;
                     plain
                         .with_animation(
                             ("hero-flash", flash.0),
                             Animation::new(std::time::Duration::from_secs(1))
-                                .with_easing(|t| 1. - (1. - t) * (1. - t) * (1. - t)),
+                                .with_easing(crate::ui::ease_out),
                             move |element, t| element.text_color(mix(flash_color, foreground, t)),
                         )
                         .into_any_element()
                 }
-                _ => plain.into_any_element(),
+                None => plain.into_any_element(),
             };
             div().flex().items_baseline().gap(px(6.)).child(number).child(
                 div()

@@ -50,29 +50,21 @@ pub fn open_holdings(app: &App) -> io::Result<()> {
 }
 
 pub fn open_chart(app: &App, id: &str) -> io::Result<()> {
-    let Some(title) = retarget_chart(app, id) else { return Ok(()) };
-    enqueue_open(app, CHART, title)
-}
-
-fn retarget_chart(app: &App, id: &str) -> Option<String> {
     let title = {
         let mut model = app.shared().model();
-        let title = chart_title(model.instrument(id)?);
+        let Some(instrument) = model.instrument(id) else { return Ok(()) };
+        let title = chart_title(instrument);
         model.chart = Some(id.to_owned());
         title
     };
-    let updated = title.clone();
     let handle = app.clone();
-    app.on_gpui(move |cx| {
-        if let Some(window) = cx.global::<Windows>().0.get(CHART).copied() {
-            let _ = window.update(cx, |_, window, _| {
-                window.set_window_title(&updated);
-                window.refresh();
-            });
+    dispatch(app, move |cx| {
+        let existed = cx.global::<Windows>().0.contains_key(CHART);
+        open_on_main(&handle, cx, CHART, title);
+        if existed {
             handle.notify(Topic::ChartInstrument);
         }
-    });
-    Some(title)
+    })
 }
 
 fn chart_title(instrument: &Instrument) -> String {
@@ -91,13 +83,8 @@ pub fn relabel(app: &App) {
             (CHART, chart),
             (HOLDINGS, Some(t!("window.holdings").to_owned())),
         ] {
-            if let Some(window) = cx.global::<Windows>().0.get(label).copied() {
-                let _ = window.update(cx, |_, window, _| {
-                    if let Some(title) = title {
-                        window.set_window_title(&title);
-                    }
-                    window.refresh();
-                });
+            if let Some((window, title)) = cx.global::<Windows>().0.get(label).copied().zip(title) {
+                let _ = window.update(cx, |_, window, _| window.set_window_title(&title));
             }
         }
         handle.notify(Topic::Locale);
@@ -129,14 +116,23 @@ pub fn sync_chart(app: &App) {
     app.on_gpui(move |cx| {
         let Some(window) = cx.global::<Windows>().0.get(CHART).copied() else { return };
         let replacement = {
-            let model = handle.shared().model();
+            let mut model = handle.shared().model();
             if model.chart.as_deref().is_some_and(|id| model.instrument(id).is_some()) {
                 return;
             }
-            model.settings.watchlist.first().map(|instrument| instrument.id())
+            let next = model
+                .settings
+                .watchlist
+                .first()
+                .map(|instrument| (instrument.id(), chart_title(instrument)));
+            if let Some((id, _)) = &next {
+                model.chart = Some(id.clone());
+            }
+            next
         };
-        if let Some(id) = replacement {
-            retarget_chart(&handle, &id);
+        if let Some((_, title)) = replacement {
+            let _ = window.update(cx, |_, window, _| window.set_window_title(&title));
+            handle.notify(Topic::ChartInstrument);
         } else {
             let _ = window.update(cx, |_, window, _| window.remove_window());
         }

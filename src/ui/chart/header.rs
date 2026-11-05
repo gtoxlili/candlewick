@@ -112,18 +112,11 @@ fn insight_line(
     Some(parts.join(" · "))
 }
 
-fn ease_out(t: f32) -> f32 {
-    1. - (1. - t).powi(3)
-}
+use crate::ui::ease_out;
 
-/// Between two colors; used to fade the price flash away.
+/// Between two colors in RGBA space; used to fade the price flash away without hue-rainbowing.
 fn mix(from: Hsla, to: Hsla, t: f32) -> Hsla {
-    Hsla {
-        h: from.h + (to.h - from.h) * t,
-        s: from.s + (to.s - from.s) * t,
-        l: from.l + (to.l - from.l) * t,
-        a: from.a + (to.a - from.a) * t,
-    }
+    crate::ui::mix_color(from, to, f64::from(t))
 }
 
 /// The instrument as the title bar names it: the short name, the dimmed

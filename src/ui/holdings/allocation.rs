@@ -1,11 +1,48 @@
 //! The wick: one thin bar showing how the total splits, with its legend.
 
 use super::{series_color, summary};
-use crate::ui::theme::Palette;
+use crate::{app::App, ui::theme::Palette};
 use gpui_kit::{
-    Animation, AnimationExt, AnyElement, DefiniteLength, IntoElement, ParentElement, SharedString,
-    Styled, div, px,
+    Animation, AnimationExt, AnyElement, Context, DefiniteLength, Entity, IntoElement,
+    ParentElement, Render, SharedString, Styled, Window, div, px,
 };
+
+/// Isolated view for the pulsing freshness dot at the end of the allocation bar,
+/// so its animation only invalidates this 10x10 entity instead of `HoldingsView`.
+pub struct LiveDot {
+    app: App,
+    pub live: bool,
+}
+
+impl LiveDot {
+    pub fn new(app: App) -> Self {
+        Self { app, live: false }
+    }
+}
+
+impl Render for LiveDot {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = Palette::current(&self.app, cx);
+        let dot: AnyElement = if self.live {
+            let mint = palette.mint;
+            div()
+                .size(px(10.))
+                .rounded_full()
+                .bg(mint)
+                .with_animation(
+                    "wick-pulse",
+                    Animation::new(std::time::Duration::from_millis(2400))
+                        .repeat()
+                        .with_max_fps(15.),
+                    |element, pulse| element.opacity(0.3 + 0.7 * (1. - (2. * pulse - 1.).powi(2))),
+                )
+                .into_any_element()
+        } else {
+            div().size(px(10.)).rounded_full().bg(palette.fill_strong).into_any_element()
+        };
+        dot
+    }
+}
 
 /// What one stretch of the bar says in the legend.
 struct Labeled {
@@ -17,7 +54,11 @@ struct Labeled {
 
 /// The allocation bar, largest holding first, cash at the end, lit at the
 /// end while the numbers are live.
-pub fn allocation(shares: &[summary::Share], live: bool, palette: Palette) -> gpui_kit::Div {
+pub fn allocation(
+    shares: &[summary::Share],
+    dot: &Entity<LiveDot>,
+    palette: Palette,
+) -> gpui_kit::Div {
     let labeled: Vec<Labeled> = shares
         .iter()
         .map(|share| Labeled {
@@ -51,26 +92,11 @@ pub fn allocation(shares: &[summary::Share], live: bool, palette: Palette) -> gp
             segment
         }));
     }
-    let dot: AnyElement = if live {
-        let mint = palette.mint;
-        div()
-            .size(px(10.))
-            .rounded_full()
-            .bg(mint)
-            .with_animation(
-                "wick-pulse",
-                Animation::new(std::time::Duration::from_millis(2400)).repeat(),
-                |element, pulse| element.opacity(0.3 + 0.7 * (1. - (2. * pulse - 1.).powi(2))),
-            )
-            .into_any_element()
-    } else {
-        div().size(px(10.)).rounded_full().bg(palette.fill_strong).into_any_element()
-    };
     div()
         .px(px(20.))
         .flex()
         .flex_col()
-        .child(div().flex().items_center().gap(px(4.)).child(bar).child(dot))
+        .child(div().flex().items_center().gap(px(4.)).child(bar).child(dot.clone()))
         .child(
             div()
                 .mt(px(8.))

@@ -1,6 +1,6 @@
 //! Candlewick colors and the GPUI Kit theme.
 
-use gpui_kit::{App as GpuiApp, Hsla, Rgba, component::Theme, px, rgb};
+use gpui_kit::{App as GpuiApp, Global, Hsla, Rgba, component::Theme, px, rgb};
 
 use crate::{app::App, model::ColorScheme};
 
@@ -30,6 +30,16 @@ pub struct Palette {
     pub series: [Hsla; 7],
     pub primary_foreground: Hsla,
 }
+
+impl Global for Palette {}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AppliedTheme {
+    dark: bool,
+    scheme: ColorScheme,
+}
+
+impl Global for AppliedTheme {}
 
 fn color(value: u32, alpha: f32) -> Hsla {
     let mut color: Rgba = rgb(value);
@@ -98,12 +108,28 @@ impl Palette {
     }
 
     pub fn current(app: &App, cx: &GpuiApp) -> Self {
-        Self::new(Theme::global(cx).is_dark(), app.shared().model().settings.color_scheme)
+        let dark = Theme::global(cx).is_dark();
+        if let Some(applied) = cx.try_global::<AppliedTheme>()
+            && applied.dark == dark
+            && let Some(palette) = cx.try_global::<Self>()
+        {
+            return *palette;
+        }
+        Self::new(dark, app.shared().model().settings.color_scheme)
     }
 }
 
 pub fn apply(app: &App, dark: bool, cx: &mut GpuiApp) {
-    let p = Palette::new(dark, app.shared().model().settings.color_scheme);
+    let scheme = app.shared().model().settings.color_scheme;
+    let target = AppliedTheme { dark, scheme };
+    if cx.try_global::<AppliedTheme>().copied() == Some(target)
+        && Theme::global(cx).is_dark() == dark
+    {
+        return;
+    }
+    let p = Palette::new(dark, scheme);
+    cx.set_global(p);
+    cx.set_global(target);
     Theme::change(
         if dark {
             gpui_kit::component::ThemeMode::Dark
@@ -114,12 +140,17 @@ pub fn apply(app: &App, dark: bool, cx: &mut GpuiApp) {
         cx,
     );
     #[cfg(target_os = "windows")]
-    let windows_font =
-        if cx.text_system().all_font_names().iter().any(|name| name == "Segoe UI Variable Text") {
-            "Segoe UI Variable Text"
-        } else {
-            "Segoe UI"
-        };
+    let windows_font = {
+        static FONT: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+        *FONT.get_or_init(|| {
+            if cx.text_system().all_font_names().iter().any(|name| name == "Segoe UI Variable Text")
+            {
+                "Segoe UI Variable Text"
+            } else {
+                "Segoe UI"
+            }
+        })
+    };
     Theme::update(cx, |theme| {
         theme.font_size = px(if cfg!(target_os = "windows") { 14. } else { 13. });
         #[cfg(target_os = "windows")]

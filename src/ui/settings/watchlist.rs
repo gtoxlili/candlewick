@@ -1,9 +1,6 @@
 //! Watchlist and instrument search.
 
-use std::{
-    collections::HashSet,
-    time::{Duration, Instant},
-};
+use std::{collections::HashSet, time::Duration};
 
 use super::parts;
 use crate::{
@@ -75,15 +72,14 @@ struct SearchGeneration(u64);
 #[derive(Clone, Copy)]
 struct SearchRequest {
     generation: u64,
-    ready_at: Instant,
 }
 impl SearchGeneration {
     fn invalidate(&mut self) {
         self.0 += 1;
     }
-    fn start(&mut self, now: Instant, delay: Duration) -> SearchRequest {
+    fn start(&mut self) -> SearchRequest {
         self.invalidate();
-        SearchRequest { generation: self.0, ready_at: now + delay }
+        SearchRequest { generation: self.0 }
     }
     fn accepts(&self, request: SearchRequest) -> bool {
         self.0 == request.generation
@@ -103,15 +99,20 @@ pub struct WatchlistSection {
     generation: SearchGeneration,
     error: Option<String>,
     placeholder: String,
-    pending: Option<tokio::task::AbortHandle>,
+    search_task: Option<Task<()>>,
     _observers: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 impl WatchlistSection {
     pub fn new(app: App, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let exchange_value = api::get_settings(&app).exchange;
-        let input =
-            cx.new(|cx| InputState::new(window, cx).placeholder(t!("settings.watchlist.search")));
+        let settings = api::get_settings(&app);
+        let exchange_value = settings.exchange;
+        let placeholder = if settings.watchlist.len() >= MAX_INSTRUMENTS {
+            t!("settings.watchlist.full", max = MAX_INSTRUMENTS)
+        } else {
+            t!("settings.watchlist.search").to_owned()
+        };
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder.clone()));
         let exchange = cx.new(|cx| {
             SelectState::new(
                 exchanges(),
@@ -141,23 +142,17 @@ impl WatchlistSection {
                         parts::update_settings(&this.app, |settings| settings.exchange = *value)
                             .err();
                     if this.error.is_none() && this.shown_exchange != *value {
-                        this.generation.invalidate();
-                        if let Some(task) = this.pending.take() {
-                            task.abort();
-                        }
-                        this.query.clear();
-                        this.results = None;
-                        this.loading = false;
-                        this.input.update(cx, |input, cx| input.set_value("", window, cx));
+                        this.cancel_search(window, cx);
                     }
                     this.shown_exchange = *value;
+                    this.sync(window, cx);
                     cx.notify();
                 }
             },
         );
         let observers = vec![
-            ui::observe(&app, Topic::Locale, cx, |_, _| {}),
-            ui::observe(&app, Topic::Settings, cx, |_, _| {}),
+            ui::observe_in(&app, Topic::Locale, window, cx, Self::sync),
+            ui::observe_in(&app, Topic::Settings, window, cx, Self::sync),
         ];
         Self {
             app,
@@ -171,29 +166,62 @@ impl WatchlistSection {
             loading: false,
             generation: SearchGeneration::default(),
             error: None,
-            placeholder: t!("settings.watchlist.search").to_owned(),
-            pending: None,
+            placeholder,
+            search_task: None,
             _observers: observers,
             _subscriptions: vec![input_subscription, exchange_subscription],
         }
     }
-    fn search(&mut self, delay: Duration, cx: &mut Context<Self>) {
-        let request = self.generation.start(Instant::now(), delay);
-        if let Some(task) = self.pending.take() {
-            task.abort();
+    fn cancel_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.generation.invalidate();
+        self.search_task = None;
+        self.query.clear();
+        self.results = None;
+        self.loading = false;
+        self.input.update(cx, |input, cx| input.set_value("", window, cx));
+    }
+    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = api::get_settings(&self.app);
+        let locale = api::get_locale();
+        if settings.exchange != self.shown_exchange || locale != self.shown_locale {
+            if settings.exchange != self.shown_exchange {
+                self.cancel_search(window, cx);
+            }
+            self.exchange.update(cx, |select, cx| {
+                select.set_items(exchanges(), window, cx);
+                select.set_selected_index(
+                    Some(IndexPath::new(exchange_index(settings.exchange))),
+                    window,
+                    cx,
+                );
+            });
+            self.shown_exchange = settings.exchange;
+            self.shown_locale = locale;
         }
+        let full = settings.watchlist.len() >= MAX_INSTRUMENTS;
+        let placeholder = if full {
+            t!("settings.watchlist.full", max = MAX_INSTRUMENTS)
+        } else {
+            t!("settings.watchlist.search").to_owned()
+        };
+        if placeholder != self.placeholder {
+            self.input
+                .update(cx, |input, cx| input.set_placeholder(placeholder.clone(), window, cx));
+            self.placeholder = placeholder;
+        }
+    }
+    fn search(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        let request = self.generation.start();
         self.loading = true;
         self.results = None;
         let query = self.query.clone();
         let app = self.app.clone();
         let io_app = app.clone();
-        let task = ui::run(&app, async move {
-            tokio::time::sleep_until(request.ready_at.into()).await;
-            api::search_instruments(&io_app, query).await
-        });
-        self.pending = Some(task.abort_handle());
-        cx.spawn(async move |view, cx| {
-            let result = task.await;
+        let timer = cx.background_executor().timer(delay);
+        self.search_task = Some(cx.spawn(async move |view, cx| {
+            timer.await;
+            let result =
+                ui::run(&app, async move { api::search_instruments(&io_app, query).await }).await;
             let _ = view.update(cx, |this, cx| {
                 if this.generation.accepts(request) {
                     this.loading = false;
@@ -204,8 +232,7 @@ impl WatchlistSection {
                     cx.notify();
                 }
             });
-        })
-        .detach();
+        }));
         cx.notify();
     }
     fn add(&mut self, item: Instrument, window: &mut Window, cx: &mut Context<Self>) {
@@ -218,13 +245,7 @@ impl WatchlistSection {
         })
         .err();
         if added && self.error.is_none() {
-            self.query.clear();
-            self.generation.invalidate();
-            if let Some(task) = self.pending.take() {
-                task.abort();
-            }
-            self.loading = false;
-            self.input.update(cx, |input, cx| input.set_value("", window, cx));
+            self.cancel_search(window, cx);
         }
         cx.notify();
     }
@@ -278,51 +299,10 @@ fn instrument_name(
         .text_color(p.foreground)
 }
 
-impl Drop for WatchlistSection {
-    fn drop(&mut self) {
-        if let Some(task) = self.pending.take() {
-            task.abort();
-        }
-    }
-}
-
 impl Render for WatchlistSection {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = api::get_settings(&self.app);
-        let locale = api::get_locale();
-        if settings.exchange != self.shown_exchange || locale != self.shown_locale {
-            if settings.exchange != self.shown_exchange {
-                self.generation.invalidate();
-                if let Some(task) = self.pending.take() {
-                    task.abort();
-                }
-                self.query.clear();
-                self.results = None;
-                self.loading = false;
-                self.input.update(cx, |input, cx| input.set_value("", window, cx));
-            }
-            self.exchange.update(cx, |select, cx| {
-                select.set_items(exchanges(), window, cx);
-                select.set_selected_index(
-                    Some(IndexPath::new(exchange_index(settings.exchange))),
-                    window,
-                    cx,
-                );
-            });
-            self.shown_exchange = settings.exchange;
-            self.shown_locale = locale;
-        }
         let full = settings.watchlist.len() >= MAX_INSTRUMENTS;
-        let placeholder = if full {
-            t!("settings.watchlist.full", max = MAX_INSTRUMENTS)
-        } else {
-            t!("settings.watchlist.search").to_owned()
-        };
-        if placeholder != self.placeholder {
-            self.input
-                .update(cx, |input, cx| input.set_placeholder(placeholder.clone(), window, cx));
-            self.placeholder = placeholder;
-        }
         let p = ui::theme::Palette::current(&self.app, cx);
         let existing = settings.watchlist.clone();
         let shared = shared_symbols(existing.iter());
@@ -360,7 +340,7 @@ impl Render for WatchlistSection {
                         .child(t!("settings.watchlist.bar")),
                 )
                 .child(
-                    Switch::new(("watchlist-pin", index))
+                    Switch::new(SharedString::from(format!("watchlist-pin:{id}")))
                         .accessibility_label(t!("settings.watchlist.bar"))
                         .checked(item.pinned)
                         .on_change(move |checked, _, cx| {
@@ -387,8 +367,13 @@ impl Render for WatchlistSection {
             {
                 let move_id = id.clone();
                 let move_view = weak.clone();
+                let key = if delta < 0 {
+                    format!("watchlist-up:{id}")
+                } else {
+                    format!("watchlist-down:{id}")
+                };
                 row = row.child(
-                    Button::new((if delta < 0 { "watchlist-up" } else { "watchlist-down" }, index))
+                    Button::new(SharedString::from(key))
                         .label(label)
                         .accessibility_label(if delta < 0 {
                             t!("settings.watchlist.moveUp")
@@ -417,7 +402,7 @@ impl Render for WatchlistSection {
                 );
             }
             row = row.child(
-                Button::new(("watchlist-remove", index))
+                Button::new(SharedString::from(format!("watchlist-remove:{id}")))
                     .label("×")
                     .ghost()
                     .small()
@@ -455,13 +440,7 @@ impl Render for WatchlistSection {
             .on_open_change(move |open, window, cx| {
                 if !*open {
                     let _ = dismiss_view.update(cx, |this, cx| {
-                        this.query.clear();
-                        this.generation.invalidate();
-                        if let Some(task) = this.pending.take() {
-                            task.abort();
-                        }
-                        this.loading = false;
-                        this.input.update(cx, |input, cx| input.set_value("", window, cx));
+                        this.cancel_search(window, cx);
                         cx.notify();
                     });
                 }
@@ -553,17 +532,15 @@ impl Render for WatchlistSection {
                 div()
                     .capture_key_down(cx.listener(
                         |this, event: &gpui_kit::KeyDownEvent, window, cx| {
+                            let m = event.keystroke.modifiers;
+                            if m.control || m.alt || m.platform || m.function {
+                                return;
+                            }
                             if this.query.trim().is_empty() {
                                 return;
                             }
                             if event.keystroke.key == "escape" {
-                                this.query.clear();
-                                this.generation.invalidate();
-                                if let Some(task) = this.pending.take() {
-                                    task.abort();
-                                }
-                                this.loading = false;
-                                this.input.update(cx, |input, cx| input.set_value("", window, cx));
+                                this.cancel_search(window, cx);
                                 cx.stop_propagation();
                                 cx.notify();
                                 return;
@@ -656,17 +633,12 @@ mod tests {
     #[test]
     fn debounce_restarts_and_rejects_stale_results() {
         let mut gate = SearchGeneration::default();
-        let now = Instant::now();
-        let first = gate.start(now, SEARCH_DELAY);
-        let second = gate.start(now + Duration::from_millis(100), SEARCH_DELAY);
-        assert_eq!(first.ready_at, now + Duration::from_millis(200));
-        assert_eq!(second.ready_at, now + Duration::from_millis(300));
+        let first = gate.start();
+        let second = gate.start();
         assert!(!gate.accepts(first));
         assert!(gate.accepts(second));
         gate.invalidate();
         assert!(!gate.accepts(second));
-        let warmup = gate.start(now, Duration::ZERO);
-        assert_eq!(warmup.ready_at, now);
     }
     #[test]
     fn list_preserves_order_rejects_duplicates_and_caps_size() {

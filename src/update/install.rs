@@ -449,16 +449,17 @@ mod windows {
 
     /// Writes the downloaded installer under the temp directory and starts it.
     ///
-    /// Passive mode installs for the current user without asking anything, and
-    /// `/R` starts the app again when it is done. The caller has to exit: the
-    /// installer cannot replace the files of a running app.
+    /// Passive mode installs for the current user without asking anything,
+    /// `/NS` skips recreating shortcuts, and `/R` starts the app again when it
+    /// is done. The caller has to exit: the installer cannot replace the files
+    /// of a running app.
     pub fn install(bytes: &[u8]) -> Result<(), InstallError> {
         let path =
             std::env::temp_dir().join(format!("candlewick-{}-setup.exe", std::process::id()));
         fs::write(&path, bytes)
             .map_err(|source| InstallError::Staging { path: path.clone(), source })?;
         std::process::Command::new(&path)
-            .args(["/P", "/R"])
+            .args(["/P", "/R", "/NS"])
             .spawn()
             .map_err(|source| InstallError::Spawn { path, source })?;
         Ok(())

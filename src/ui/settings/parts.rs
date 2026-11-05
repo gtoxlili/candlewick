@@ -128,8 +128,12 @@ impl CredentialField {
         let p = Palette::current(app, cx);
         let mut result = div().flex().flex_col().gap_2().px_3().py_2();
         if self.editing {
-            let complete =
-                self.inputs.iter().all(|input| !input.state.read(cx).value().trim().is_empty());
+            let mut complete = true;
+            for input in &self.inputs {
+                if input.state.read(cx).value().trim().is_empty() {
+                    complete = false;
+                }
+            }
             let states: Vec<_> = self.inputs.iter().map(|input| input.state.clone()).collect();
             // The same row as when closed, so the name stays in sight while
             // the form is open: several credentials share one form.

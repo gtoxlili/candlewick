@@ -10,11 +10,11 @@ use crate::{
 };
 use gpui_kit::{
     AppContext, Context, Div, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
-    Task, Window,
+    Subscription, Task, Window,
     component::{
         Sizable as _,
         button::{Button, ButtonVariants as _},
-        input::InputState,
+        input::{InputEvent, InputState},
         link::Link,
         spinner::Spinner,
     },
@@ -93,6 +93,8 @@ pub struct LongbridgeSection {
     app_key: Entity<InputState>,
     app_secret: Entity<InputState>,
     access_token: Entity<InputState>,
+    check_task: Option<Task<()>>,
+    _subscriptions: Vec<Subscription>,
     _observers: Vec<Task<()>>,
 }
 
@@ -119,6 +121,16 @@ impl LongbridgeSection {
         let app_key = cx.new(|cx| InputState::new(window, cx));
         let app_secret = cx.new(|cx| InputState::new(window, cx).masked(true));
         let access_token = cx.new(|cx| InputState::new(window, cx).masked(true));
+        let subscriptions = [&app_key, &app_secret, &access_token]
+            .into_iter()
+            .map(|input| {
+                cx.subscribe(input, |_, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        cx.notify();
+                    }
+                })
+            })
+            .collect();
         let observers = vec![
             ui::observe(&app, Topic::Locale, cx, |_, _| {}),
             ui::observe(&app, Topic::Settings, cx, |this, cx| {
@@ -138,6 +150,8 @@ impl LongbridgeSection {
             app_key,
             app_secret,
             access_token,
+            check_task: None,
+            _subscriptions: subscriptions,
             _observers: observers,
         }
     }
@@ -226,7 +240,7 @@ impl LongbridgeSection {
         cx.notify();
         let app = self.app.clone();
         let task = ui::run(&app, async move { api::check_longbridge().await });
-        cx.spawn(async move |view, cx| {
+        self.check_task = Some(cx.spawn(async move |view, cx| {
             let result = task.await;
             let _ = view.update(cx, |this, cx| {
                 if this.check_seq != seq {
@@ -240,8 +254,7 @@ impl LongbridgeSection {
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 
     fn status(&self, cx: &mut Context<Self>) -> Div {

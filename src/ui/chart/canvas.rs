@@ -17,11 +17,10 @@ use std::{
 };
 
 use gpui_kit::{
-    AnyElement, App as GpuiApp, Bounds, BoxShadow, ContentMask, Context, Element, ElementId,
-    Entity, EntityId, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
-    LayoutId, ParentElement, Path, PathBuilder, Pixels, Point, Render, Rgba, ShapedLine,
-    SharedString, Styled, TestSupportExt as _, TextAlign, TextRun, Window, canvas, div, fill, font,
-    linear_color_stop, linear_gradient, point, px, quad, rgb, size,
+    App as GpuiApp, Bounds, BoxShadow, ContentMask, Context, Entity, EntityId, Hsla,
+    InteractiveElement, IntoElement, ParentElement, Path, PathBuilder, Pixels, Point, Render, Rgba,
+    ShapedLine, SharedString, Styled, TestSupportExt as _, TextAlign, TextRun, Window, canvas, div,
+    fill, font, linear_color_stop, linear_gradient, point, px, quad, rgb, size,
 };
 
 use super::{geometry::Frame, labels, market::visible_stats, model_state::ChartModel};
@@ -72,12 +71,29 @@ impl Render for PriceCanvas {
         // paints it paints the same one: the canvas, the overlay above it, and
         // the hover card.
         self.schedule_tick(window, cx);
-        div().id("PriceCanvas").test_support().size_full().child(PriceElement {
-            model: self.model.clone(),
-            painter: self.painter.clone(),
-            palette,
-            dark,
-        })
+        let painter = self.painter.clone();
+        let prepaint_painter = painter.clone();
+        let model = self.model.clone();
+        let prepaint_model = model.clone();
+        div().id("PriceCanvas").test_support().size_full().child(
+            canvas(
+                move |bounds, window, cx| {
+                    let mut painter = prepaint_painter.borrow_mut();
+                    if painter.bounds != Some(bounds) {
+                        // The first frame, or a window that changed size: lay the
+                        // chart out again here, where the size is exact, with no
+                        // time passing, and let the tick after this frame keep
+                        // animating from the new size.
+                        painter.advance(&prepaint_model, bounds, window, cx, Some(0.0));
+                    }
+                },
+                move |bounds, (), window, cx| {
+                    let mut painter = painter.borrow_mut();
+                    draw(&mut painter, palette, dark, bounds, &model, window, cx);
+                },
+            )
+            .size_full(),
+        )
     }
 }
 
@@ -119,19 +135,6 @@ impl PriceCanvas {
         if changed || moving {
             cx.notify();
         }
-    }
-}
-
-struct PriceElement {
-    model: Entity<ChartModel>,
-    painter: Rc<RefCell<Painter>>,
-    palette: Palette,
-    dark: bool,
-}
-impl IntoElement for PriceElement {
-    type Element = Self;
-    fn into_element(self) -> Self {
-        self
     }
 }
 
@@ -182,9 +185,17 @@ impl TextCache {
                 .entry((kind, value.to_bits(), extra))
                 .or_insert_with(|| SharedString::from(text()))
                 .clone();
+            let text_font = if cfg!(target_os = "macos") {
+                font(if kind == LABEL_EMPTY { ".SystemUIFont" } else { "SF Mono" })
+            } else {
+                gpui_kit::Font {
+                    features: crate::ui::tabular_features(),
+                    ..window.text_style().font()
+                }
+            };
             let run = TextRun {
                 len: text.len(),
-                font: font(if kind == LABEL_EMPTY { ".SystemUIFont" } else { "SF Mono" }),
+                font: text_font,
                 color: rgba(color, f64::from(level) / 100.0),
                 ..Default::default()
             };
@@ -358,71 +369,6 @@ fn write_frame(frame: &Rc<Cell<Option<Frame>>>, next: Option<Frame>) -> bool {
         (Some(before), Some(after)) => !before.same_geometry(&after),
         (None, None) => false,
         _ => true,
-    }
-}
-
-impl Element for PriceElement {
-    type RequestLayoutState = AnyElement;
-    type PrepaintState = ();
-    fn id(&self) -> Option<ElementId> {
-        Some("price-canvas-painter".into())
-    }
-    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        None
-    }
-    fn request_layout(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut GpuiApp,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        let painter = self.painter.clone();
-        let model = self.model.clone();
-        let palette = self.palette;
-        let dark = self.dark;
-        let mut element = canvas(
-            |_, _, _| (),
-            move |bounds, (), window, cx| {
-                let mut painter = painter.borrow_mut();
-                if painter.bounds != Some(bounds) {
-                    // The first frame, or a window that changed size: lay the
-                    // chart out again here, where the size is exact, with no
-                    // time passing, and let the tick after this frame keep
-                    // animating from the new size.
-                    painter.advance(&model, bounds, window, cx, Some(0.0));
-                }
-                draw(&mut painter, palette, dark, bounds, &model, window, cx);
-            },
-        )
-        .size_full()
-        .into_any_element();
-        let layout = element.request_layout(window, cx);
-        let _ = id;
-        (layout, element)
-    }
-    fn prepaint(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        element: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut GpuiApp,
-    ) {
-        element.prepaint(window, cx);
-    }
-    fn paint(
-        &mut self,
-        _: Option<&GlobalElementId>,
-        _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
-        element: &mut Self::RequestLayoutState,
-        _: &mut (),
-        window: &mut Window,
-        cx: &mut GpuiApp,
-    ) {
-        element.paint(window, cx);
     }
 }
 

@@ -9,10 +9,10 @@ use super::{
 };
 use crate::{format, ui::theme::Palette};
 use gpui_kit::{
-    Bounds, Context, CursorStyle, Entity, FocusHandle, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PinchEvent, Pixels,
-    Render, ScrollEvent, StatefulInteractiveElement, Styled, TestSupportExt as _, Window, canvas,
-    div, px,
+    App as GpuiApp, Bounds, Context, CursorStyle, Entity, EntityId, FocusHandle,
+    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, PinchEvent, Pixels, Render, ScrollEvent, StatefulInteractiveElement, Styled,
+    TestSupportExt as _, Window, canvas, div, px,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -75,6 +75,7 @@ fn candle_at(
 
 pub struct Overlay {
     model: Entity<ChartModel>,
+    peers: Option<[EntityId; 2]>,
     focus: FocusHandle,
     bounds: Rc<Cell<Bounds<Pixels>>>,
     cache: Rc<RefCell<paint::TextCache>>,
@@ -87,12 +88,23 @@ impl Overlay {
     pub fn new(model: Entity<ChartModel>, cx: &mut Context<Self>) -> Self {
         Self {
             model,
+            peers: None,
             focus: cx.focus_handle(),
             bounds: Rc::new(Cell::new(Bounds::default())),
             cache: Rc::new(RefCell::new(paint::TextCache::default())),
             pan: None,
             last_drag: None,
             free: false,
+        }
+    }
+    pub fn set_peers(&mut self, peers: [EntityId; 2]) {
+        self.peers = Some(peers);
+    }
+    fn notify_peers(&self, cx: &mut GpuiApp) {
+        if let Some(peers) = self.peers {
+            for peer in peers {
+                GpuiApp::notify(cx, peer);
+            }
         }
     }
     fn local(&self, p: gpui_kit::Point<Pixels>) -> Point {
@@ -140,12 +152,15 @@ impl Overlay {
     fn moved(&mut self, e: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.free = e.modifiers.alt;
         let p = self.local(e.position);
+        let has_peers = self.peers.is_some();
         self.model.update(cx, |model, cx| {
             let frame = Self::frame_at(model, p);
             let interval = model.market().map_or(60., |m| f64::from(m.interval()));
             model.analysis_mut().pointer_move(p, frame.as_ref(), interval, e.modifiers.alt);
             model.analysis_changed(cx);
-            cx.notify();
+            if !has_peers {
+                cx.notify();
+            }
         });
         if let Some(pan) = &mut self.pan
             && let Some((started, dx)) = pan.moved(p.x, Instant::now())
@@ -163,6 +178,7 @@ impl Overlay {
                 m.viewport_changed(cx);
             });
         }
+        self.notify_peers(cx);
         cx.notify();
     }
     fn up(&mut self, e: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -293,33 +309,26 @@ impl Render for Overlay {
             .on_pinch(cx.listener(Self::pinch))
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                 if !hovered && this.pan.is_none() && !this.model.read(cx).analysis().dragging() {
+                    let has_peers = this.peers.is_some();
                     this.model.update(cx, |m, cx| {
                         m.analysis_mut().pointer_leave();
                         m.analysis_changed(cx);
-                        cx.notify();
+                        if !has_peers {
+                            cx.notify();
+                        }
                     });
+                    this.notify_peers(cx);
+                    cx.notify();
                 }
             }))
-            .child(
+            .child({
+                let prepaint_model = model.clone();
+                let peers = self.peers;
                 canvas(
-                    move |rect, _, _| {
+                    move |rect, _, cx| {
                         bounds.set(rect);
-                    },
-                    move |bounds, _, window, cx| {
-                        if pressed {
-                            let weak = weak.clone();
-                            window.on_mouse_event(
-                                move |event: &MouseMoveEvent, phase, window, cx| {
-                                    if phase == gpui_kit::DispatchPhase::Bubble
-                                        && !bounds.contains(&event.position)
-                                    {
-                                        let _ = weak
-                                            .update(cx, |this, cx| this.moved(event, window, cx));
-                                    }
-                                },
-                            );
-                        }
-                        model.update(cx, |model, cx| {
+                        let mut hover_changed = false;
+                        prepaint_model.update(cx, |model, cx| {
                             let Some(mut frame) = model.frame.get() else {
                                 return;
                             };
@@ -339,10 +348,41 @@ impl Render for Overlay {
                                 let after =
                                     (model.analysis().snapped, model.analysis().hovered_candle);
                                 model.analysis_changed(cx);
-                                if before != after {
+                                hover_changed = before != after;
+                                if hover_changed && peers.is_none() {
                                     cx.notify();
                                 }
                             }
+                            model.frame.set(Some(frame));
+                        });
+                        if hover_changed && let Some([_, hover_id]) = peers {
+                            GpuiApp::notify(cx, hover_id);
+                        }
+                    },
+                    move |bounds, _, window, cx| {
+                        if pressed {
+                            let weak = weak.clone();
+                            window.on_mouse_event(
+                                move |event: &MouseMoveEvent, phase, window, cx| {
+                                    if phase == gpui_kit::DispatchPhase::Bubble
+                                        && !bounds.contains(&event.position)
+                                    {
+                                        let _ = weak
+                                            .update(cx, |this, cx| this.moved(event, window, cx));
+                                    }
+                                },
+                            );
+                        }
+                        model.update(cx, |model, cx| {
+                            let Some(mut frame) = model.frame.get() else {
+                                return;
+                            };
+                            if let Some(pointer) = model.analysis().pointer
+                                && let Some(next) = Self::frame_at(model, pointer)
+                            {
+                                frame.hover = next.hover;
+                            }
+                            let interval = model.market().map_or(60., |m| f64::from(m.interval()));
                             let decimals = format::decimals(
                                 model.market().and_then(|m| m.stats()).map_or(0., |s| s.last),
                                 model.instrument().and_then(|i| i.decimals),
@@ -366,8 +406,8 @@ impl Render for Overlay {
                         });
                     },
                 )
-                .size_full(),
-            )
+                .size_full()
+            })
     }
 }
 

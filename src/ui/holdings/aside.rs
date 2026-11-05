@@ -6,8 +6,8 @@ use crate::{
     portfolio::{AccountView, Portfolio, PositionKind, PositionValue, Wallet},
 };
 use gpui_kit::{
-    FontWeight, InteractiveElement as _, ParentElement, SharedString,
-    StatefulInteractiveElement as _, Styled, div, px,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement, SharedString,
+    Styled, component::scroll::ScrollableElement as _, div, px,
 };
 
 use super::summary;
@@ -93,9 +93,14 @@ pub fn aside(
 }
 
 /// Each exchange: its total, what the day did to it, and where it sits.
-fn accounts(accounts: &[AccountView], palette: Palette) -> gpui_kit::Stateful<gpui_kit::Div> {
-    div().id("accounts").min_h_0().flex_1().overflow_y_scroll().text_size(px(12.)).children(
-        accounts.iter().map(|account| {
+fn accounts(accounts: &[AccountView], palette: Palette) -> AnyElement {
+    div()
+        .id("accounts")
+        .min_h_0()
+        .flex_1()
+        .overflow_y_scrollbar()
+        .text_size(px(12.))
+        .children(accounts.iter().map(|account| {
             let before = match (account.total, account.change) {
                 (Some(total), Some(change)) => Some(total - change),
                 _ => None,
@@ -220,16 +225,12 @@ fn accounts(accounts: &[AccountView], palette: Palette) -> gpui_kit::Stateful<gp
                 );
             }
             section
-        }),
-    )
+        }))
+        .into_any_element()
 }
 
 /// Open derivatives positions, the largest PnL first: a card each.
-fn positions(
-    positions: &[PositionValue],
-    several: bool,
-    palette: Palette,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
+fn positions(positions: &[PositionValue], several: bool, palette: Palette) -> AnyElement {
     if positions.is_empty() {
         return div()
             .id("positions-empty")
@@ -239,10 +240,16 @@ fn positions(
             .justify_center()
             .text_size(px(12.))
             .text_color(palette.muted)
-            .child(t!("holdings.noOpenPositions"));
+            .child(t!("holdings.noOpenPositions"))
+            .into_any_element();
     }
-    div().id("positions").min_h_0().flex_1().overflow_y_scroll().text_size(px(12.)).children(
-        positions.iter().map(|held| {
+    div()
+        .id("positions")
+        .min_h_0()
+        .flex_1()
+        .overflow_y_scrollbar()
+        .text_size(px(12.))
+        .children(positions.iter().map(|held| {
             let position = &held.position;
             let decimals = format::decimals(position.mark, None);
             let settled = position.pnl_asset == "USDT" || position.pnl_asset == "USDC";
@@ -409,6 +416,6 @@ fn positions(
                 );
             }
             card
-        }),
-    )
+        }))
+        .into_any_element()
 }

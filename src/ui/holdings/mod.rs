@@ -22,7 +22,8 @@ use crate::{
     portfolio::{self, Portfolio},
 };
 use gpui_kit::{
-    Context, Hsla, IntoElement, ParentElement, Render, SharedString, Styled, Task, Window,
+    AppContext as _, Context, Entity, Hsla, IntoElement, ParentElement, Render, SharedString,
+    Styled, Task, UniformListScrollHandle, Window,
     component::{Sizable as _, TitleBar, button::Button, button::ButtonVariants as _},
     div, px,
 };
@@ -67,18 +68,20 @@ pub struct HoldingsView {
     show_small: bool,
     tab: Tab,
     derived: Derived,
+    assets_scroll: UniformListScrollHandle,
+    live_dot: Entity<allocation::LiveDot>,
     /// The hero number flashes on every new total; `generation` remounts the
     /// animation, `down` picks its color.
     flash: (usize, Option<bool>),
     _observers: Vec<Task<()>>,
-    _ticker: Task<()>,
+    stale_timer: Option<Task<()>>,
 }
 
 impl HoldingsView {
     pub fn new(app: App, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut observers = setup(&app, window, cx);
         observers.push(observe_title(&app, window, cx, |_, _| t!("window.holdings").to_owned()));
-        observers.push(observe(&app, crate::app::Topic::Portfolio, cx, |view, _| {
+        observers.push(observe(&app, crate::app::Topic::Portfolio, cx, |view, cx| {
             let next = api::get_portfolio(&view.app);
             let moved = match (view.portfolio.total, next.total) {
                 (Some(before), Some(now)) if before != now => Some(now < before),
@@ -89,20 +92,13 @@ impl HoldingsView {
             }
             view.portfolio = next;
             view.recompute();
+            view.schedule_stale_check(cx);
         }));
         observers.push(observe(&app, crate::app::Topic::Locale, cx, |view, _| {
             view.recompute();
         }));
-        // Freshness is a matter of time, not only of data: the live dot goes
-        // out and the clock moves on while nothing else changes.
-        let ticker = cx.spawn(async move |view, cx| {
-            loop {
-                cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
-                if view.update(cx, |_, cx| cx.notify()).is_err() {
-                    break;
-                }
-            }
-        });
+        let dot_app = app.clone();
+        let live_dot = cx.new(|_| allocation::LiveDot::new(dot_app));
         let mut view = Self {
             portfolio: api::get_portfolio(&app),
             sort: summary::Sort::Value,
@@ -122,13 +118,44 @@ impl HoldingsView {
                 small: SmallAssets::default(),
                 several: false,
             },
+            assets_scroll: UniformListScrollHandle::new(),
+            live_dot,
             flash: (0, None),
             app,
             _observers: observers,
-            _ticker: ticker,
+            stale_timer: None,
         };
         view.recompute();
+        view.schedule_stale_check(cx);
         view
+    }
+
+    /// Schedules a single wake-up at `latest + LIVE_MS` so the freshness indicator
+    /// transitions from `Live` to `Stale` without a 1 Hz polling loop when idle.
+    fn schedule_stale_check(&mut self, cx: &mut Context<Self>) {
+        let now = portfolio::now_ms();
+        let latest =
+            self.portfolio.accounts.iter().filter_map(|account| account.updated).fold(0., f64::max);
+        let live = latest > 0. && now - latest < LIVE_MS;
+        if self.live_dot.read(cx).live != live {
+            self.live_dot.update(cx, |dot, cx| {
+                dot.live = live;
+                cx.notify();
+            });
+        }
+        self.stale_timer = if live {
+            let remaining_ms = (latest + LIVE_MS - now).max(50.);
+            let delay = std::time::Duration::from_secs_f64(remaining_ms / 1000.);
+            Some(cx.spawn(async move |view, cx| {
+                cx.background_executor().timer(delay).await;
+                let _ = view.update(cx, |this, cx| {
+                    this.schedule_stale_check(cx);
+                    cx.notify();
+                });
+            }))
+        } else {
+            None
+        };
     }
 
     /// Lays out what rendering only reads. Runs when the portfolio changes,
@@ -263,6 +290,12 @@ impl Render for HoldingsView {
                 .filter_map(|account| account.updated)
                 .fold(0., f64::max);
             let live = live > 0. && now - live < LIVE_MS;
+            if self.live_dot.read(cx).live != live {
+                self.live_dot.update(cx, |dot, cx| {
+                    dot.live = live;
+                    cx.notify();
+                });
+            }
             div()
                 .flex()
                 .flex_1()
@@ -276,7 +309,7 @@ impl Render for HoldingsView {
                         .gap(px(12.))
                         .pb(px(16.))
                         .child(hero::hero(&self.portfolio, &derived.insight, flash, palette))
-                        .child(allocation::allocation(&derived.shares, live, palette))
+                        .child(allocation::allocation(&derived.shares, &self.live_dot, palette))
                         .child(sort_tabs(self.sort, view.clone(), palette))
                         .child(assets::panel(
                             &derived.rows,
@@ -284,6 +317,7 @@ impl Render for HoldingsView {
                             derived.small.count,
                             derived.small.value,
                             self.show_small,
+                            &self.assets_scroll,
                             palette,
                             toggle_small,
                         ))
@@ -371,13 +405,8 @@ pub(crate) fn series_color(series: summary::Series, palette: Palette) -> Hsla {
     palette.series[index]
 }
 
-/// Linear blend between two colors, for the hero number's flash fading back
-/// into the text color.
+/// Linear blend between two colors in RGBA space, for the hero number's flash
+/// fading back into the text color without hue-rainbowing.
 pub(crate) fn mix(from: Hsla, to: Hsla, t: f32) -> Hsla {
-    Hsla {
-        h: from.h + (to.h - from.h) * t,
-        s: from.s + (to.s - from.s) * t,
-        l: from.l + (to.l - from.l) * t,
-        a: from.a + (to.a - from.a) * t,
-    }
+    crate::ui::mix_color(from, to, f64::from(t))
 }

@@ -8,7 +8,6 @@ use std::{
 };
 
 use gpui_kit::{Context, Task};
-use tokio::task::JoinHandle;
 
 use super::{
     analysis::Analysis,
@@ -26,13 +25,6 @@ use crate::{
         prefs::{IndicatorChoice, Mode, SideTab, UiPrefs},
     },
 };
-
-struct Abort<T>(JoinHandle<T>);
-impl<T> Drop for Abort<T> {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
 
 /// State shared by all parts of one chart window. Mutation commands notify observers.
 pub struct ChartModel {
@@ -403,11 +395,9 @@ impl ChartModel {
     }
     fn retry_connect(&mut self, cx: &mut Context<Self>) {
         let generation = self.generation;
-        let sleep =
-            Abort(ui::run(&self.app, async { tokio::time::sleep(Duration::from_secs(5)).await }));
+        let timer = cx.background_executor().timer(Duration::from_secs(5));
         let task = cx.spawn(async move |weak, cx| {
-            let mut sleep = sleep;
-            let _ = (&mut sleep.0).await;
+            timer.await;
             let _ = weak.update(cx, |model, cx| {
                 if model.generation == generation {
                     model.connect(cx);
@@ -510,12 +500,11 @@ impl ChartModel {
         };
         let generation = self.generation;
         let app = self.app.clone();
-        let request = Abort(ui::run(&self.app, async move {
+        let request = ui::run(&self.app, async move {
             api::chart_history(&app, id, token.interval, end, limit).await
-        }));
+        });
         let task = cx.spawn(async move |weak, cx| {
-            let mut request = request;
-            let result = (&mut request.0).await;
+            let result = request.await;
             let _ = weak.update(cx, |model, cx| {
                 if model.generation != generation {
                     return;
@@ -549,11 +538,9 @@ impl ChartModel {
     }
     fn retry_history(&mut self, interval: u32, cx: &mut Context<Self>) {
         let generation = self.generation;
-        let sleep =
-            Abort(ui::run(&self.app, async { tokio::time::sleep(Duration::from_secs(5)).await }));
+        let timer = cx.background_executor().timer(Duration::from_secs(5));
         let task = cx.spawn(async move |weak, cx| {
-            let mut sleep = sleep;
-            let _ = (&mut sleep.0).await;
+            timer.await;
             let _ = weak.update(cx, |model, cx| {
                 if model.generation == generation
                     && model.market.as_ref().is_some_and(|m| {
@@ -572,11 +559,9 @@ impl ChartModel {
         };
         let generation = self.generation;
         let app = self.app.clone();
-        let request =
-            Abort(ui::run(&self.app, async move { api::chart_trades(&app, id, 40).await }));
+        let request = ui::run(&self.app, async move { api::chart_trades(&app, id, 40).await });
         let task = cx.spawn(async move |weak, cx| {
-            let mut request = request;
-            if let Ok(Ok(trades)) = (&mut request.0).await {
+            if let Ok(Ok(trades)) = request.await {
                 let _ = weak.update(cx, |model, cx| {
                     if model.generation == generation
                         && let Some(market) = &mut model.market
@@ -601,12 +586,13 @@ impl ChartModel {
         let generation = self.generation;
         let epoch = self.market_epoch;
         let app = self.app.clone();
-        let request = Abort(ui::run(&self.app, async move {
-            api::chart_history(&app, id, interval, None, 3).await
-        }));
+        let request =
+            ui::run(
+                &self.app,
+                async move { api::chart_history(&app, id, interval, None, 3).await },
+            );
         let task = cx.spawn(async move |weak, cx| {
-            let mut request = request;
-            let result = (&mut request.0).await;
+            let result = request.await;
             let _ = weak.update(cx, |model, cx| {
                 if model.generation != generation || model.market_epoch != epoch {
                     return;
@@ -628,13 +614,9 @@ impl ChartModel {
     }
     fn start_refresh_timer(&mut self, cx: &mut Context<Self>) {
         let generation = self.generation;
-        let app = self.app.clone();
         let task = cx.spawn(async move |weak, cx| {
             loop {
-                let mut sleep = Abort(ui::run(&app, async {
-                    tokio::time::sleep(Duration::from_secs(30)).await
-                }));
-                let _ = (&mut sleep.0).await;
+                cx.background_executor().timer(Duration::from_secs(30)).await;
                 if weak
                     .update(cx, |model, cx| {
                         if model.generation == generation {
@@ -683,14 +665,10 @@ impl ChartModel {
     }
     fn schedule_save(&mut self, cx: &mut Context<Self>) {
         self.prefs_dirty = true;
-        let app = self.app.clone();
+        let timer = cx.background_executor().timer(Duration::from_millis(500));
         self.persist_task = Some(cx.spawn(async move |weak, cx| {
-            let mut delay = Abort(ui::run(&app, async {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }));
-            if (&mut delay.0).await.is_ok() {
-                let _ = weak.update(cx, |model, _| model.save_prefs());
-            }
+            timer.await;
+            let _ = weak.update(cx, |model, _| model.save_prefs());
         }));
     }
 

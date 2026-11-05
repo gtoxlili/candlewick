@@ -95,8 +95,7 @@ impl Render for HoverCard {
         let pointer = model.analysis().pointer;
         match (candle, pointer, frame) {
             (Some(candle), Some(pointer), Some(frame)) => {
-                let (w, h) =
-                    card_size(window.text_system(), &time_label, candle, decimals, &readings);
+                let (w, h) = card_size(window, &time_label, candle, decimals, &readings);
                 let (x, y) = place(
                     pointer,
                     (w, h),
@@ -284,15 +283,21 @@ pub(crate) fn indicator_color(id: &str, palette: Palette) -> Hsla {
 /// The card's size, measured from its widest line: two OHLC pairs share a
 /// row, so the height is the first line, the pairs, the range and the
 /// indicator rows.
+/// Measure the card using the window's font and tabular numerals.
 fn card_size(
-    text_system: &WindowTextSystem,
+    window: &Window,
     time_label: &str,
     candle: Candle,
     decimals: usize,
     readings: &[(String, Hsla, Option<f64>)],
 ) -> (f64, f64) {
+    let text_system = window.text_system();
+    let font =
+        gpui_kit::Font { features: crate::ui::tabular_features(), ..window.text_style().font() };
     let figure_w = |label: &str, value: &str| {
-        text_width(text_system, label, 12.0) + 8.0 + text_width(text_system, value, 12.0)
+        text_width(text_system, font.clone(), label, 12.0)
+            + 8.0
+            + text_width(text_system, font.clone(), value, 12.0)
     };
     let labels = [
         t!("chart.ohlc.open"),
@@ -308,9 +313,9 @@ fn card_size(
     ];
     let pct =
         if candle.open > 0.0 { (candle.close - candle.open) / candle.open * 100.0 } else { 0.0 };
-    let mut widest = text_width(text_system, time_label, 12.0)
+    let mut widest = text_width(text_system, font.clone(), time_label, 12.0)
         + 16.0
-        + text_width(text_system, &format::change_signed(pct), 12.0);
+        + text_width(text_system, font.clone(), &format::change_signed(pct), 12.0);
     let first = figure_w(labels[0], &values[0]).max(figure_w(labels[1], &values[1]));
     let second = figure_w(labels[2], &values[2]).max(figure_w(labels[3], &values[3]));
     widest = widest.max(first + 14.0 + second);
@@ -328,10 +333,10 @@ fn card_size(
 }
 
 /// The width of one line of 12-pixel text, as the card renders it.
-fn text_width(text_system: &WindowTextSystem, text: &str, size: f64) -> f64 {
+fn text_width(text_system: &WindowTextSystem, font: gpui_kit::Font, text: &str, size: f64) -> f64 {
     let run = TextRun {
         len: text.len(),
-        font: Default::default(),
+        font,
         color: Hsla::default(),
         background_color: None,
         underline: None,
