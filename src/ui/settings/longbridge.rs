@@ -348,6 +348,7 @@ impl Render for LongbridgeSection {
                 },
             ],
             error: None,
+            link: None,
             on_edit: Box::new(move |window, cx| {
                 let _ = edit.update(cx, |this, cx| this.begin_edit(window, cx));
             }),

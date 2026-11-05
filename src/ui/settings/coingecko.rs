@@ -136,6 +136,7 @@ impl CoinGeckoSection {
                 state: self.key.clone(),
             }],
             error: None,
+            link: None,
             on_edit: Box::new(move |_, cx| {
                 let _ = edit.update(cx, |this, cx| {
                     this.editing = true;

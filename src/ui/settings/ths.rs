@@ -155,6 +155,7 @@ impl Render for ThsSection {
             busy: self.busy,
             inputs: vec![CredentialInput { label: "API Key".into(), state: self.key.clone() }],
             error: self.error.clone().map(Into::into),
+            link: None,
             on_edit: Box::new(move |_, cx| {
                 let _ = edit.update(cx, |this, cx| {
                     this.editing = true;
