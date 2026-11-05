@@ -9,6 +9,10 @@ pub mod parts;
 mod ths;
 mod watchlist;
 
+/// Samples of the settings window for the offscreen test renderer.
+#[cfg(test)]
+pub use about::samples as settings_samples;
+
 use self::{
     about::{AgentNote, AppFooter, DisplaySection},
     coingecko::CoinGeckoSection,

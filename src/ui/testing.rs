@@ -268,6 +268,7 @@ pub fn run() {
     }
     crate::i18n::set(locale);
     holdings_samples(&mut cx, &app);
+    crate::ui::settings::settings_samples(&mut cx, &app, &render_png);
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);
     cx.run_until_parked();
