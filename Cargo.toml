@@ -98,6 +98,55 @@ windows = { version = "0.62", features = [
 windows-numerics = "0.3"
 windows-version = "0.100"
 
+[package.metadata.packager]
+product-name = "Candlewick"
+identifier = "com.influo.candlewick"
+category = "Finance"
+copyright = "© 2026 Hangzhou Healing Era Technology Co., Ltd"
+publisher = "Hangzhou Healing Era Technology Co., Ltd"
+before-packaging-command = "cargo build --release"
+icons = [
+    "icons/32x32.png",
+    "icons/128x128.png",
+    "icons/128x128@2x.png",
+    "icons/icon.icns",
+    "icons/icon.ico",
+    "icons/icon.png",
+]
+# The crate's only binary; naming it keeps the bundle's executable stable
+# whatever else cargo generates.
+binaries = [{ path = "candlewick", main = true }]
+# `hq.dll` exists only when building for Windows, so the glob is empty on
+# macOS; the license ships on both.
+resources = [
+    { src = "thsdk/*.dll", target = "." },
+    { src = "thsdk/LICENSE", target = "thsdk-LICENSE.txt" },
+]
+
+[package.metadata.packager.macos]
+minimum-system-version = "15.0"
+background-app = true
+info-plist-path = "Info.plist"
+# Lands in Contents/Frameworks, where src/market/ths/thsdk.rs looks for it.
+frameworks = ["thsdk/hq.dylib"]
+
+[package.metadata.packager.nsis]
+installMode = "currentUser"
+languages = ["English", "SimpChinese", "Japanese"]
+installer-icon = "icons/icon.ico"
+# cargo-packager's template has no uninstall hook, so the callback it leaves
+# undefined does the cleanup. Runs only after a successful uninstall; the
+# installer's uninstall-before-install flow passes `_?=` and keeps the values.
+preinstall-section = '''
+Function un.onUninstSuccess
+  ${GetOptions} $CMDLINE "_?=" $R0
+  IfErrors 0 candlewick_keep_login_item
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "${PRODUCTNAME}"
+candlewick_keep_login_item:
+FunctionEnd
+'''
+
 [profile.release]
 opt-level = 3
 lto = "thin"
