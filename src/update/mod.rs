@@ -31,7 +31,7 @@ use crate::{
 
 const ENDPOINT: &str =
     "https://github.com/gtoxlili/candlewick/releases/latest/download/latest.json";
-const PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMwQzE1RjI4RTU5ODI3NjcKUldSbko1amxLRi9CTUZZbjhRaGcxYnZvUzFoemIwRFVIYTlkUDlkVkdzUEVQclhUUFRaM2R2bncK";
+const PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVENDcxQTcyQzU5QTE0MkYKUldRdkZKckZjaHBIWFk2bjV6RmFrQU9Idnd2L3BjSnp0ekQrZTFBWG50YldyclBWRWwwQkhZbDIK";
 
 /// The feeds and the first render come first.
 const FIRST_CHECK: Duration = Duration::from_secs(90);

@@ -17,8 +17,9 @@ name: Build Candlewick
 # Secrets (environment `release`):
 #   APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY
 #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
-#   TAURI_SIGNING_PRIVATE_KEY (the updater's private key; the packager reads
-#   it as CARGO_PACKAGER_SIGN_PRIVATE_KEY)
+#   CARGO_PACKAGER_SIGN_PRIVATE_KEY / CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD
+#   (the updater's private key and its password, under the names the packager
+#   reads them by)
 
 on:
   workflow_dispatch:
@@ -242,10 +243,11 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
           missing=0
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID CARGO_PACKAGER_SIGN_PRIVATE_KEY; do
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID CARGO_PACKAGER_SIGN_PRIVATE_KEY CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD; do
             if [[ -z "${!name}" ]]; then
               echo "::error::the release environment has no ${name}"
               missing=1
@@ -312,8 +314,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ""
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -464,8 +466,8 @@ jobs:
       - name: Assemble the release
         shell: bash
         env:
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ""
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           built_dmg=$(find built -type f -name '*.dmg')

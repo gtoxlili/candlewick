@@ -38,7 +38,7 @@
 
 已安装的应用从 `https://github.com/gtoxlili/candlewick/releases/latest/download/latest.json` 读取最新版本。这个文件是每个 Release 的附件，按平台（`macos-aarch64`、`windows-x86_64`）列出更新包的地址、签名和格式（`app` 或 `nsis`）。macOS 的更新包是 `.app.tar.gz`，CI 确认应用已经装订了公证票据之后才打包，并解开检查一遍；Windows 直接用安装包。
 
-应用只接受能用公钥验证的更新包，公钥是 `src/update/mod.rs` 里的 `PUBLIC_KEY`，私钥是 `release` 环境里的 `TAURI_SIGNING_PRIVATE_KEY`（工作流把它交给打包工具的 `CARGO_PACKAGER_SIGN_PRIVATE_KEY`）。换掉这对密钥，已经安装的版本就再也收不到更新，所以私钥要另外妥善备份。
+应用只接受能用公钥验证的更新包，公钥是 `src/update/mod.rs` 里的 `PUBLIC_KEY`，私钥和它的密码是 `release` 环境里的 `CARGO_PACKAGER_SIGN_PRIVATE_KEY` 与 `CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD`，打包工具按这两个名字读取。换掉这对密钥，已经安装的版本就再也收不到更新，所以私钥和密码要另外妥善备份。
 
 应用这边的逻辑在 `src/update/`：启动一分半后检查一次，之后每六小时一次；新版本下载并验证后，等到锁屏或显示器关闭、并且没有打开的窗口时才重新启动。macOS 上先解包到应用旁边的暂存目录，核对应用标识和版本，再换掉旧的 `.app`；换失败会还原旧应用。不想等的话，下拉菜单和设置页里都能立即重启。设置里关掉「自动更新」后，只在手动点「检查更新」时才会检查。
 
