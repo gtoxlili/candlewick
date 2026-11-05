@@ -10,7 +10,7 @@ use crate::{
 use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Context, Entity, HeadlessAppContext, IntoElement,
     ParentElement, Render, SharedString, Styled, Window, WindowBounds, WindowOptions,
-    assets::Assets, div, px, size, test::TestWindowExt,
+    assets::AllAssets, div, px, size, test::TestWindowExt,
 };
 
 struct Backdrop<V> {
@@ -135,7 +135,7 @@ fn holdings_samples(cx: &mut HeadlessAppContext, app: &App) {
 pub fn run() {
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
-        Arc::new(Assets),
+        Arc::new(AllAssets),
         gpui_kit::platform::current_headless_renderer,
     );
     cx.update(gpui_kit::init);
@@ -155,6 +155,7 @@ pub fn run() {
     for (kind, width, height) in [
         ("settings", 460., 640.),
         ("chart", 980., 640.),
+        ("chart-narrow", 760., 480.),
         ("holdings", 980., 640.),
         ("widgets", 460., 640.),
     ] {
@@ -168,6 +169,13 @@ pub fn run() {
                     })),
                     ..Default::default()
                 }
+            } else if kind == "chart-narrow" {
+                let mut options = crate::window::window_options(cx, "chart", kind.to_owned());
+                options.window_bounds = Some(WindowBounds::Windowed(Bounds {
+                    origin: Default::default(),
+                    size: size(px(width), px(height)),
+                }));
+                options
             } else {
                 crate::window::window_options(cx, kind, kind.to_owned())
             }
@@ -184,12 +192,40 @@ pub fn run() {
                 .unwrap()
                 .0
             }
-            "chart" => {
+            "chart" | "chart-narrow" => {
                 gpui_kit::open_window(options, cx, |window, cx| {
                     let id = crate::api::get_chart_instrument(&handle).unwrap();
                     let instrument = crate::api::chart_instrument(&handle, id.clone()).unwrap();
                     let spec = crate::api::chart_spec(&handle, id).unwrap();
-                    let market = ui::chart::market::Market::new(spec.intervals[0]);
+                    let mut market = ui::chart::market::Market::new(spec.intervals[0]);
+                    market.apply(crate::market::LiveEvent::Stats {
+                        stats: crate::market::Stats {
+                            last: 84_049.95,
+                            high: Some(85_000.),
+                            low: Some(82_000.),
+                            volume: Some(12_345.6),
+                            turnover: 987_654_321.,
+                            change: 1_024.5,
+                            change_pct: 1.23,
+                            onchain: None,
+                        },
+                    });
+                    market.apply(crate::market::LiveEvent::Book {
+                        books: vec![crate::market::Book {
+                            bids: (1..=4)
+                                .map(|i| crate::market::Level {
+                                    price: 84_049. - f64::from(i),
+                                    qty: 12. * f64::from(i),
+                                })
+                                .collect(),
+                            asks: (1..=4)
+                                .map(|i| crate::market::Level {
+                                    price: 84_050. + f64::from(i),
+                                    qty: 9. * f64::from(i),
+                                })
+                                .collect(),
+                        }],
+                    });
                     let model = cx.new(|_| {
                         ui::chart::model_state::ChartModel::with_market(
                             handle.clone(),
@@ -197,6 +233,19 @@ pub fn run() {
                             spec,
                             market,
                         )
+                    });
+                    model.update(cx, |model, cx| {
+                        model.set_visible_stats(
+                            Some(ui::chart::market::VisibleStats {
+                                live: true,
+                                span: 3600.,
+                                from: 0.,
+                                to: 0.,
+                                change_pct: 1.23,
+                                amplitude_pct: 3.68,
+                            }),
+                            cx,
+                        );
                     });
                     let view = cx.new(|cx| {
                         ui::chart::ChartView::with_model(handle.clone(), model, window, cx)
@@ -258,13 +307,21 @@ pub fn run() {
         }
     }
     let locale = crate::i18n::current();
-    crate::i18n::set(crate::i18n::Locale::Ja);
-    app.notify(crate::app::Topic::Locale);
-    cx.run_until_parked();
-    let chart = windows.iter().find(|(kind, _)| *kind == "chart").unwrap().1;
-    for (name, dark) in [("light", false), ("dark", true)] {
-        cx.update(|cx| ui::theme::apply(&app, dark, cx));
-        render_png(&mut cx, chart, &format!("chart-ja-{name}"));
+    let chart_windows: Vec<_> = windows
+        .iter()
+        .filter(|(kind, _)| kind.starts_with("chart"))
+        .map(|(kind, window)| (*kind, *window))
+        .collect();
+    for (tag, locale) in [("ja", crate::i18n::Locale::Ja), ("zh", crate::i18n::Locale::ZhCn)] {
+        crate::i18n::set(locale);
+        app.notify(crate::app::Topic::Locale);
+        cx.run_until_parked();
+        for (name, dark) in [("light", false), ("dark", true)] {
+            cx.update(|cx| ui::theme::apply(&app, dark, cx));
+            for (kind, window) in &chart_windows {
+                render_png(&mut cx, *window, &format!("{kind}-{tag}-{name}"));
+            }
+        }
     }
     crate::i18n::set(locale);
     holdings_samples(&mut cx, &app);

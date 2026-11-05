@@ -52,7 +52,7 @@ fn main() {
         .build()
         .expect("failed to start the tokio runtime");
     let runtime_handle = runtime.handle().clone();
-    let application = gpui_kit::application();
+    let application = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
     application.on_reopen(|cx| {
         let handle = cx.global::<AppGlobal>().0.clone();
         if let Err(error) = window::reopen(&handle) {
