@@ -11,7 +11,7 @@ macOS 的菜单栏在 Windows 上对应任务栏。所以固定的价格直接�
 | 常驻显示的价格 | 菜单栏状态项的标题或绘制的两排图像 | 嵌进任务栏的行情条 | `platform/windows/ticker.rs`、`draw.rs` |
 | 入口图标 | 模板图标 | 托盘图标，按任务栏 DPI 绘制，圆点显示涨跌色 | `notify.rs`、`portable/glyph.rs` |
 | 自选下拉菜单 | NSMenu，富文本分栏 | 原生弹出菜单，制表符分栏，左侧涨跌三角 | `menu.rs`、`portable/menu_text.rs` |
-| 窗口外观 | 透明窗口加 vibrancy，系统红绿灯 | Windows 11 用 Mica，Windows 10 用纯色底；标题栏和按钮由 GPUI Kit 的标题栏绘制 | `platform/windows/window.rs`，窗口部分见 [windows-frontend.md](windows-frontend.md) |
+| 窗口外观 | 透明窗口加 vibrancy，系统红绿灯 | Windows 11 用 Mica，Windows 10 用纯色底；标题栏和按钮由 GPUI Kit 的标题栏绘制 | `platform/windows/window.rs`，窗口部分见 [windows-ui.md](windows-ui.md) |
 | 应用形态 | 无窗口时是 Accessory，没有 Dock 图标 | 无窗口时进入效率模式（EcoQoS） | `platform/windows/mod.rs` |
 | 再次启动 | LaunchServices 发 Reopen | 命名互斥量保证单实例，第二个进程通知第一个后退出 | `claim_single_instance` |
 | 开机启动 | SMAppService 登录项 | `HKCU\...\Run`，并尊重任务管理器里的开关 | `set_login_item` |
@@ -52,7 +52,7 @@ macOS 的菜单栏在 Windows 上对应任务栏。所以固定的价格直接�
 
 ## 窗口
 
-设置、行情和持仓窗口是 GPUI 窗口，由 `src/window.rs` 创建。标题栏用 GPUI Kit 的 `TitleBar`，最小化、最大化和关闭按钮也由它绘制。窗口的材质、字体和尺寸见 [windows-frontend.md](windows-frontend.md)。
+设置、行情和持仓窗口是 GPUI 窗口，由 `src/window.rs` 创建。标题栏用 GPUI Kit 的 `TitleBar`，最小化、最大化和关闭按钮也由它绘制。窗口的材质、字体和尺寸见 [windows-ui.md](windows-ui.md)。
 
 窗口在主线程上创建：shell 线程和其他线程要开窗口时，把任务交给主线程就返回（`App::on_main`）。最后一个窗口关掉后进程回到效率模式，3 秒后压缩堆并修剪工作集。
 
