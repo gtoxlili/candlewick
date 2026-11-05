@@ -35,6 +35,8 @@ pub struct View {
     /// The plot area's left x and width, in CSS pixels.
     pub plot_x: Option<f64>,
     pub plot_w: Option<f64>,
+    /// The chart clock at the last frame, in epoch seconds.
+    pub now: f64,
     /// The gap after the live edge, as a share of the span.
     pub buffer: f64,
 }
@@ -63,8 +65,6 @@ pub struct Viewport {
     pub view: View,
     /// Seconds per candle.
     secs: f64,
-    /// Epoch seconds, the chart's clock.
-    now: f64,
     /// Epoch seconds of the oldest loaded candle; infinite while unknown.
     oldest: f64,
     exhausted: bool,
@@ -85,10 +85,10 @@ impl Viewport {
                 right: None,
                 plot_x: None,
                 plot_w: None,
+                now,
                 buffer: 0.0,
             },
             secs,
-            now,
             oldest: f64::INFINITY,
             exhausted: true,
             drag_from: None,
@@ -99,11 +99,16 @@ impl Viewport {
 
     /// The chart's clock for this frame, epoch seconds.
     pub fn set_now(&mut self, now: f64) {
-        self.now = now;
+        self.view.now = now;
     }
 
     pub fn live(&self) -> bool {
         self.view.end.is_none()
+    }
+
+    /// Whether a pointer drag currently moves the viewport.
+    pub fn dragging(&self) -> bool {
+        self.drag_from.is_some()
     }
 
     /// The one-frame jump flag, read once and cleared: the chart jumps to
@@ -155,7 +160,7 @@ impl Viewport {
     pub fn drag_end(&mut self, velocity: f64) -> bool {
         self.drag_from = None;
         if velocity.abs() >= GLIDE_MIN {
-            self.glide = Some(Glide { velocity, last: self.now });
+            self.glide = Some(Glide { velocity, last: self.view.now });
             return true;
         }
         false
@@ -165,8 +170,8 @@ impl Viewport {
     /// per frame after [`set_now`]; true while another frame is needed.
     pub fn glide_tick(&mut self) -> bool {
         let Some(mut glide) = self.glide else { return false };
-        let dt_ms = ((self.now - glide.last) * 1000.0).max(0.0);
-        glide.last = self.now;
+        let dt_ms = ((self.view.now - glide.last) * 1000.0).max(0.0);
+        glide.last = self.view.now;
         glide.velocity *= (-dt_ms / GLIDE_MS).exp();
         let before = self.view.end;
         if glide.velocity.abs() >= GLIDE_MIN / 4.0 && before.is_some() {
@@ -225,7 +230,7 @@ impl Viewport {
     }
 
     fn live_end(&self, span: f64) -> f64 {
-        self.now + span * self.view.buffer
+        self.view.now + span * self.view.buffer
     }
 
     fn secs_per_px(&self) -> f64 {

@@ -52,6 +52,16 @@ pub struct Frame {
     pub plot_y: f64,
     pub plot_w: f64,
     pub plot_h: f64,
+    /// Canvas size in pixels and the chart clock in epoch seconds.
+    pub width: f64,
+    pub height: f64,
+    pub now: f64,
+    /// Displayed candle interval, which can be between two selected intervals.
+    pub candle_width: f64,
+    /// Pointer x and fade while the hovered candle remains visible.
+    pub hover_x: Option<f64>,
+    pub scrub: f64,
+    pub line_mode: f64,
     /// The candle under the pointer; `None` while not hovering.
     pub hover: Option<Candle>,
 }
@@ -260,6 +270,13 @@ mod tests {
             plot_y: 10.0,
             plot_w: 600.0,
             plot_h: 300.0,
+            width: 720.0,
+            height: 340.0,
+            now: 1600.0,
+            candle_width: 60.0,
+            hover_x: None,
+            scrub: 0.0,
+            line_mode: 0.0,
             hover: None,
         }
     }
