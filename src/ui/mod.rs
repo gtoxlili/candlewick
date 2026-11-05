@@ -161,7 +161,7 @@ pub fn setup<V: 'static>(app: &App, window: &mut Window, cx: &mut Context<V>) ->
 /// Draw the common window title bar over the system material.
 pub fn frame(title: String, cx: &gpui_kit::App) -> gpui_kit::Div {
     use gpui_kit::{ParentElement, component::TitleBar, div};
-    div().size_full().flex().flex_col().child(
+    div().size_full().flex().flex_col().bg(theme::glass(cx)).child(
         TitleBar::new()
             .bg(gpui_kit::component::Theme::global(cx).transparent)
             .child(div().whitespace_nowrap().child(title)),

@@ -326,7 +326,14 @@ impl Render for HoldingsView {
                 .child(aside::aside(&self.portfolio, self.tab, derived.several, view, palette))
         };
 
-        div().size_full().flex().flex_col().text_color(palette.foreground).child(bar).child(body)
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(super::theme::glass(cx))
+            .text_color(palette.foreground)
+            .child(bar)
+            .child(body)
     }
 }
 

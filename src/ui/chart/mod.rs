@@ -206,6 +206,7 @@ impl Render for ChartView {
             .size_full()
             .flex()
             .flex_col()
+            .bg(super::theme::glass(cx))
             .text_color(palette.foreground)
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::delete_drawing))

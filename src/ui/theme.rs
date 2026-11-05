@@ -47,6 +47,45 @@ fn color(value: u32, alpha: f32) -> Hsla {
     color.into()
 }
 
+/// Whether the window sits on a material it can show: the blur on macOS, Mica
+/// on Windows 11 22H2 and later (the builds GPUI sets it on). Anywhere else the
+/// window is its own fill alone, so the fill stays solid.
+fn material() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows_version::OsVersion::current().build >= 22621
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        true
+    }
+}
+
+/// The window's fill, `theme.background`, over the system material. The
+/// selected segment of a control and a pressed tool are drawn in it as well,
+/// so it is a light pill in both modes: nearly white in the light one, which
+/// lets the blur through, and a faint lift in the dark one, whose depth comes
+/// from [`glass`].
+fn window_fill(dark: bool) -> Hsla {
+    match (dark, material()) {
+        (false, true) => color(0xfbfcfe, 0.74),
+        (false, false) => color(0xffffff, 1.),
+        (true, _) => color(0xffffff, 0.16),
+    }
+}
+
+/// The tint under a dark window's content. The material is a blur with no tint
+/// of its own, so without it light text would sit on whatever the desktop
+/// shows through; the navy of the palette keeps it readable on any wallpaper
+/// and leaves the blur's color as a hint.
+pub fn glass(cx: &GpuiApp) -> Hsla {
+    if Theme::global(cx).is_dark() && material() {
+        color(0x16181f, 0.66)
+    } else {
+        gpui_kit::transparent_black()
+    }
+}
+
 fn tuple(value: (u8, u8, u8)) -> Hsla {
     color((u32::from(value.0) << 16) | (u32::from(value.1) << 8) | u32::from(value.2), 1.)
 }
@@ -160,7 +199,7 @@ pub fn apply(app: &App, dark: bool, cx: &mut GpuiApp) {
         theme.radius = px(10.);
         theme.radius_lg = px(18.);
         let c = &mut theme.colors;
-        c.background = color(0xffffff, if dark { 0.16 } else { 1. });
+        c.background = window_fill(dark);
         c.foreground = p.foreground;
         c.border = p.border;
         c.input = p.input;
