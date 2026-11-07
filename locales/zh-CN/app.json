@@ -23,6 +23,7 @@
     }
   },
   "tray": {
+    "totalShort": "总资产",
     "viewHoldings": "查看持仓…",
     "otherAssets": "其他 %{count} 项",
     "readFailedBecause": "%{exchange}读取失败：%{error}",

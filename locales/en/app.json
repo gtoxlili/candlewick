@@ -23,6 +23,7 @@
     }
   },
   "tray": {
+    "totalShort": "Tot.",
     "viewHoldings": "View Holdings…",
     "otherAssets": "Others (%{count})",
     "readFailedBecause": "Couldn't read %{exchange}: %{error}",

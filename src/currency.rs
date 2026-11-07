@@ -28,6 +28,15 @@ impl Currency {
         if self == Self::Jpy { 0 } else { 2 }
     }
 
+    pub fn symbol(self) -> &'static str {
+        match self {
+            // Both the yuan and the yen write `¥`; the menu spells out the
+            // code (CNY/JPY) where the two would be confused.
+            Self::Cny | Self::Jpy => "¥",
+            Self::Usd => "$",
+        }
+    }
+
     pub fn code(self) -> &'static str {
         match self {
             Self::Cny => "CNY",

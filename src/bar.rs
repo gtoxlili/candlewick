@@ -353,16 +353,20 @@ fn ticker(model: &Model) -> Option<Ticker> {
         let totals = Totals::of(&model.accounts)
             .map(|t| Totals { total: t.total * valuation.rate, change: t.change * valuation.rate });
         return Some(Ticker {
-            symbol: settings.show_symbol.then(|| t!("common.holdings.total").to_owned()),
+            symbol: settings.show_symbol.then(|| t!("tray.totalShort").to_owned()),
             price: totals.map_or_else(
                 || "—".to_owned(),
                 |t| {
-                    format::price(
-                        t.total,
-                        format::compact_decimals(
+                    format!(
+                        "{}{}",
+                        valuation.currency.symbol(),
+                        format::price(
                             t.total,
-                            Some(valuation.currency.decimals() as u8),
-                        ),
+                            format::compact_decimals(
+                                t.total,
+                                Some(valuation.currency.decimals() as u8),
+                            ),
+                        )
                     )
                 },
             ),

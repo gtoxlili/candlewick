@@ -23,6 +23,7 @@
     }
   },
   "tray": {
+    "totalShort": "総資産",
     "viewHoldings": "保有資産を表示…",
     "otherAssets": "その他 %{count} 件",
     "readFailedBecause": "%{exchange} を読み込めません：%{error}",
