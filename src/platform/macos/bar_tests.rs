@@ -176,7 +176,7 @@ fn verify_holdings_menu(app: &App) {
         model.settings.show_change = false;
     }
     bar::request_render(app);
-    assert_eq!(button.title().to_string(), format!("{} $85,500", t!("common.holdings.total")));
+    assert_eq!(button.title().to_string(), format!("{} 85,500", t!("common.holdings.total")));
     shared.model().settings.show_change = true;
     bar::request_render(app);
     assert!(button.title().is_empty());

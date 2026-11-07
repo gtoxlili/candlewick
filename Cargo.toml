@@ -3,7 +3,6 @@ name = "candlewick"
 version = "0.8.16"
 description = "Live crypto and stock prices in the macOS menu bar and the Windows taskbar"
 repository = "https://github.com/gtoxlili/candlewick"
-homepage = "https://github.com/gtoxlili/candlewick"
 keywords = ["menu-bar", "taskbar", "crypto", "stocks"]
 edition = "2024"
 rust-version = "1.98"

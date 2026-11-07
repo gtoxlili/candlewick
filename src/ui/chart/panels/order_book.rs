@@ -330,6 +330,8 @@ fn step_picker(
     let steps: Vec<f64> = steps.to_vec();
     Popover::new("book-step")
         .anchor(gpui_kit::Anchor::BottomRight)
+        // The list sits 4px from the edge, as the instrument picker's does.
+        .p(px(4.))
         .trigger(
             gpui_kit::component::button::Button::new("book-step-trigger")
                 .outline()
@@ -341,13 +343,14 @@ fn step_picker(
         )
         .content(move |_, _, _| {
             let entity = entity.clone();
-            div().flex().flex_col().py_1().min_w(px(90.)).children(steps.iter().enumerate().map(
+            div().flex().flex_col().min_w(px(90.)).children(steps.iter().enumerate().map(
                 |(i, step)| {
                     let entity = entity.clone();
                     div()
                         .id(gpui_kit::ElementId::Name(format!("book-step-{i}").into()))
-                        .px_3()
-                        .py_1()
+                        .px(px(8.))
+                        .py(px(4.))
+                        .rounded(px(6.))
                         .text_size(px(12.))
                         .when(i == selected, |row| row.bg(palette.fill))
                         .whitespace_nowrap()

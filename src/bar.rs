@@ -357,16 +357,12 @@ fn ticker(model: &Model) -> Option<Ticker> {
             price: totals.map_or_else(
                 || "—".to_owned(),
                 |t| {
-                    format!(
-                        "{}{}",
-                        valuation.currency.symbol(),
-                        format::price(
+                    format::price(
+                        t.total,
+                        format::compact_decimals(
                             t.total,
-                            format::compact_decimals(
-                                t.total,
-                                Some(valuation.currency.decimals() as u8)
-                            ),
-                        )
+                            Some(valuation.currency.decimals() as u8),
+                        ),
                     )
                 },
             ),

@@ -431,6 +431,8 @@ impl Render for WatchlistSection {
         let dismiss_view = cx.entity().downgrade();
         let search = Popover::new("watchlist-search-results")
             .w_full()
+            // The results sit 4px from the edge, as the instrument picker's does.
+            .p(px(4.))
             // The input handles left clicks; its query controls the popover.
             .mouse_button(gpui_kit::MouseButton::Middle)
             .overlay_closable(false)
@@ -494,6 +496,7 @@ impl Render for WatchlistSection {
                             ListItem::new(("watchlist-result", index))
                                 .selected(active == Some(index) && !added)
                                 .accessibility_label(item.pair_label())
+                                .px(px(8.))
                                 .child(
                                     div()
                                         .flex()

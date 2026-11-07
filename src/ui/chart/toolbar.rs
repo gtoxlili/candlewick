@@ -259,6 +259,8 @@ impl AnalysisBar {
             Popover::new("chart-indicators")
                 .anchor(Anchor::TopRight)
                 .offset(px(6.))
+                // The menu sits 4px from the edge, as the instrument picker's does.
+                .p(px(4.))
                 .trigger(self.menu_button(any_on, palette, cx))
                 .child(self.menu(palette, cx)),
         )
@@ -295,7 +297,7 @@ impl AnalysisBar {
             .w(px(268.))
             .child(
                 div()
-                    .px(px(6.))
+                    .px(px(8.))
                     .pb(px(6.))
                     .text_xs()
                     .text_color(palette.muted)
@@ -316,7 +318,7 @@ impl AnalysisBar {
         let period_label = t!("chart.periodOf", label = switch_label);
         h_flex()
             .h(px(32.))
-            .px(px(6.))
+            .px(px(8.))
             .gap_2()
             .rounded_lg()
             .hover(|this| this.bg(palette.fill))

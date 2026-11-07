@@ -28,14 +28,6 @@ impl Currency {
         if self == Self::Jpy { 0 } else { 2 }
     }
 
-    pub fn symbol(self) -> &'static str {
-        match self {
-            Self::Cny => "¥",
-            Self::Usd => "$",
-            Self::Jpy => "JP¥",
-        }
-    }
-
     pub fn code(self) -> &'static str {
         match self {
             Self::Cny => "CNY",
