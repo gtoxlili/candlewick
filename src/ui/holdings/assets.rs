@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::{format, portfolio::Asset};
 use gpui_kit::{
-    DefiniteLength, FontWeight, InteractiveElement as _, ParentElement,
+    DefiniteLength, FontWeight, InteractiveElement as _, ParentElement, SharedString,
     StatefulInteractiveElement as _, Styled, UniformListScrollHandle,
     component::scroll::ScrollableElement as _, div, px, uniform_list,
 };
@@ -133,15 +133,14 @@ pub fn panel(
         .border_color(palette.border)
         .text_size(px(10.))
         .text_color(palette.muted);
-    let value_label = t!("holdings.value", currency = currency.code());
-    let labels = [
-        t!("holdings.asset"),
-        t!("holdings.amount"),
-        t!("holdings.price"),
-        "24h",
-        value_label.as_str(),
+    let labels: [SharedString; 5] = [
+        t!("holdings.asset").into(),
+        t!("holdings.amount").into(),
+        t!("holdings.price").into(),
+        "24h".into(),
+        t!("holdings.value", currency = currency.code()).into(),
     ];
-    for (index, label) in labels.iter().enumerate() {
+    for (index, label) in labels.into_iter().enumerate() {
         let mut cell =
             div().w(DefiniteLength::Fraction(columns[index])).flex_none().flex().justify_end();
         if index == 0 {
@@ -149,7 +148,7 @@ pub fn panel(
         } else {
             cell = cell.pl(px(6.));
         }
-        header = header.child(cell.child(div().whitespace_nowrap().child(*label)));
+        header = header.child(cell.child(div().whitespace_nowrap().child(label)));
     }
     if costed {
         header = header.child(
