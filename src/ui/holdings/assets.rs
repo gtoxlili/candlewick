@@ -51,6 +51,7 @@ impl Row {
         widest_move: f64,
         sort: summary::Sort,
         several: bool,
+        decimals: usize,
     ) -> Self {
         let move_of = asset.change.unwrap_or(0.);
         let bar = match sort {
@@ -67,18 +68,18 @@ impl Row {
                 .map(|price| {
                     format::price(
                         price,
-                        if asset.stable { 2 } else { format::decimals(price, None) },
+                        if asset.stable { decimals } else { format::decimals(price, None) },
                     )
                 })
                 .unwrap_or_else(|| "—".to_owned()),
             pct: asset.change_pct.map(format::change_signed),
-            change: asset.change.map(|change| format::signed(change, 2)),
+            change: asset.change.map(|change| format::signed(change, decimals)),
             value: asset
                 .value
-                .map(|value| format::price(value, 2))
+                .map(|value| format::price(value, decimals))
                 .unwrap_or_else(|| "—".to_owned()),
             cost: asset.cost.map(|cost| format::price(cost, format::decimals(cost, None))),
-            pnl: asset.pnl.map(|pnl| format::signed(pnl, 2)),
+            pnl: asset.pnl.map(|pnl| format::signed(pnl, decimals)),
             bar: bar.clamp(0., 1.),
             series,
             stable: asset.stable,
@@ -115,6 +116,7 @@ pub fn panel(
     costed: bool,
     small_count: usize,
     small_value: f64,
+    currency: crate::currency::Currency,
     show_small: bool,
     scroll: &UniformListScrollHandle,
     palette: Palette,
@@ -131,12 +133,13 @@ pub fn panel(
         .border_color(palette.border)
         .text_size(px(10.))
         .text_color(palette.muted);
+    let value_label = t!("holdings.value", currency = currency.code());
     let labels = [
         t!("holdings.asset"),
         t!("holdings.amount"),
         t!("holdings.price"),
         "24h",
-        t!("holdings.value"),
+        value_label.as_str(),
     ];
     for (index, label) in labels.iter().enumerate() {
         let mut cell =
@@ -178,10 +181,18 @@ pub fn panel(
         .child(div().relative().flex_1().min_h_0().child(list).vertical_scrollbar(scroll));
     if small_count > 0 {
         let label = match (show_small, small_count == 1) {
-            (true, true) => t!("holdings.smallHideOne", count = small_count).to_owned(),
-            (true, false) => t!("holdings.smallHide", count = small_count).to_owned(),
-            (false, true) => t!("holdings.smallMoreOne", count = small_count).to_owned(),
-            (false, false) => t!("holdings.smallMore", count = small_count).to_owned(),
+            (true, true) => {
+                t!("holdings.smallHideOne", count = small_count)
+            }
+            (true, false) => {
+                t!("holdings.smallHide", count = small_count)
+            }
+            (false, true) => {
+                t!("holdings.smallMoreOne", count = small_count)
+            }
+            (false, false) => {
+                t!("holdings.smallMore", count = small_count)
+            }
         };
         panel = panel.child(
             div()
@@ -199,11 +210,10 @@ pub fn panel(
                 .hover(|style| style.text_color(palette.foreground))
                 .cursor_pointer()
                 .child(div().whitespace_nowrap().child(label))
-                .child(crate::ui::tabular(
-                    div()
-                        .whitespace_nowrap()
-                        .child(t!("holdings.smallTotal", value = format::price(small_value, 2))),
-                ))
+                .child(crate::ui::tabular(div().whitespace_nowrap().child(t!(
+                    "holdings.smallTotal",
+                    value = format::price(small_value, currency.decimals())
+                ))))
                 .on_click(move |_, _, cx| toggle_small(cx)),
         );
     }

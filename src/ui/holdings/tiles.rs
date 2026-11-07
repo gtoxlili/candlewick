@@ -24,31 +24,34 @@ pub(super) fn share(value: f64, total: Option<f64>) -> String {
 /// The tiles row, as the chart's day statistics.
 pub fn tiles(portfolio: &Portfolio, figures: &summary::Figures, palette: Palette) -> gpui_kit::Div {
     let total = portfolio.total;
+    let decimals = portfolio.valuation.currency.decimals();
     let unknown = "—".to_owned();
     let day_pnl = match portfolio.change {
         None => Figure { text: unknown.clone(), up: None },
         Some(change) => Figure {
-            text: format::signed(change, 2),
+            text: format::signed(change, decimals),
             up: Some(format::direction(change) != format::Direction::Down),
         },
     };
     let crypto = match total {
         None => Figure { text: unknown.clone(), up: None },
-        Some(_) => {
-            Figure { text: format::price(figures.risk, 2) + &share(figures.risk, total), up: None }
-        }
+        Some(_) => Figure {
+            text: format::price(figures.risk, decimals) + &share(figures.risk, total),
+            up: None,
+        },
     };
     let stablecoins = match total {
         None => Figure { text: unknown, up: None },
-        Some(_) => {
-            Figure { text: format::price(figures.cash, 2) + &share(figures.cash, total), up: None }
-        }
+        Some(_) => Figure {
+            text: format::price(figures.cash, decimals) + &share(figures.cash, total),
+            up: None,
+        },
     };
     let unrealized = match (total, figures.positions_pnl) {
         (None, _) => Figure { text: "—".to_owned(), up: None },
         (Some(_), None) => Figure { text: t!("holdings.noPositions").to_owned(), up: None },
         (Some(_), Some(pnl)) => Figure {
-            text: format::signed(pnl, 2),
+            text: format::signed(pnl, decimals),
             up: Some(format::direction(pnl) != format::Direction::Down),
         },
     };

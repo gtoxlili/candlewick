@@ -18,7 +18,7 @@ use crate::{
     i18n::{self, Locale},
     model::{ColorScheme, Instrument, Model, Quote, Session, SyncStatus},
     platform,
-    portfolio::{Portfolio, Totals},
+    portfolio::Totals,
     update, window,
 };
 
@@ -78,7 +78,7 @@ impl Row {
 /// account when there are several, the largest assets and positions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Holdings {
-    /// `Total USDT  12,345.67  +1.24%`; the amount is `—` until the first
+    /// `Total USD  12,345.67  +1.24%`; the amount is `—` until the first
     /// refresh.
     pub total: Row,
     /// `24h P&L  +152.30`, once there is a total.
@@ -349,12 +349,26 @@ pub fn view(app: &App) -> View {
 fn ticker(model: &Model) -> Option<Ticker> {
     let settings = &model.settings;
     if settings.holdings_in_bar && !model.accounts.is_empty() {
-        let totals = Totals::of(&model.accounts);
+        let valuation = model.exchange_rates.valuation(settings.currency);
+        let totals = Totals::of(&model.accounts)
+            .map(|t| Totals { total: t.total * valuation.rate, change: t.change * valuation.rate });
         return Some(Ticker {
             symbol: settings.show_symbol.then(|| t!("common.holdings.total").to_owned()),
             price: totals.map_or_else(
                 || "—".to_owned(),
-                |t| format::price(t.total, format::compact_decimals(t.total, Some(2))),
+                |t| {
+                    format!(
+                        "{}{}",
+                        valuation.currency.symbol(),
+                        format::price(
+                            t.total,
+                            format::compact_decimals(
+                                t.total,
+                                Some(valuation.currency.decimals() as u8)
+                            ),
+                        )
+                    )
+                },
             ),
             change: totals
                 .filter(|_| settings.show_change)
@@ -381,30 +395,35 @@ fn ticker(model: &Model) -> Option<Ticker> {
     })
 }
 
-/// A signed USDT amount in the color of its sign: `+152.30`.
-fn signed(amount: f64) -> (String, Direction) {
-    let text = format::price(amount.abs(), 2);
-    match format::direction(amount) {
-        Direction::Up => (format!("+{text}"), Direction::Up),
-        Direction::Down => (format!("\u{2212}{text}"), Direction::Down),
-        Direction::Flat => (text, Direction::Flat),
-    }
+/// A signed monetary amount in the color of its sign: `+152.30`.
+fn signed(amount: f64, decimals: usize) -> (String, Direction) {
+    let text = format::signed(amount, decimals);
+    let direction = if text.starts_with('+') {
+        Direction::Up
+    } else if text.starts_with('−') {
+        Direction::Down
+    } else {
+        Direction::Flat
+    };
+    (text, direction)
 }
 
 fn holdings(model: &Model) -> Option<Holdings> {
     if model.accounts.is_empty() {
         return None;
     }
-    let totals = Totals::of(&model.accounts);
-    let portfolio = Portfolio::of(&model.accounts);
+    let portfolio = model.portfolio();
+    let decimals = portfolio.valuation.currency.decimals();
+    let totals =
+        portfolio.total.zip(portfolio.change).map(|(total, change)| Totals { total, change });
     let total = Row::new(
         t!("common.holdings.total"),
-        " USDT",
-        totals.map_or_else(|| "—".to_owned(), |t| format::price(t.total, 2)),
+        format!(" {}", portfolio.valuation.currency.code()),
+        totals.map_or_else(|| "—".to_owned(), |t| format::price(t.total, decimals)),
     )
     .with_change(totals.and_then(Totals::change_pct));
     let day = totals.map(|t| Row {
-        value: signed(t.change),
+        value: signed(t.change, decimals),
         ..Row::new(t!("common.holdings.dayPnl"), "", String::new())
     });
     let accounts = if portfolio.accounts.len() > 1 {
@@ -419,7 +438,7 @@ fn holdings(model: &Model) -> Option<Holdings> {
                 Row::new(
                     account.exchange.name(),
                     "",
-                    account.total.map_or_else(|| "—".to_owned(), |t| format::price(t, 2)),
+                    account.total.map_or_else(|| "—".to_owned(), |t| format::price(t, decimals)),
                 )
                 .with_change(pct)
             })
@@ -435,7 +454,7 @@ fn holdings(model: &Model) -> Option<Holdings> {
             Row::new(
                 asset.asset.clone(),
                 format!("  {}", format::amount(asset.amount)),
-                format::price(asset.value.unwrap_or(0.0), 2),
+                format::price(asset.value.unwrap_or(0.0), decimals),
             )
             .with_change(asset.change_pct.filter(|_| !asset.stable))
         })
@@ -445,7 +464,7 @@ fn holdings(model: &Model) -> Option<Holdings> {
         assets.push(Row::new(
             t!("tray.otherAssets", count = priced.len() - MENU_ASSETS),
             "",
-            format::price(rest, 2),
+            format::price(rest, decimals),
         ));
     }
     let positions = portfolio
@@ -458,9 +477,11 @@ fn holdings(model: &Model) -> Option<Holdings> {
                 if p.long { t!("common.holdings.long") } else { t!("common.holdings.short") };
             let leverage =
                 p.leverage.map(|l| format!(" {}x", format::amount(l))).unwrap_or_default();
-            let pnl = position.pnl_usd.unwrap_or(p.pnl);
             Row {
-                value: signed(pnl),
+                value: position.pnl_value.map(|pnl| signed(pnl, decimals)).unwrap_or_else(|| {
+                    let (text, direction) = signed(p.pnl, 6);
+                    (format!("{text} {}", p.pnl_asset), direction)
+                }),
                 ..Row::new(p.symbol.clone(), format!("  {side}{leverage}"), String::new())
             }
         })
@@ -558,8 +579,10 @@ mod tests {
     // to zero is flat and unsigned.
     #[test]
     fn signed_amounts_carry_their_direction() {
-        assert_eq!(signed(152.3), ("+152.30".to_owned(), Direction::Up));
-        assert_eq!(signed(-0.5), ("\u{2212}0.50".to_owned(), Direction::Down));
-        assert_eq!(signed(-0.004), ("0.00".to_owned(), Direction::Flat));
+        assert_eq!(signed(152.3, 2), ("+152.30".to_owned(), Direction::Up));
+        assert_eq!(signed(-0.5, 2), ("\u{2212}0.50".to_owned(), Direction::Down));
+        assert_eq!(signed(-0.004, 2), ("0.00".to_owned(), Direction::Flat));
+        assert_eq!(signed(-0.4, 0), ("0".to_owned(), Direction::Flat));
+        assert_eq!(signed(1.4, 0), ("+1".to_owned(), Direction::Up));
     }
 }

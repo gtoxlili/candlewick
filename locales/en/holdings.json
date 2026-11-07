@@ -28,7 +28,7 @@
     "asset": "Asset",
     "amount": "Amount",
     "price": "Price",
-    "value": "Value (USDT)",
+    "value": "Value (%{currency})",
     "costPnl": "Cost · P&L",
     "smallTotal": "%{value} in all",
     "wallet": {
@@ -50,9 +50,9 @@
       "margin": "Margin",
       "other": "Contract"
     },
-    "smallMore": "%{count} more assets under 1 USDT",
-    "smallMoreOne": "%{count} more asset under 1 USDT",
-    "smallHide": "Hide %{count} assets under 1 USDT",
-    "smallHideOne": "Hide %{count} asset under 1 USDT"
+    "smallMore": "Show %{count} small assets",
+    "smallMoreOne": "Show %{count} small asset",
+    "smallHide": "Hide %{count} small assets",
+    "smallHideOne": "Hide %{count} small asset"
   }
 }

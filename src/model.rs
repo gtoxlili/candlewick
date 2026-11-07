@@ -162,6 +162,8 @@ const MAX_DECIMALS: u8 = 18;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// Display unit for portfolio values, independent of market quote units.
+    pub currency: crate::currency::Currency,
     /// The crypto exchange every pair comes from (one of
     /// [`ProviderId::EXCHANGES`]); the watchlist holds no other's.
     pub exchange: ProviderId,
@@ -183,6 +185,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            currency: crate::currency::Currency::default(),
             exchange: ProviderId::Binance,
             watchlist: vec![
                 Instrument::preset("BTC", true),
@@ -408,6 +411,7 @@ pub enum SyncStatus {
 
 pub struct Model {
     pub settings: Settings,
+    pub exchange_rates: crate::currency::ExchangeRates,
     /// By instrument id.
     pub quotes: HashMap<String, Quote>,
     pub feeds: Feeds,
@@ -422,6 +426,11 @@ pub struct Model {
 }
 
 impl Model {
+    pub fn portfolio(&self) -> portfolio::Portfolio {
+        portfolio::Portfolio::of(&self.accounts)
+            .converted(self.exchange_rates.valuation(self.settings.currency))
+    }
+
     /// The instrument `id` names: the watchlist's, or one from the user's
     /// Tonghuashun watchlist.
     pub fn instrument(&self, id: &str) -> Option<&Instrument> {
@@ -455,6 +464,9 @@ impl Shared {
         credentials: Credentials,
         credentials_path: PathBuf,
     ) -> (Self, watch::Receiver<FeedControl>) {
+        let exchange_rates = crate::currency::ExchangeRates::load(
+            &settings_path.with_file_name("exchange-rates.json"),
+        );
         let (control, rx) = watch::channel(FeedControl {
             symbols: settings.symbols(),
             credentials: credentials.clone(),
@@ -463,6 +475,7 @@ impl Shared {
         let shared = Self {
             model: Mutex::new(Model {
                 settings,
+                exchange_rates,
                 quotes: HashMap::new(),
                 feeds: Feeds::new(),
                 chart: None,

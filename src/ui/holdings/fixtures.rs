@@ -1,5 +1,5 @@
 //! A realistic portfolio for rendering checks: two exchanges, priced and
-//! unpriced assets, costs, dust under 1 USDT, and positions near and far
+//! unpriced assets, costs, dust under 1 USD, and positions near and far
 //! from liquidation.
 
 use std::collections::BTreeMap;

@@ -28,7 +28,7 @@
     "asset": "资产",
     "amount": "数量",
     "price": "价格",
-    "value": "价值 (USDT)",
+    "value": "价值 (%{currency})",
     "costPnl": "成本 · 盈亏",
     "smallTotal": "共 %{value}",
     "wallet": {
@@ -50,9 +50,9 @@
       "margin": "杠杆",
       "other": "合约"
     },
-    "smallMore": "还有 %{count} 个不足 1 USDT 的资产",
-    "smallMoreOne": "还有 %{count} 个不足 1 USDT 的资产",
-    "smallHide": "收起 %{count} 个不足 1 USDT 的资产",
-    "smallHideOne": "收起 %{count} 个不足 1 USDT 的资产"
+    "smallMore": "还有 %{count} 个小额资产",
+    "smallMoreOne": "还有 %{count} 个小额资产",
+    "smallHide": "收起 %{count} 个小额资产",
+    "smallHideOne": "收起 %{count} 个小额资产"
   }
 }

@@ -94,6 +94,8 @@
       "failed": "うまくいきませんでした。もう一度お試しください。"
     },
     "display": {
+      "currencyUnavailable": "通貨を切り替えられませんでした。もう一度お試しください。",
+      "currency": "資産の表示通貨",
       "title": "表示",
       "showSymbol": "メニューバーに名前を表示",
       "showSymbol_windows": "タスクバーに名前を表示",

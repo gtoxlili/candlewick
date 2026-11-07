@@ -4,6 +4,7 @@ use super::parts;
 use crate::{
     api,
     app::{App, Topic},
+    currency::Currency,
     model::{ColorScheme, Settings},
     ui::{self, theme::Palette},
 };
@@ -41,6 +42,24 @@ impl Render for DisplaySection {
         let settings = api::get_settings(&self.app);
         let p = Palette::current(&self.app, cx);
         let this = cx.entity().downgrade();
+
+        let currency = {
+            let this = this.clone();
+            parts::picker_row(
+                t!("settings.display.currency"),
+                ui::widgets::pill_tabs(
+                    "display-currency",
+                    Currency::ALL.map(|currency| gpui_kit::SharedString::from(currency.code())),
+                    settings.currency as usize,
+                    move |index, _, cx| {
+                        let currency = Currency::ALL[*index];
+                        let _ = this.update(cx, |this, cx| {
+                            this.set(|settings| settings.currency = currency, cx)
+                        });
+                    },
+                ),
+            )
+        };
 
         let symbol = {
             let this = this.clone();
@@ -84,8 +103,11 @@ impl Render for DisplaySection {
         };
 
         let divider = |row| div().border_t_1().border_color(p.border).child(row);
-        let mut group =
-            parts::group(&self.app, cx).child(symbol).child(divider(change)).child(divider(colors));
+        let mut group = parts::group(&self.app, cx)
+            .child(currency)
+            .child(divider(symbol))
+            .child(divider(change))
+            .child(divider(colors));
         if let Some(error) = &self.error {
             group = group
                 .child(div().px_3().pb_2().child(parts::problem("display-problem", error.clone())));

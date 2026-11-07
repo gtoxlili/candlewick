@@ -175,7 +175,7 @@ async fn portfolio(State(api): State<Api>) -> Json<Portfolio> {
             sleep(Duration::from_millis(200)).await;
         }
     }
-    Json(Portfolio::of(&shared.model().accounts))
+    Json(shared.model().portfolio())
 }
 
 #[derive(Serialize)]

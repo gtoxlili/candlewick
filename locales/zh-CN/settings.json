@@ -94,6 +94,8 @@
       "failed": "没有成功，请再试一次。"
     },
     "display": {
+      "currencyUnavailable": "暂时无法切换货币，请稍后再试。",
+      "currency": "资产计价货币",
       "title": "显示",
       "showSymbol": "菜单栏显示名称",
       "showSymbol_windows": "任务栏显示名称",

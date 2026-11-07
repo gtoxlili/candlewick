@@ -84,6 +84,12 @@ impl HoldingsView {
         observers.push(observe(&app, crate::app::Topic::Portfolio, cx, |view, cx| {
             let next = api::get_portfolio(&view.app);
             let moved = match (view.portfolio.total, next.total) {
+                _ if view.portfolio.valuation.currency != next.valuation.currency
+                    || view.portfolio.valuation.rate != next.valuation.rate =>
+                {
+                    view.flash = (view.flash.0 + 1, None);
+                    None
+                }
                 (Some(before), Some(now)) if before != now => Some(now < before),
                 _ => None,
             };
@@ -163,7 +169,12 @@ impl HoldingsView {
     fn recompute(&mut self) {
         let portfolio = &self.portfolio;
         let total = portfolio.total.unwrap_or(0.);
-        let listed = summary::listed(&portfolio.assets, self.sort, self.show_small);
+        let listed = summary::listed(
+            &portfolio.assets,
+            self.sort,
+            self.show_small,
+            portfolio.valuation.rate,
+        );
         let several = portfolio.accounts.len() > 1;
         let series: std::collections::HashMap<&str, summary::Series> =
             summary::series(&portfolio.assets)
@@ -180,7 +191,15 @@ impl HoldingsView {
         let mut rows = Vec::with_capacity(listed.shown.len());
         for asset in &listed.shown {
             let series = series.get(asset.asset.as_str()).copied().unwrap_or(summary::Series::Rest);
-            rows.push(assets::Row::new(asset, series, total, widest_move, self.sort, several));
+            rows.push(assets::Row::new(
+                asset,
+                series,
+                total,
+                widest_move,
+                self.sort,
+                several,
+                portfolio.valuation.currency.decimals(),
+            ));
         }
         self.derived = Derived {
             shares: summary::allocation(&portfolio.assets, total),
@@ -316,6 +335,7 @@ impl Render for HoldingsView {
                             derived.costed,
                             derived.small.count,
                             derived.small.value,
+                            self.portfolio.valuation.currency,
                             self.show_small,
                             &self.assets_scroll,
                             palette,

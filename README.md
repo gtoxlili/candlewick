@@ -30,7 +30,7 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed; t
 - Stocks: US (including pre-market, after-hours and overnight), Hong Kong and China A-shares from Longbridge, by code; China A-shares, indexes, Tonghuashun's sector boards and ETFs from Tonghuashun, by code or Chinese name
 - A chart that moves with every trade, with the order book and recent trades
 - Chart analysis: a hover card with each candle's figures, moving averages and Bollinger Bands, and trend lines, levels, Fibonacci retracements and measurements that stay with the instrument
-- With an exchange's API key, your total holdings and every account's positions
+- With an exchange's API key, your total holdings and every account's positions, valued in CNY, USD or JPY with daily exchange rates
 - Turn on AI access and Claude Code, Codex and OpenCode can read your quotes and holdings to think them through with you
 - English, 简体中文 or 日本語, following your system or picked in Settings
 - Red-up or green-up colors, launch at login, automatic updates

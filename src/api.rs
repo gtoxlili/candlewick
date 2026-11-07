@@ -49,6 +49,16 @@ pub fn get_settings(app: &App) -> Settings {
 pub fn save_settings(app: &App, settings: Settings) -> CmdResult<Settings> {
     let shared = app.shared();
     let settings = settings.validated().map_err(CommandError::Invalid)?;
+    let (currency_changed, currency_available) = {
+        let model = shared.model();
+        (
+            model.settings.currency != settings.currency,
+            model.exchange_rates.valuation(settings.currency).currency == settings.currency,
+        )
+    };
+    if currency_changed && !currency_available && !shared.credentials().exchanges.is_empty() {
+        return Err(CommandError::Invalid(t!("settings.display.currencyUnavailable").to_owned()));
+    }
     model::save(&shared.settings_path, &settings)?;
     let before = {
         let mut model = shared.model();
@@ -74,6 +84,9 @@ pub fn save_settings(app: &App, settings: Settings) -> CmdResult<Settings> {
     });
     bar::request_render(app);
     app.notify(Topic::Settings);
+    if settings.currency != before.currency {
+        app.notify(Topic::Portfolio);
+    }
     window::sync_chart(app);
     Ok(settings)
 }
@@ -348,7 +361,7 @@ pub async fn set_exchange_key(
 
 pub fn get_portfolio(app: &App) -> Portfolio {
     let shared = app.shared();
-    Portfolio::of(&shared.model().accounts)
+    shared.model().portfolio()
 }
 
 pub fn open_holdings(app: &App) -> CmdResult<()> {

@@ -28,7 +28,7 @@
     "asset": "資産",
     "amount": "数量",
     "price": "価格",
-    "value": "評価額 (USDT)",
+    "value": "評価額 (%{currency})",
     "costPnl": "取得単価 · 損益",
     "smallTotal": "計 %{value}",
     "wallet": {
@@ -50,9 +50,9 @@
       "margin": "信用",
       "other": "デリバティブ"
     },
-    "smallMore": "1 USDT 未満の資産があと %{count} 件",
-    "smallMoreOne": "1 USDT 未満の資産があと %{count} 件",
-    "smallHide": "1 USDT 未満の資産 %{count} 件を隠す",
-    "smallHideOne": "1 USDT 未満の資産 %{count} 件を隠す"
+    "smallMore": "少額の資産 %{count} 件を表示",
+    "smallMoreOne": "少額の資産 %{count} 件を表示",
+    "smallHide": "少額の資産 %{count} 件を隠す",
+    "smallHideOne": "少額の資産 %{count} 件を隠す"
   }
 }

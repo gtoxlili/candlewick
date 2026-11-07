@@ -94,6 +94,8 @@
       "failed": "That didn't work. Try again."
     },
     "display": {
+      "currencyUnavailable": "Couldn't switch currency. Please try again.",
+      "currency": "Portfolio currency",
       "title": "Display",
       "showSymbol": "Show name in menu bar",
       "showSymbol_windows": "Show name in taskbar",

@@ -1,5 +1,5 @@
 //! Holdings on the crypto exchanges the user gave an API key: what
-//! each wallet holds and the open derivatives positions, valued in USDT at
+//! each wallet holds and the open derivatives positions, valued in USD at
 //! the exchange's own prices. `market::crypto::account` fetches them; this is
 //! what they are worth, as the dropdown's total and the holdings window show
 //! it. [`value`] prices one exchange's balances; [`Portfolio::of`] merges
@@ -12,6 +12,7 @@ use std::{
 
 use serde::Serialize;
 
+use crate::currency::Valuation;
 use crate::market::ProviderId;
 
 /// Where a balance sits.
@@ -74,7 +75,7 @@ pub struct Position {
     /// Unrealized, in `pnl_asset`.
     pub pnl: f64,
     pub pnl_asset: String,
-    /// Exposure in USD at the mark price, negative when short.
+    /// Dollar exposure at the mark price, negative when short.
     pub exposure: f64,
     /// The contract's own last price and the one 24 hours before, which
     /// tell what its 24h move made of the position.
@@ -100,7 +101,7 @@ pub enum PositionKind {
     Other,
 }
 
-/// A price in USDT: now, and 24 hours before.
+/// A dollar valuation price: now, and 24 hours before.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Price {
     pub last: f64,
@@ -111,9 +112,9 @@ pub struct Price {
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Holdings {
-    /// In USDT.
+    /// In USD.
     pub total: f64,
-    /// What the 24h price moves made of today's holdings, in USDT.
+    /// What the 24h price moves made of today's holdings, in USD.
     pub change: f64,
     pub wallets: Vec<WalletValue>,
     /// Most valuable first; those without a price last.
@@ -134,10 +135,10 @@ pub struct WalletValue {
 pub struct Asset {
     pub asset: String,
     pub amount: f64,
-    /// In USDT; none without a USDT pair or the exchange's own value.
+    /// In the valuation currency; none without a pair or exchange value.
     pub price: Option<f64>,
     pub value: Option<f64>,
-    /// What the 24h price move made of this amount, in USDT.
+    /// What the 24h price move made of this amount, in the valuation currency.
     pub change: Option<f64>,
     /// The 24h price change, in percent.
     pub change_pct: Option<f64>,
@@ -164,9 +165,11 @@ pub struct PositionValue {
     pub exchange: ProviderId,
     #[serde(flatten)]
     pub position: Position,
-    /// The unrealized PnL in USDT, when `pnl_asset` has a price.
-    pub pnl_usd: Option<f64>,
-    /// What the contract's 24h move made of the position, in USDT.
+    /// Unrealized PnL in the valuation currency, when `pnl_asset` has a price.
+    pub pnl_value: Option<f64>,
+    /// Signed exposure in the portfolio's valuation currency.
+    pub exposure_value: f64,
+    /// What the contract's 24h move made of the position, in the valuation currency.
     pub change: Option<f64>,
 }
 
@@ -192,7 +195,7 @@ pub fn is_stable(asset: &str) -> bool {
     )
 }
 
-/// Values `balances` and `positions` at `prices` (by asset; USDT is worth 1).
+/// Values `balances` and `positions` at `prices` (by asset; USD and USDT are valued 1:1).
 pub fn value(
     exchange: ProviderId,
     balances: &[Balance],
@@ -200,7 +203,7 @@ pub fn value(
     prices: &HashMap<String, Price>,
 ) -> Holdings {
     let price_of = |asset: &str| match asset {
-        "USDT" => Some(Price { last: 1.0, open: 1.0 }),
+        "USD" | "USDT" => Some(Price { last: 1.0, open: 1.0 }),
         _ => prices.get(asset).copied(),
     };
 
@@ -261,7 +264,8 @@ pub fn value(
             PositionValue {
                 exchange,
                 position: position.clone(),
-                pnl_usd: price_of(&position.pnl_asset).map(|p| position.pnl * p.last),
+                pnl_value: price_of(&position.pnl_asset).map(|p| position.pnl * p.last),
+                exposure_value: position.exposure,
                 change: moved,
             }
         })
@@ -336,8 +340,9 @@ pub struct AccountView {
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Portfolio {
+    pub valuation: Valuation,
     pub accounts: Vec<AccountView>,
-    /// Over the accounts refreshed at least once, in USDT; none before.
+    /// Over accounts with a valuation, in `valuation.currency`; none before.
     pub total: Option<f64>,
     pub change: Option<f64>,
     /// Merged by asset across the accounts, most valuable first.
@@ -353,10 +358,11 @@ impl Portfolio {
         let mut positions: Vec<PositionValue> =
             valued.clone().flat_map(|h| h.positions.iter().cloned()).collect();
         positions.sort_by(|a, b| {
-            let size = |p: &PositionValue| p.pnl_usd.unwrap_or(p.position.pnl).abs();
+            let size = |p: &PositionValue| p.pnl_value.unwrap_or(0.0).abs();
             size(b).total_cmp(&size(a))
         });
         Self {
+            valuation: Valuation::default(),
             accounts: accounts
                 .values()
                 .map(|account| AccountView {
@@ -377,6 +383,39 @@ impl Portfolio {
             assets: merge(valued.flat_map(|h| h.assets.iter())),
             positions,
         }
+    }
+
+    /// Converts only monetary valuation fields. Token amounts, contract
+    /// prices and their units, and percentage changes retain their meaning.
+    pub fn converted(mut self, valuation: Valuation) -> Self {
+        if valuation.currency == crate::currency::Currency::Usd {
+            self.valuation = valuation;
+            return self;
+        }
+        let convert = |v: Option<f64>| v.map(|v| v * valuation.rate);
+        self.total = convert(self.total);
+        self.change = convert(self.change);
+        for account in &mut self.accounts {
+            account.total = convert(account.total);
+            account.change = convert(account.change);
+            for wallet in &mut account.wallets {
+                wallet.value *= valuation.rate;
+            }
+        }
+        for asset in &mut self.assets {
+            asset.price = convert(asset.price);
+            asset.value = convert(asset.value);
+            asset.change = convert(asset.change);
+            asset.cost = convert(asset.cost);
+            asset.pnl = convert(asset.pnl);
+        }
+        for position in &mut self.positions {
+            position.pnl_value = convert(position.pnl_value);
+            position.exposure_value *= valuation.rate;
+            position.change = convert(position.change);
+        }
+        self.valuation = valuation;
+        self
     }
 }
 
@@ -421,7 +460,7 @@ fn add(a: Option<f64>, b: Option<f64>) -> Option<f64> {
     }
 }
 
-/// The sum over the accounts refreshed at least once, in USDT.
+/// The sum over the accounts refreshed at least once, in USD.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Totals {
     pub total: f64,
@@ -511,7 +550,7 @@ mod tests {
         assert_eq!(holdings.change, -40.0);
         assert_eq!(holdings.positions[0].change, Some(-40.0));
         assert_eq!(holdings.total, 1000.0);
-        assert_eq!(holdings.positions[0].pnl_usd, Some(-20.0));
+        assert_eq!(holdings.positions[0].pnl_value, Some(-20.0));
     }
 
     fn account(exchange: ProviderId, balances: &[Balance]) -> Account {
@@ -558,5 +597,84 @@ mod tests {
         let pct = Totals::of(&accounts).and_then(Totals::change_pct).unwrap();
         assert!((pct - 30.0 / 130.0 * 100.0).abs() < 1e-9);
         assert_eq!(Portfolio::of(&BTreeMap::new()).total, None);
+    }
+
+    // contract: the app values USDT and USD 1:1. Display conversion scales
+    // monetary values while keeping contract prices and quantities native.
+    #[test]
+    fn portfolio_values_have_one_currency_and_keep_native_contract_units() {
+        let balances = [
+            Balance::new(Wallet::Spot, "USDT", 100.),
+            Balance::new(Wallet::Spot, "BTC", 1.),
+            Balance {
+                usd: Some(10.),
+                cost: Some(5.),
+                pnl: Some(3.),
+                ..Balance::new(Wallet::Spot, "EUR", 2.)
+            },
+        ];
+        let position = Position {
+            symbol: "BTCUSD_PERP".into(),
+            kind: PositionKind::CoinPerpetual,
+            long: true,
+            size: 1.,
+            size_unit: Some("BTC".into()),
+            entry: 80.,
+            mark: 100.,
+            liquidation: Some(50.),
+            leverage: Some(5.),
+            isolated: false,
+            pnl: 0.1,
+            pnl_asset: "BTC".into(),
+            exposure: 50.,
+            day: Some(Price { last: 100., open: 80. }),
+        };
+        let holdings =
+            value(ProviderId::Binance, &balances, std::slice::from_ref(&position), &prices());
+        let mut account = Account::new(ProviderId::Binance);
+        account.holdings = Some(holdings);
+        let portfolio = Portfolio::of(&[(ProviderId::Binance, account)].into());
+        assert_eq!(portfolio.total, Some(210.));
+        assert_eq!(portfolio.valuation.currency, crate::currency::Currency::Usd);
+        let valuation = Valuation {
+            currency: crate::currency::Currency::Cny,
+            rate: 7.,
+            date: Some("2026-11-06".into()),
+            error: None,
+        };
+        let cny = portfolio.clone().converted(valuation.clone());
+        // USDT 100 + BTC 100 + EUR's USD 10 = USD 210.
+        assert_eq!(cny.total, Some(1470.));
+        assert_eq!(cny.change, Some(210.)); // BTC 20 + USD exposure 50 * 20%.
+        assert_eq!(cny.accounts[0].wallets[0].value, 1470.);
+        let eur = cny.assets.iter().find(|a| a.asset == "EUR").unwrap();
+        assert_eq!(
+            (eur.amount, eur.price, eur.value, eur.cost, eur.pnl),
+            (2., Some(35.), Some(70.), Some(35.), Some(21.))
+        );
+        let btc = cny.assets.iter().find(|a| a.asset == "BTC").unwrap();
+        assert_eq!((btc.amount, btc.price, btc.change_pct), (1., Some(700.), Some(25.)));
+        assert_eq!(cny.positions[0].position, position);
+        assert_eq!(cny.positions[0].pnl_value, Some(70.));
+        assert_eq!(cny.positions[0].exposure_value, 350.);
+        assert_eq!(cny.positions[0].change, Some(70.));
+        let json = serde_json::to_value(&cny).unwrap();
+        assert_eq!(json["valuation"]["currency"], "CNY");
+        assert_eq!(json["positions"][0]["pnlValue"], 70.);
+
+        let jpy = portfolio.clone().converted(Valuation {
+            currency: crate::currency::Currency::Jpy,
+            rate: 150.5,
+            ..valuation.clone()
+        });
+        assert_eq!(jpy.total, Some(31_605.));
+        assert_eq!(jpy.positions[0].pnl_value, Some(1_505.));
+        assert_eq!(jpy.positions[0].exposure_value, 7_525.);
+        assert_eq!(jpy.positions[0].position, position);
+
+        let available = portfolio.clone().converted(
+            crate::currency::ExchangeRates::default().valuation(crate::currency::Currency::Jpy),
+        );
+        assert_eq!(available, portfolio);
     }
 }

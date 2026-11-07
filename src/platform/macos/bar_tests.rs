@@ -137,7 +137,7 @@ fn verify_holdings_menu(app: &App) {
         let menu = ui.menu.as_ref().unwrap();
         let total = titles(menu)[0].clone();
         let label = t!("common.holdings.total");
-        assert!(total.starts_with(&format!("{label} USDT\t84,500.00\t")), "{total}");
+        assert!(total.starts_with(&format!("{label} USD\t84,500.00\t")), "{total}");
         let submenu = menu.itemAtIndex(0).unwrap().submenu().expect("a holdings submenu");
         let rows = titles(&submenu);
         assert_eq!(rows[0], t!("tray.viewHoldings"));
@@ -176,7 +176,7 @@ fn verify_holdings_menu(app: &App) {
         model.settings.show_change = false;
     }
     bar::request_render(app);
-    assert_eq!(button.title().to_string(), format!("{} 85,500", t!("common.holdings.total")));
+    assert_eq!(button.title().to_string(), format!("{} $85,500", t!("common.holdings.total")));
     shared.model().settings.show_change = true;
     bar::request_render(app);
     assert!(button.title().is_empty());
@@ -188,7 +188,7 @@ fn verify_holdings_menu(app: &App) {
     UI.with_borrow(|ui| {
         let ui = ui.as_ref().unwrap();
         let menu = ui.menu.as_ref().unwrap();
-        assert!(titles(menu)[0].starts_with("総資産 USDT\t"), "{:?}", titles(menu));
+        assert!(titles(menu)[0].starts_with("総資産 USD\t"), "{:?}", titles(menu));
         assert_eq!(titles(menu).last().unwrap(), "Candlewick を終了");
         let rows = titles(ui.submenu.as_ref().unwrap());
         assert_eq!(rows[0], "保有資産を表示…");

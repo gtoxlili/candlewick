@@ -25,6 +25,7 @@ pub fn hero(
 ) -> gpui_kit::Div {
     let (total, change) = (portfolio.total, portfolio.change);
     let pct = day_pct(total, change);
+    let decimals = portfolio.valuation.currency.decimals();
     let number = match total {
         None => div().w(px(224.)).h(px(34.)).rounded(px(8.)).bg(palette.fill_strong),
         Some(total) => {
@@ -32,7 +33,7 @@ pub fn hero(
                 .text_size(px(34.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .whitespace_nowrap()
-                .child(format::price(total, 2));
+                .child(format::price(total, decimals));
             let number = match flash.1 {
                 // A new total replays the flash: the number starts in the
                 // tick's color and fades back to the text color.
@@ -56,19 +57,19 @@ pub fn hero(
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(palette.muted)
                     .whitespace_nowrap()
-                    .child("USDT"),
+                    .child(portfolio.valuation.currency.code()),
             )
         }
     };
     let badge = match (total, change, pct) {
         (Some(_), Some(change), Some(pct)) => Some(widgets::change_badge(
-            format!("{} · {} 24h", format::change_signed(pct), format::signed(change, 2)),
+            format!("{} · {} 24h", format::change_signed(pct), format::signed(change, decimals)),
             change,
             palette,
         )),
         _ => None,
     };
-    let line = insight_line(insight, total.is_none(), palette);
+    let line = insight_line(insight, total.is_none(), decimals, palette);
     div()
         .px(px(20.))
         .pt(px(8.))
@@ -83,6 +84,7 @@ pub fn hero(
 fn insight_line(
     insight: &Option<Vec<super::summary::InsightPart>>,
     reading: bool,
+    decimals: usize,
     palette: Palette,
 ) -> gpui_kit::Div {
     use super::summary::InsightPart;
@@ -91,10 +93,10 @@ fn insight_line(
         .flatten()
         .map(|part| match part {
             InsightPart::Mover { asset, change } => {
-                format!("{asset} {}", format::signed(*change, 2))
+                format!("{asset} {}", format::signed(*change, decimals))
             }
             InsightPart::Positions { change } => {
-                t!("holdings.positionsMove", value = format::signed(*change, 2))
+                t!("holdings.positionsMove", value = format::signed(*change, decimals))
             }
             InsightPart::StableShare { pct } => t!("holdings.stableShare", pct = pct),
         })

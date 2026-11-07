@@ -16,6 +16,7 @@ mod app;
 mod bar;
 mod calendar;
 mod credentials;
+mod currency;
 mod format;
 mod http;
 mod market;
@@ -110,6 +111,7 @@ pub fn run() {
             handle.spawn(quotes);
         }
         market::watch_accounts(&handle, &control);
+        handle.spawn(currency::watch(handle.clone(), control.clone()));
         handle.spawn(market::ths::sync_watchlist(handle.clone(), control.clone()));
         update::start(&handle);
 

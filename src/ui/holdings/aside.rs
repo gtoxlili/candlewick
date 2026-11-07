@@ -77,8 +77,15 @@ pub fn aside(
         },
     );
     let content = match tab {
-        super::Tab::Accounts => accounts(&portfolio.accounts, palette),
-        super::Tab::Positions => positions(&portfolio.positions, several, palette),
+        super::Tab::Accounts => {
+            accounts(&portfolio.accounts, portfolio.valuation.currency.decimals(), palette)
+        }
+        super::Tab::Positions => positions(
+            &portfolio.positions,
+            several,
+            portfolio.valuation.currency.decimals(),
+            palette,
+        ),
     };
     div()
         .w(px(280.))
@@ -93,7 +100,7 @@ pub fn aside(
 }
 
 /// Each exchange: its total, what the day did to it, and where it sits.
-fn accounts(accounts: &[AccountView], palette: Palette) -> AnyElement {
+fn accounts(accounts: &[AccountView], decimals: usize, palette: Palette) -> AnyElement {
     div()
         .id("accounts")
         .min_h_0()
@@ -119,7 +126,8 @@ fn accounts(accounts: &[AccountView], palette: Palette) -> AnyElement {
                 }
             };
             let total = match account.total {
-                Some(total) => format::price(total, 2),
+                Some(total) => format::price(total, decimals),
+                None if account.updated.is_some() => "—".to_owned(),
                 None => t!("common.holdings.reading").to_owned(),
             };
             let updated = match account.updated {
@@ -164,7 +172,7 @@ fn accounts(accounts: &[AccountView], palette: Palette) -> AnyElement {
                                     format!(
                                         "{} · {}",
                                         format::change_signed(pct.unwrap()),
-                                        format::signed(account.change.unwrap(), 2),
+                                        format::signed(account.change.unwrap(), decimals),
                                     ),
                                 ),
                             )
@@ -205,7 +213,9 @@ fn accounts(accounts: &[AccountView], palette: Palette) -> AnyElement {
                                         ),
                                 )
                                 .child(
-                                    div().whitespace_nowrap().child(format::price(wallet.value, 2)),
+                                    div()
+                                        .whitespace_nowrap()
+                                        .child(format::price(wallet.value, decimals)),
                                 ),
                         )
                     }),
@@ -230,7 +240,12 @@ fn accounts(accounts: &[AccountView], palette: Palette) -> AnyElement {
 }
 
 /// Open derivatives positions, the largest PnL first: a card each.
-fn positions(positions: &[PositionValue], several: bool, palette: Palette) -> AnyElement {
+fn positions(
+    positions: &[PositionValue],
+    several: bool,
+    money_decimals: usize,
+    palette: Palette,
+) -> AnyElement {
     if positions.is_empty() {
         return div()
             .id("positions-empty")
@@ -252,8 +267,7 @@ fn positions(positions: &[PositionValue], several: bool, palette: Palette) -> An
         .children(positions.iter().map(|held| {
             let position = &held.position;
             let decimals = format::decimals(position.mark, None);
-            let settled = position.pnl_asset == "USDT" || position.pnl_asset == "USDC";
-            let pnl = held.pnl_usd.or_else(|| settled.then_some(position.pnl));
+            let pnl = held.pnl_value;
             let roe = summary::return_on_margin(held);
             let distance = summary::liquidation_distance(held);
             let tone = |value: f64| {
@@ -264,7 +278,7 @@ fn positions(positions: &[PositionValue], several: bool, palette: Palette) -> An
                 }
             };
             let pnl_text = match pnl {
-                Some(pnl) => format::signed(pnl, 2),
+                Some(pnl) => format::signed(pnl, money_decimals),
                 None => format!("{} {}", format::signed(position.pnl, 6), position.pnl_asset),
             };
             let pnl_color = pnl.map_or(palette.foreground, tone);

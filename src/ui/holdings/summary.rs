@@ -4,8 +4,8 @@
 
 use crate::portfolio::{Asset, Portfolio, PositionValue};
 
-/// Assets worth less than this (USDT) are "small": folded away by default.
-pub const SMALL: f64 = 1.0;
+/// Assets below this USD value are folded away, independent of display currency.
+const SMALL: f64 = 1.0;
 
 /// The largest holdings get a series color each; the rest fold together,
 /// cash last.
@@ -131,9 +131,9 @@ pub struct Figures {
     pub risk: f64,
     /// Value in stablecoins.
     pub cash: f64,
-    /// Unrealized PnL over the open positions, in USDT; none without any.
+    /// Valued unrealized PnL over open positions; none without any positions.
     pub positions_pnl: Option<f64>,
-    /// What the 24h moves made of the positions, in USDT.
+    /// What the 24h moves made of the positions, in the valuation currency.
     pub positions_change: f64,
 }
 
@@ -151,7 +151,7 @@ pub fn figures(portfolio: &Portfolio) -> Figures {
         }
     }
     let positions_pnl = (!portfolio.positions.is_empty())
-        .then(|| portfolio.positions.iter().map(position_pnl).sum());
+        .then(|| portfolio.positions.iter().filter_map(|position| position.pnl_value).sum());
     let positions_change =
         portfolio.positions.iter().map(|position| position.change.unwrap_or(0.0)).sum();
     Figures { risk, cash, positions_pnl, positions_change }
@@ -160,9 +160,9 @@ pub fn figures(portfolio: &Portfolio) -> Figures {
 /// One part of the line under the total; the window words and joins them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InsightPart {
-    /// An asset and its move today, in USDT.
+    /// An asset and its move today, in the valuation currency.
     Mover { asset: String, change: f64 },
-    /// What the 24h moves made of the open positions, in USDT.
+    /// What the 24h moves made of the open positions, in the valuation currency.
     Positions { change: f64 },
     /// The stablecoins' share of the total, in whole percent.
     StableShare { pct: u32 },
@@ -213,14 +213,6 @@ pub fn insight(portfolio: &Portfolio) -> Option<Vec<InsightPart>> {
     Some(parts)
 }
 
-/// Unrealized PnL in USDT, as the position reports it or as its own currency
-/// when that is USDT.
-fn position_pnl(position: &PositionValue) -> f64 {
-    position.pnl_usd.unwrap_or_else(|| {
-        if position.position.pnl_asset == "USDT" { position.position.pnl } else { 0.0 }
-    })
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sort {
     Value,
@@ -235,11 +227,11 @@ pub struct Listed<'a> {
     pub small: Vec<&'a Asset>,
 }
 
-pub fn listed<'a>(assets: &'a [Asset], sort: Sort, show_small: bool) -> Listed<'a> {
+pub fn listed(assets: &[Asset], sort: Sort, show_small: bool, rate: f64) -> Listed<'_> {
     let mut small = Vec::new();
     let mut shown = Vec::with_capacity(assets.len());
     for asset in assets {
-        let is_small = asset.value.unwrap_or(0.0) < SMALL;
+        let is_small = asset.value.unwrap_or(0.) < SMALL * rate;
         if is_small {
             small.push(asset);
         }
@@ -267,14 +259,12 @@ pub fn liquidation_distance(position: &PositionValue) -> Option<f64> {
 /// Return on the margin behind a position, in percent, when the leverage is
 /// known.
 pub fn return_on_margin(position: &PositionValue) -> Option<f64> {
-    let pnl = position
-        .pnl_usd
-        .or_else(|| (position.position.pnl_asset == "USDT").then_some(position.position.pnl))?;
+    let pnl = position.pnl_value?;
     let leverage = position.position.leverage?;
     if leverage <= 0.0 || leverage.is_nan() {
         return None;
     }
-    let margin = position.position.exposure.abs() / leverage;
+    let margin = position.exposure_value.abs() / leverage;
     (margin > 0.0).then(|| pnl / margin * 100.0)
 }
 
@@ -306,7 +296,7 @@ mod tests {
         }
     }
 
-    fn position(symbol: &str, pnl: f64, pnl_asset: &str, pnl_usd: Option<f64>) -> PositionValue {
+    fn position(symbol: &str, pnl: f64, pnl_asset: &str, pnl_value: Option<f64>) -> PositionValue {
         PositionValue {
             exchange: ProviderId::Binance,
             position: Position {
@@ -325,7 +315,8 @@ mod tests {
                 exposure: 0.0,
                 day: None,
             },
-            pnl_usd,
+            pnl_value,
+            exposure_value: 0.0,
             change: None,
         }
     }
@@ -339,6 +330,7 @@ mod tests {
         liquidation: Option<f64>,
     ) -> PositionValue {
         value.position.exposure = exposure;
+        value.exposure_value = exposure;
         value.position.leverage = leverage;
         value.position.mark = mark;
         value.position.liquidation = liquidation;
@@ -372,7 +364,7 @@ mod tests {
                 Some(50000.0),
             ),
             traded(
-                position("ETHUSDT", -200.0, "USDT", None),
+                position("ETHUSDT", -200.0, "USDT", Some(-200.0)),
                 -10000.0,
                 Some(5.0),
                 Some(-80.0),
@@ -392,6 +384,7 @@ mod tests {
 
     fn portfolio() -> Portfolio {
         Portfolio {
+            valuation: Default::default(),
             accounts: Vec::new(),
             total: Some(108500.5),
             change: Some(-500.25),
@@ -472,7 +465,7 @@ mod tests {
         let sums = figures(&portfolio());
         assert_eq!(sums.risk, 88500.5);
         assert_eq!(sums.cash, 20000.0);
-        assert_eq!(sums.positions_pnl, Some(300.0));
+        assert_eq!(sums.positions_pnl, Some(300.));
         assert_eq!(sums.positions_change, 40.5);
         let empty = Portfolio { positions: Vec::new(), ..portfolio() };
         assert_eq!(figures(&empty).positions_pnl, None);
@@ -497,7 +490,7 @@ mod tests {
     #[test]
     fn listed_folds_small_assets_away() {
         let assets = assets();
-        let by_value = listed(&assets, Sort::Value, false);
+        let by_value = listed(&assets, Sort::Value, false, 1.);
         assert_eq!(
             by_value.shown.iter().map(|asset| asset.asset.as_str()).collect::<Vec<_>>(),
             ["BTC", "ETH", "USDT", "SOL", "USDC", "DOGE", "LINK", "ADA"]
@@ -506,13 +499,26 @@ mod tests {
             by_value.small.iter().map(|asset| asset.asset.as_str()).collect::<Vec<_>>(),
             ["DUST", "NOPRICE"]
         );
-        let all = listed(&assets, Sort::Value, true);
+        let all = listed(&assets, Sort::Value, true, 1.);
         assert_eq!(all.shown.len(), 10);
-        let by_change = listed(&assets, Sort::Change, false);
+        let by_change = listed(&assets, Sort::Change, false, 1.);
         assert_eq!(
             by_change.shown.iter().map(|asset| asset.asset.as_str()).collect::<Vec<_>>(),
             ["BTC", "ETH", "ADA", "SOL", "DOGE", "LINK", "USDT", "USDC"]
         );
+        // contract: changing the display currency does not change which
+        // assets are folded away.
+        for (currency, rate) in
+            [(crate::currency::Currency::Cny, 7.), (crate::currency::Currency::Jpy, 150.5)]
+        {
+            let converted = Portfolio { assets: assets.clone(), ..Default::default() }
+                .converted(crate::currency::Valuation { currency, rate, ..Default::default() });
+            let listed = listed(&converted.assets, Sort::Value, false, rate);
+            assert_eq!(
+                listed.shown.iter().map(|asset| &asset.asset).collect::<Vec<_>>(),
+                by_value.shown.iter().map(|asset| &asset.asset).collect::<Vec<_>>(),
+            );
+        }
     }
 
     #[test]
@@ -524,5 +530,14 @@ mod tests {
         assert_eq!(return_on_margin(&positions[0]), Some(12.5));
         assert_eq!(return_on_margin(&positions[1]), Some(-10.0));
         assert_eq!(return_on_margin(&positions[2]), None);
+        let converted =
+            Portfolio { positions, ..Default::default() }.converted(crate::currency::Valuation {
+                currency: crate::currency::Currency::Cny,
+                rate: 7.,
+                ..Default::default()
+            });
+        assert_eq!(return_on_margin(&converted.positions[0]), Some(12.5));
+        assert_eq!(return_on_margin(&converted.positions[1]), Some(-10.));
+        assert_eq!(liquidation_distance(&converted.positions[0]), Some(1. / 6.));
     }
 }
