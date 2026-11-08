@@ -338,14 +338,13 @@ async fn search(query: &str) -> Search {
             || ["gold", "au9999", "au99.99", GOLD]
                 .iter()
                 .any(|gold| query.eq_ignore_ascii_case(gold)))
+        && let Ok(gold) = suggestions("AU9999").await
     {
-        if let Ok(gold) = suggestions("AU9999").await {
-            matches.extend(gold.into_iter().filter_map(|found| {
-                found.supported().and_then(|symbol| {
-                    matches!(symbol, Symbol::Gold).then_some((symbol, found.name))
-                })
-            }));
-        }
+        matches.extend(gold.into_iter().filter_map(|found| {
+            found
+                .supported()
+                .and_then(|symbol| matches!(symbol, Symbol::Gold).then_some((symbol, found.name)))
+        }));
     }
     // Discovery consumes source metadata only. Price availability and NAV
     // semantics are checked by the quote worker, never on the global search path.
