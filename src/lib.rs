@@ -19,6 +19,7 @@ mod credentials;
 mod currency;
 mod format;
 mod http;
+mod manual;
 mod market;
 mod model;
 mod net;

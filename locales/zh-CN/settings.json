@@ -111,7 +111,7 @@
       "loginItem_windows": "开机时启动",
       "autoUpdate": "自动更新",
       "agentAccess": "AI 助手接入",
-      "agentsCanRead": "%{agents} 可以读取行情和持仓",
+      "agentsCanRead": "%{agents} 可以读取行情并维护登记持仓",
       "noAgents": "没有找到 Claude Code、Codex 或 OpenCode",
       "english": "English",
       "chinese": "简体中文",

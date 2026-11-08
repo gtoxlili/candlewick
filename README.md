@@ -30,8 +30,8 @@ Crypto comes from Binance, Bybit or OKX public market data, no account needed; t
 - Stocks: US (including pre-market, after-hours and overnight), Hong Kong and China A-shares from Longbridge, by code; China A-shares, indexes, Tonghuashun's sector boards and ETFs from Tonghuashun, by code or Chinese name
 - A chart that moves with every trade, with the order book and recent trades
 - Chart analysis: a hover card with each candle's figures, moving averages and Bollinger Bands, and trend lines, levels, Fibonacci retracements and measurements that stay with the instrument
-- With an exchange's API key, your total holdings and every account's positions, valued in CNY, USD or JPY with daily exchange rates
-- Turn on AI access and Claude Code, Codex and OpenCode can read your quotes and holdings to think them through with you
+- Sync exchange holdings with an API key, or register quantities and costs of stocks, ETFs, funds and gold held elsewhere; market prices and published NAVs update the combined portfolio in CNY, USD or JPY
+- Turn on AI access and Claude Code, Codex and OpenCode can read your quotes and holdings and maintain local registered holdings
 - English, 简体中文 or 日本語, following your system or picked in Settings
 - Red-up or green-up colors, launch at login, automatic updates
 
@@ -89,7 +89,7 @@ The first build downloads thsdk's runtime (for Tonghuashun sign-in) into `thsdk/
 - `src/platform/`: the macOS menu bar and the Windows taskbar, and the rest that differs between the two systems
 - `src/market/`: prices and holdings, one implementation per source. How to add one: [docs/market-data-providers.md](docs/market-data-providers.md)
 - `src/portfolio.rs`: what holdings are worth
-- `src/agent/`: AI access, a local read-only API and its skill; see [docs/agent-access.md](docs/agent-access.md)
+- `src/agent/`: AI access, a local market/holdings API and its skill; see [docs/agent-access.md](docs/agent-access.md)
 - `locales/`: every word in English, Chinese and Japanese, one file per surface; see [docs/i18n.md](docs/i18n.md)
 
 Built with Rust and GPUI, through [gpui-fast](https://github.com/longbridge/gpui-fast) and [GPUI Kit](https://github.com/longbridge/gpui-kit).

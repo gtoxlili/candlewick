@@ -30,8 +30,8 @@
 - 股票：美股（含盘前、盘后、夜盘）、港股、A 股来自长桥，按代码添加；A 股、指数、同花顺板块和场内基金来自同花顺，按代码或中文名添加
 - 行情图随每笔成交跳动，带盘口和最近成交
 - 图上分析：悬停卡片显示每根 K 线的数据，均线和布林带，趋势线、水平线、斐波那契回撤和测量工具，画线跟着品种保存
-- 填上交易所的 API Key，就能看总资产和各账户持仓，按每日汇率选用 CNY、USD 或 JPY 计价
-- 打开「AI 助手接入」，Claude Code、Codex 和 OpenCode 就能读取你的行情和持仓，陪你分析
+- 填上交易所的 API Key 自动同步持仓；也可登记其他平台的股票、ETF、基金和黄金，只填数量与成本，程序跟踪行情或公布净值，汇总为 CNY、USD 或 JPY 总资产
+- 打开「AI 助手接入」，Claude Code、Codex 和 OpenCode 就能读取你的行情和持仓，并维护本地登记持仓
 - 界面有 English、简体中文、日本語，跟随系统或在设置里选
 - 红涨绿跌可选，开机启动，自动更新
 
@@ -89,7 +89,7 @@ Windows 版见 [docs/windows.md](docs/windows.md)，发布流程见 [docs/releas
 - `src/platform/`：macOS 菜单栏和 Windows 任务栏，以及两个系统之间其余不同的部分
 - `src/market/`：行情与持仓，各数据源的实现。接入说明见 [docs/market-data-providers.md](docs/market-data-providers.md)
 - `src/portfolio.rs`：持仓估值
-- `src/agent/`：AI 助手接入，本机只读接口和 skill，见 [docs/agent-access.md](docs/agent-access.md)
+- `src/agent/`：AI 助手接入，本机行情与持仓接口和 skill，见 [docs/agent-access.md](docs/agent-access.md)
 - `locales/`：全部文字，英文、中文、日文各一份，按界面分文件，见 [docs/i18n.md](docs/i18n.md)
 
 基于 Rust 和 GPUI 构建，用的是 [gpui-fast](https://github.com/longbridge/gpui-fast) 与 [GPUI Kit](https://github.com/longbridge/gpui-kit)。

@@ -3,7 +3,7 @@
 use crate::{
     format,
     market::ProviderId,
-    portfolio::{AccountView, Portfolio, PositionKind, PositionValue, Wallet},
+    portfolio::{Portfolio, PositionKind, PositionValue, Wallet},
 };
 use gpui_kit::{
     AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement, SharedString,
@@ -21,6 +21,7 @@ pub(crate) fn provider_name(provider: ProviderId) -> SharedString {
         ProviderId::Longbridge => t!("common.provider.longbridge"),
         ProviderId::Ths => t!("common.provider.ths"),
         ProviderId::DexScreener => t!("common.provider.dexscreener"),
+        ProviderId::Eastmoney => t!("common.provider.eastmoney"),
     }
     .into()
 }
@@ -77,9 +78,7 @@ pub fn aside(
         },
     );
     let content = match tab {
-        super::Tab::Accounts => {
-            accounts(&portfolio.accounts, portfolio.valuation.currency.decimals(), palette)
-        }
+        super::Tab::Accounts => accounts(portfolio, palette),
         super::Tab::Positions => positions(
             &portfolio.positions,
             several,
@@ -100,14 +99,23 @@ pub fn aside(
 }
 
 /// Each exchange: its total, what the day did to it, and where it sits.
-fn accounts(accounts: &[AccountView], decimals: usize, palette: Palette) -> AnyElement {
+fn accounts(portfolio: &Portfolio, palette: Palette) -> AnyElement {
+    let decimals = portfolio.valuation.currency.decimals();
+    let mut manual: std::collections::BTreeMap<&str, Option<f64>> =
+        std::collections::BTreeMap::new();
+    for holding in &portfolio.manual_holdings {
+        let total = manual.entry(&holding.holding.input.platform).or_default();
+        if let Some(value) = holding.value {
+            *total = Some(total.unwrap_or(0.) + value);
+        }
+    }
     div()
         .id("accounts")
         .min_h_0()
         .flex_1()
         .overflow_y_scrollbar()
         .text_size(px(12.))
-        .children(accounts.iter().map(|account| {
+        .children(portfolio.accounts.iter().map(|account| {
             let before = match (account.total, account.change) {
                 (Some(total), Some(change)) => Some(total - change),
                 _ => None,
@@ -235,6 +243,33 @@ fn accounts(accounts: &[AccountView], decimals: usize, palette: Palette) -> AnyE
                 );
             }
             section
+        }))
+        .children(manual.into_iter().map(|(platform, total)| {
+            div()
+                .px(px(12.))
+                .py(px(10.))
+                .border_b_1()
+                .border_color(palette.border)
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .gap(px(8.))
+                        .child(div().min_w_0().truncate().child(platform.to_owned()))
+                        .child(
+                            div().whitespace_nowrap().child(
+                                total
+                                    .map(|total| format::price(total, decimals))
+                                    .unwrap_or_else(|| "—".to_owned()),
+                            ),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(10.))
+                        .text_color(palette.muted)
+                        .child(t!("holdings.manual.label")),
+                )
         }))
         .into_any_element()
 }

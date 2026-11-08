@@ -454,7 +454,7 @@ mod tests {
         let LiveEvent::Stats { stats } = out.take_events().remove(0) else { panic!("no stats") };
         assert_eq!(
             (stats.last, stats.change, stats.change_pct, stats.turnover),
-            (110.0, 10.0, 10.0, 500.0)
+            (110.0, Some(10.0), Some(10.0), 500.0)
         );
         let tick = Bybit::quote(ticker).unwrap();
         assert_eq!((&*tick.symbol, tick.last, tick.open), ("BTCUSDT", 110.0, 100.0));

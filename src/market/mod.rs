@@ -12,6 +12,7 @@ mod binance;
 mod bybit;
 mod crypto;
 pub mod dexscreener;
+mod eastmoney;
 pub mod longbridge;
 mod okx;
 pub mod ths;
@@ -43,11 +44,20 @@ pub enum ProviderId {
     Ths,
     /// On-chain pools on decentralized exchanges.
     DexScreener,
+    /// Public CNY fund NAVs and Shanghai Gold Exchange Au99.99 quotes.
+    Eastmoney,
 }
 
 impl ProviderId {
-    pub const ALL: [Self; 6] =
-        [Self::Binance, Self::Bybit, Self::Okx, Self::Longbridge, Self::Ths, Self::DexScreener];
+    pub const ALL: [Self; 7] = [
+        Self::Binance,
+        Self::Bybit,
+        Self::Okx,
+        Self::Longbridge,
+        Self::Ths,
+        Self::DexScreener,
+        Self::Eastmoney,
+    ];
 
     /// The crypto exchanges, one of which the settings pick for every pair
     /// (`Settings::exchange`).
@@ -66,6 +76,7 @@ impl ProviderId {
             Self::Longbridge => "longbridge",
             Self::Ths => "ths",
             Self::DexScreener => "dexscreener",
+            Self::Eastmoney => "eastmoney",
         }
     }
 
@@ -78,6 +89,7 @@ impl ProviderId {
             Self::Longbridge => t!("common.provider.longbridge"),
             Self::Ths => t!("common.provider.ths"),
             Self::DexScreener => t!("common.provider.dexscreener"),
+            Self::Eastmoney => t!("common.provider.eastmoney"),
         }
     }
 
@@ -89,14 +101,17 @@ impl ProviderId {
             Self::Longbridge => &longbridge::Longbridge,
             Self::Ths => &ths::Ths,
             Self::DexScreener => &dexscreener::DexScreener,
+            Self::Eastmoney => &eastmoney::Eastmoney,
         }
     }
 }
 
-/// Instruments matching `query`: pairs on `exchange`, stocks from both
-/// stock sources, and pools.
+/// Every registered source participates in the shared search. Crypto pairs
+/// come from the selected exchange; the other sources are independent of it.
 pub async fn search(exchange: ProviderId, query: &str) -> Search {
-    let searches = [exchange, ProviderId::Longbridge, ProviderId::Ths, ProviderId::DexScreener]
+    let searches = ProviderId::ALL
+        .into_iter()
+        .filter(|provider| !provider.is_exchange() || *provider == exchange)
         .map(|provider| provider.provider().search(query));
     let mut all = Search::default();
     for found in futures_util::future::join_all(searches).await {
@@ -121,7 +136,10 @@ pub async fn check_key(exchange: ProviderId, key: &ApiKey) -> Result<(), Error> 
         ProviderId::Binance => binance::Binance::check(key).await,
         ProviderId::Bybit => bybit::Bybit::check(key).await,
         ProviderId::Okx => okx::Okx::check(key).await,
-        ProviderId::Longbridge | ProviderId::Ths | ProviderId::DexScreener => {
+        ProviderId::Longbridge
+        | ProviderId::Ths
+        | ProviderId::DexScreener
+        | ProviderId::Eastmoney => {
             Err(Error::Message(t!("error.noApiKey", source = exchange.name())))
         }
     }
@@ -134,6 +152,16 @@ pub fn instrument_id(provider: ProviderId, symbol: &str) -> String {
 
 pub trait Provider: Send + Sync {
     fn id(&self) -> ProviderId;
+
+    /// Instrument semantics shared by watchlists, holdings and API consumers.
+    fn instrument_meta(&self, instrument: &Instrument) -> InstrumentMeta {
+        InstrumentMeta {
+            asset_id: instrument.id(),
+            quantity_unit: QuantityUnit::Units,
+            price_kind: PriceKind::Market,
+            usd_conversion: None,
+        }
+    }
 
     /// Normalizes an entry coming from the settings window and checks it.
     fn validate(&self, instrument: &mut Instrument) -> Result<(), String>;
@@ -188,6 +216,32 @@ pub trait Provider: Send + Sync {
         stop: oneshot::Receiver<()>,
         events: tokio::sync::mpsc::UnboundedSender<LiveEvent>,
     ) -> BoxFuture<'static, ()>;
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentMeta {
+    pub asset_id: String,
+    pub quantity_unit: QuantityUnit,
+    pub price_kind: PriceKind,
+    pub usd_conversion: Option<Instrument>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QuantityUnit {
+    Tokens,
+    Shares,
+    FundUnits,
+    Grams,
+    Units,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum PriceKind {
+    Market,
+    Nav { utc_offset: i64 },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -303,8 +357,8 @@ pub struct Stats {
     /// In the base asset (see [`ChartSpec::volume_unit`]).
     pub volume: Option<f64>,
     pub turnover: f64,
-    pub change: f64,
-    pub change_pct: f64,
+    pub change: Option<f64>,
+    pub change_pct: Option<f64>,
     /// What a pool adds to the picture; none for exchanges and stocks.
     pub onchain: Option<Onchain>,
 }
@@ -423,6 +477,36 @@ pub fn set_status(app: &App, provider: ProviderId, status: Status) {
         feed.status = status;
     }
     bar::request_render(app);
+    app.notify(crate::app::Topic::Portfolio);
+}
+
+/// Every quote consumer reads the same price. Source time, when supplied,
+/// is separate from receipt time (notably for daily fund NAVs).
+pub fn record_quote(
+    model: &mut crate::model::Model,
+    id: String,
+    mut quote: crate::model::Quote,
+    source_time: Option<f64>,
+) -> bool {
+    if model.instrument(&id).is_none() || !quote.last.is_finite() || quote.last <= 0. {
+        return false;
+    }
+    quote.time =
+        crate::model::QuoteTime { received: crate::portfolio::now_ms(), source: source_time };
+    let changed = model.quotes.get(&id).is_none_or(|old| {
+        (old.last, old.open, old.session, old.time.source)
+            != (quote.last, quote.open, quote.session, quote.time.source)
+    });
+    model.quotes.insert(id, quote);
+    changed
+}
+
+/// Called at each provider's existing coalescing/poll boundary.
+pub fn quotes_changed(app: &App) {
+    bar::request_render(app);
+    if !app.shared().model().manual.entries.is_empty() {
+        app.notify(crate::app::Topic::Portfolio);
+    }
 }
 
 /// Feed status of every provider, by provider.

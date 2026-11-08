@@ -1,4 +1,4 @@
-//! Daily USD/CNY and USD/JPY display rates. Account prices stay in USD;
+//! Daily USD/CNY, USD/HKD and USD/JPY valuation rates. Account prices stay in USD;
 //! conversion happens once when a portfolio is read.
 
 use std::{fs, path::Path, time::Duration};
@@ -58,11 +58,12 @@ pub struct Snapshot {
 pub struct Rates {
     pub cny: f64,
     pub jpy: f64,
+    pub hkd: f64,
 }
 
 impl Snapshot {
     fn valid(&self) -> bool {
-        [self.usd.cny, self.usd.jpy].iter().all(|rate| rate.is_finite() && *rate > 0.)
+        [self.usd.cny, self.usd.jpy, self.usd.hkd].iter().all(|rate| rate.is_finite() && *rate > 0.)
     }
 }
 
@@ -90,6 +91,10 @@ impl Default for Valuation {
     }
 }
 
+pub fn is_dollar_quote(currency: &str) -> bool {
+    matches!(currency, "USD" | "USDT" | "USDC" | "FDUSD" | "USD1" | "TUSD" | "BUSD")
+}
+
 impl ExchangeRates {
     pub fn load(path: &Path) -> Self {
         let snapshot = fs::read(path)
@@ -97,6 +102,20 @@ impl ExchangeRates {
             .and_then(|bytes| serde_json::from_slice::<Snapshot>(&bytes).ok())
             .filter(Snapshot::valid);
         Self { snapshot, error: None }
+    }
+
+    /// USD value of one quote-currency unit, for holdings priced outside USD.
+    pub fn usd_rate(&self, currency: &str) -> Option<f64> {
+        if is_dollar_quote(currency) {
+            return Some(1.);
+        }
+        let units = match currency {
+            "CNY" => self.snapshot.as_ref()?.usd.cny,
+            "JPY" => self.snapshot.as_ref()?.usd.jpy,
+            "HKD" => self.snapshot.as_ref()?.usd.hkd,
+            _ => return None,
+        };
+        (units.is_finite() && units > 0.).then_some(1. / units)
     }
 
     pub fn valuation(&self, currency: Currency) -> Valuation {
@@ -135,14 +154,15 @@ fn save(path: &Path, snapshot: &Snapshot) -> std::io::Result<()> {
 }
 
 /// One worker for all accounts and windows. Sleeps while the machine is
-/// paused or there are no account keys; setting changes do not add workers.
+/// paused or there are no synced or registered holdings; setting changes do not add workers.
 pub async fn watch(app: App, mut control: watch::Receiver<FeedControl>) {
     let path = app.shared().settings_path.with_file_name("exchange-rates.json");
     let mut due = tokio::time::Instant::now();
     loop {
         let active = {
             let wanted = control.borrow_and_update();
-            wanted.paused == 0 && !wanted.credentials.exchanges.is_empty()
+            wanted.paused == 0
+                && (!wanted.credentials.exchanges.is_empty() || wanted.manual_holdings)
         };
         if active && tokio::time::Instant::now() >= due {
             let result = fetch().await;
@@ -187,9 +207,10 @@ mod tests {
         assert_eq!(rates.valuation(Currency::Cny), Valuation::default());
         rates.error = Some("network unavailable".into());
         assert_eq!(rates.valuation(Currency::Usd), Valuation::default());
-        let snapshot: Snapshot =
-            serde_json::from_str(r#"{"date":"2026-11-06","usd":{"cny":6.65,"jpy":150.5}}"#)
-                .unwrap();
+        let snapshot: Snapshot = serde_json::from_str(
+            r#"{"date":"2026-11-06","usd":{"cny":6.65,"jpy":150.5,"hkd":7.8}}"#,
+        )
+        .unwrap();
         assert!(snapshot.valid());
         rates.snapshot = Some(snapshot);
         assert_eq!(rates.valuation(Currency::Cny).rate, 6.65);
@@ -207,7 +228,10 @@ mod tests {
     #[test]
     fn invalid_conversion_rates_are_rejected() {
         for rate in [0., -1., f64::NAN, f64::INFINITY] {
-            for usd in [Rates { cny: rate, jpy: 150.5 }, Rates { cny: 6.65, jpy: rate }] {
+            for usd in [
+                Rates { cny: rate, jpy: 150.5, hkd: 7.8 },
+                Rates { cny: 6.65, jpy: rate, hkd: 7.8 },
+            ] {
                 assert!(!Snapshot { date: "2026-11-06".into(), usd }.valid());
             }
         }

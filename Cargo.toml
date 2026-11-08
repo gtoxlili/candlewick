@@ -168,6 +168,8 @@ debug = false
 
 [dev-dependencies]
 gpui-kit = { version = "0.9", default-features = false, features = ["gpui-fast", "component", "assets", "test-support"] }
+tempfile = "3"
+tower = { version = "0.5", default-features = false, features = ["util"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # Turns the feature on for `cargo test` without a flag.

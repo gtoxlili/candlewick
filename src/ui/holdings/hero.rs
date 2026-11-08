@@ -63,7 +63,7 @@ pub fn hero(
     };
     let badge = match (total, change, pct) {
         (Some(_), Some(change), Some(pct)) => Some(widgets::change_badge(
-            format!("{} · {} 24h", format::change_signed(pct), format::signed(change, decimals)),
+            format!("{} · {}", format::change_signed(pct), format::signed(change, decimals)),
             change,
             palette,
         )),

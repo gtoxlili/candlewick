@@ -135,6 +135,15 @@ impl Provider for Ths {
         ID
     }
 
+    fn instrument_meta(&self, instrument: &Instrument) -> super::InstrumentMeta {
+        super::InstrumentMeta {
+            asset_id: format!("stock:{}", instrument.symbol),
+            quantity_unit: super::QuantityUnit::Shares,
+            price_kind: super::PriceKind::Market,
+            usd_conversion: None,
+        }
+    }
+
     fn validate(&self, instrument: &mut Instrument) -> Result<(), String> {
         let symbol = parse(&instrument.symbol)
             .filter(|symbol| instrument.base == code(symbol) && instrument.quote == QUOTE)

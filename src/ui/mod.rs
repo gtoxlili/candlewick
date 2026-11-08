@@ -14,6 +14,7 @@ use crate::app::{App, Topic};
 pub mod assets;
 pub mod chart;
 pub mod holdings;
+pub(crate) mod instrument_picker;
 pub mod prefs;
 pub mod settings;
 #[cfg(all(target_os = "macos", feature = "test-support"))]

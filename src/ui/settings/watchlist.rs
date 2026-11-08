@@ -1,33 +1,29 @@
 //! Watchlist and instrument search.
 
-use std::{collections::HashSet, time::Duration};
+use std::collections::HashSet;
 
 use super::parts;
 use crate::{
     api,
     app::{App, Topic},
-    market::{ProviderId, Search},
+    market::ProviderId,
     model::{Instrument, MAX_INSTRUMENTS},
-    ui,
+    ui::{
+        self,
+        instrument_picker::{InstrumentPicker, Presentation, Selected},
+    },
 };
 use gpui_kit::{
-    AppContext, Context, Entity, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, Window,
+    AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
+    Subscription, Task, Window,
     component::{
         Disableable, IndexPath, Sizable,
         button::{Button, ButtonVariants},
-        input::{Input, InputEvent, InputState},
-        list::ListItem,
-        popover::Popover,
-        scroll::ScrollableElement,
         select::{Select, SelectEvent, SelectItem, SelectState},
         switch::Switch,
-        tag::Tag,
     },
     div, px,
 };
-
-const SEARCH_DELAY: Duration = Duration::from_millis(200);
 
 #[derive(Clone)]
 struct ExchangeChoice(ProviderId);
@@ -67,39 +63,13 @@ fn add_instrument(items: &mut Vec<Instrument>, mut item: Instrument) -> bool {
 fn remove_instrument(items: &mut Vec<Instrument>, id: &str) {
     items.retain(|item| item.id() != id);
 }
-#[derive(Default)]
-struct SearchGeneration(u64);
-#[derive(Clone, Copy)]
-struct SearchRequest {
-    generation: u64,
-}
-impl SearchGeneration {
-    fn invalidate(&mut self) {
-        self.0 += 1;
-    }
-    fn start(&mut self) -> SearchRequest {
-        self.invalidate();
-        SearchRequest { generation: self.0 }
-    }
-    fn accepts(&self, request: SearchRequest) -> bool {
-        self.0 == request.generation
-    }
-}
-
 pub struct WatchlistSection {
     app: App,
-    input: Entity<InputState>,
+    picker: Entity<InstrumentPicker>,
     exchange: Entity<SelectState<Vec<ExchangeChoice>>>,
     shown_exchange: ProviderId,
     shown_locale: crate::i18n::Locale,
-    query: String,
-    active: Option<usize>,
-    results: Option<Search>,
-    loading: bool,
-    generation: SearchGeneration,
     error: Option<String>,
-    placeholder: String,
-    search_task: Option<Task<()>>,
     _observers: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -112,7 +82,16 @@ impl WatchlistSection {
         } else {
             t!("settings.watchlist.search").to_owned()
         };
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder.clone()));
+        let picker = cx.new(|cx| {
+            InstrumentPicker::new(
+                app.clone(),
+                "watchlist",
+                Presentation::Popover,
+                placeholder,
+                window,
+                cx,
+            )
+        });
         let exchange = cx.new(|cx| {
             SelectState::new(
                 exchanges(),
@@ -121,17 +100,9 @@ impl WatchlistSection {
                 cx,
             )
         });
-        let input_subscription =
-            cx.subscribe_in(&input, window, |this, input, event: &InputEvent, _, cx| match event {
-                InputEvent::Change => {
-                    this.query = input.read(cx).value().to_string();
-                    this.active = None;
-                    this.search(SEARCH_DELAY, cx);
-                }
-                InputEvent::Focus if this.results.is_none() && !this.loading => {
-                    this.search(Duration::ZERO, cx)
-                }
-                _ => {}
+        let picker_subscription =
+            cx.subscribe_in(&picker, window, |this, _, event: &Selected, window, cx| {
+                this.add(event.0.clone(), window, cx)
             });
         let exchange_subscription = cx.subscribe_in(
             &exchange,
@@ -154,32 +125,23 @@ impl WatchlistSection {
             ui::observe_in(&app, Topic::Locale, window, cx, Self::sync),
             ui::observe_in(&app, Topic::Settings, window, cx, Self::sync),
         ];
-        Self {
+        let mut view = Self {
             app,
-            input,
+            picker,
             exchange,
             shown_exchange: exchange_value,
             shown_locale: api::get_locale(),
-            query: String::new(),
-            active: None,
-            results: None,
-            loading: false,
-            generation: SearchGeneration::default(),
             error: None,
-            placeholder,
-            search_task: None,
             _observers: observers,
-            _subscriptions: vec![input_subscription, exchange_subscription],
-        }
+            _subscriptions: vec![picker_subscription, exchange_subscription],
+        };
+        view.sync(window, cx);
+        view
     }
     fn cancel_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.generation.invalidate();
-        self.search_task = None;
-        self.query.clear();
-        self.results = None;
-        self.loading = false;
-        self.input.update(cx, |input, cx| input.set_value("", window, cx));
+        self.picker.update(cx, |picker, cx| picker.set_selection(None, window, cx));
     }
+
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = api::get_settings(&self.app);
         let locale = api::get_locale();
@@ -204,36 +166,15 @@ impl WatchlistSection {
         } else {
             t!("settings.watchlist.search").to_owned()
         };
-        if placeholder != self.placeholder {
-            self.input
-                .update(cx, |input, cx| input.set_placeholder(placeholder.clone(), window, cx));
-            self.placeholder = placeholder;
-        }
-    }
-    fn search(&mut self, delay: Duration, cx: &mut Context<Self>) {
-        let request = self.generation.start();
-        self.loading = true;
-        self.results = None;
-        let query = self.query.clone();
-        let app = self.app.clone();
-        let io_app = app.clone();
-        let timer = cx.background_executor().timer(delay);
-        self.search_task = Some(cx.spawn(async move |view, cx| {
-            timer.await;
-            let result =
-                ui::run(&app, async move { api::search_instruments(&io_app, query).await }).await;
-            let _ = view.update(cx, |this, cx| {
-                if this.generation.accepts(request) {
-                    this.loading = false;
-                    this.results = Some(result.unwrap_or_else(|error| Search {
-                        candidates: vec![],
-                        notes: vec![error.to_string()],
-                    }));
-                    cx.notify();
-                }
-            });
-        }));
-        cx.notify();
+        self.picker.update(cx, |picker, cx| {
+            picker.configure(
+                settings.watchlist.iter().map(Instrument::id),
+                full,
+                placeholder,
+                window,
+                cx,
+            )
+        });
     }
     fn add(&mut self, item: Instrument, window: &mut Window, cx: &mut Context<Self>) {
         let mut added = false;
@@ -302,7 +243,6 @@ fn instrument_name(
 impl Render for WatchlistSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = api::get_settings(&self.app);
-        let full = settings.watchlist.len() >= MAX_INSTRUMENTS;
         let p = ui::theme::Palette::current(&self.app, cx);
         let existing = settings.watchlist.clone();
         let shared = shared_symbols(existing.iter());
@@ -419,183 +359,8 @@ impl Render for WatchlistSection {
             );
             group = group.child(row);
         }
-        let results = self.results.clone().unwrap_or_default();
-        let loading = self.loading;
-        let result_view = cx.entity().downgrade();
-        let show_results = !self.query.trim().is_empty() && !full;
-        let active = self.active.or_else(|| {
-            results.candidates.iter().position(|candidate| {
-                !existing.iter().any(|item| item.id() == candidate.instrument.id())
-            })
-        });
-        let dismiss_view = cx.entity().downgrade();
-        let search = Popover::new("watchlist-search-results")
-            .w_full()
-            // The results sit 4px from the edge, as the instrument picker's does.
-            .p(px(4.))
-            // The input handles left clicks; its query controls the popover.
-            .mouse_button(gpui_kit::MouseButton::Middle)
-            .overlay_closable(false)
-            .track_focus(&self.input.read(cx).focus_handle(cx))
-            .trigger(Input::new(&self.input).disabled(full))
-            .open(show_results)
-            .on_open_change(move |open, window, cx| {
-                if !*open {
-                    let _ = dismiss_view.update(cx, |this, cx| {
-                        this.cancel_search(window, cx);
-                        cx.notify();
-                    });
-                }
-            })
-            .content(move |_, _, _| {
-                let mut list = div()
-                    .id("watchlist-results-list")
-                    .w(px(390.))
-                    .max_h(px(280.))
-                    .overflow_y_scrollbar()
-                    .flex()
-                    .flex_col();
-                if results.candidates.is_empty() {
-                    let notes = if loading {
-                        vec![t!("settings.watchlist.searching").to_owned()]
-                    } else if results.notes.is_empty() {
-                        vec![t!("settings.watchlist.noResults").to_owned()]
-                    } else {
-                        results.notes.clone()
-                    };
-                    for note in notes {
-                        list = list.child(
-                            div()
-                                .px_2()
-                                .py_1()
-                                .text_color(p.muted)
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .child(note),
-                        );
-                    }
-                } else {
-                    for (index, candidate) in results.candidates.iter().enumerate() {
-                        let added =
-                            existing.iter().any(|item| item.id() == candidate.instrument.id());
-                        let item = candidate.instrument.clone();
-                        let view = result_view.clone();
-                        let detail = if added {
-                            t!("settings.watchlist.added").to_owned()
-                        } else if candidate.manual {
-                            t!("settings.watchlist.manual").to_owned()
-                        } else if let Some(value) = candidate.liquidity {
-                            t!(
-                                "settings.watchlist.liquidity",
-                                value = crate::format::compact(value)
-                            )
-                        } else {
-                            String::new()
-                        };
-                        list = list.child(
-                            ListItem::new(("watchlist-result", index))
-                                .selected(active == Some(index) && !added)
-                                .accessibility_label(item.pair_label())
-                                .px(px(8.))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap_2()
-                                        .min_w_0()
-                                        .w_full()
-                                        .child(instrument_name(&item, false, p))
-                                        .child(Tag::secondary().small().child(item.provider.name()))
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(p.muted)
-                                                .whitespace_nowrap()
-                                                .child(detail),
-                                        )
-                                        .child(
-                                            Button::new(("watchlist-add", index))
-                                                .label(t!("settings.add"))
-                                                .small()
-                                                .disabled(added)
-                                                .on_click(move |_, window, cx| {
-                                                    let _ = view.update(cx, |this, cx| {
-                                                        this.add(item.clone(), window, cx)
-                                                    });
-                                                }),
-                                        ),
-                                ),
-                        );
-                    }
-                }
-                list
-            });
         let mut watchlist = parts::section(t!("settings.watchlist.title"), &self.app, cx)
-            .child(
-                div()
-                    .capture_key_down(cx.listener(
-                        |this, event: &gpui_kit::KeyDownEvent, window, cx| {
-                            let m = event.keystroke.modifiers;
-                            if m.control || m.alt || m.platform || m.function {
-                                return;
-                            }
-                            if this.query.trim().is_empty() {
-                                return;
-                            }
-                            if event.keystroke.key == "escape" {
-                                this.cancel_search(window, cx);
-                                cx.stop_propagation();
-                                cx.notify();
-                                return;
-                            }
-                            if event.keystroke.key == "enter" {
-                                let existing = api::get_settings(&this.app).watchlist;
-                                let item = this.results.as_ref().and_then(|results| {
-                                    let index = this.active.or_else(|| {
-                                        results.candidates.iter().position(|candidate| {
-                                            !existing
-                                                .iter()
-                                                .any(|i| i.id() == candidate.instrument.id())
-                                        })
-                                    })?;
-                                    results.candidates.get(index).map(|c| c.instrument.clone())
-                                });
-                                if let Some(item) = item {
-                                    this.add(item, window, cx);
-                                }
-                                cx.stop_propagation();
-                                return;
-                            }
-                            let Some(results) = &this.results else {
-                                return;
-                            };
-                            let count = results.candidates.len();
-                            if count == 0 {
-                                return;
-                            }
-                            let existing = api::get_settings(&this.app).watchlist;
-                            let current = this
-                                .active
-                                .or_else(|| {
-                                    results.candidates.iter().position(|candidate| {
-                                        !existing
-                                            .iter()
-                                            .any(|i| i.id() == candidate.instrument.id())
-                                    })
-                                })
-                                .unwrap_or(0);
-                            let next = match event.keystroke.key.as_str() {
-                                "down" => current.saturating_add(1).min(count - 1),
-                                "up" => current.saturating_sub(1),
-                                _ => return,
-                            };
-                            this.active = Some(next);
-                            cx.stop_propagation();
-                            cx.notify();
-                        },
-                    ))
-                    .child(search),
-            )
+            .child(self.picker.clone())
             .child(group)
             .child(
                 div()
@@ -632,16 +397,6 @@ mod tests {
     use super::*;
     fn item(provider: ProviderId, symbol: &str) -> Instrument {
         Instrument::bare(provider, symbol)
-    }
-    #[test]
-    fn debounce_restarts_and_rejects_stale_results() {
-        let mut gate = SearchGeneration::default();
-        let first = gate.start();
-        let second = gate.start();
-        assert!(!gate.accepts(first));
-        assert!(gate.accepts(second));
-        gate.invalidate();
-        assert!(!gate.accepts(second));
     }
     #[test]
     fn list_preserves_order_rejects_duplicates_and_caps_size() {

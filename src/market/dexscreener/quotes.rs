@@ -9,7 +9,7 @@ use tokio::{sync::watch, time::sleep};
 
 use super::{ID, gecko, parse, screener};
 use crate::{
-    bar, market,
+    market,
     model::{FeedControl, Quote, Status},
 };
 
@@ -96,18 +96,11 @@ fn apply(app: &App, pairs: &[screener::Pair]) {
     for pair in pairs {
         let (Some(last), Some(open)) = (pair.price(), pair.open()) else { continue };
         let id = market::instrument_id(ID, &pair.symbol());
-        // A pool removed while the request was out gets no quote.
-        if model.settings.instrument(&id).is_none() {
-            continue;
-        }
-        let quote = Quote { last, open, session: None };
-        if model.quotes.get(&id) != Some(&quote) {
-            model.quotes.insert(id, quote);
-            changed = true;
-        }
+        let quote = Quote { last, open, session: None, ..Default::default() };
+        changed |= market::record_quote(&mut model, id, quote, None);
     }
     drop(model);
     if changed {
-        bar::request_render(app);
+        market::quotes_changed(app);
     }
 }

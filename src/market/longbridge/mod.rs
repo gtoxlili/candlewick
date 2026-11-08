@@ -53,6 +53,15 @@ impl Provider for Longbridge {
         ProviderId::Longbridge
     }
 
+    fn instrument_meta(&self, instrument: &Instrument) -> super::InstrumentMeta {
+        super::InstrumentMeta {
+            asset_id: format!("stock:{}", instrument.symbol),
+            quantity_unit: super::QuantityUnit::Shares,
+            price_kind: super::PriceKind::Market,
+            usd_conversion: None,
+        }
+    }
+
     fn validate(&self, instrument: &mut Instrument) -> Result<(), String> {
         instrument.symbol = instrument.symbol.trim().to_uppercase();
         let invalid = || t!("error.invalidStock", symbol = instrument.symbol);
@@ -63,11 +72,12 @@ impl Provider for Longbridge {
         if market_of(&instrument.symbol).is_none() || !code_ok || instrument.base != code {
             return Err(invalid());
         }
-        let currency_ok =
-            instrument.quote.len() == 3 && instrument.quote.chars().all(|c| c.is_ascii_uppercase());
-        if !currency_ok {
-            return Err(invalid());
+        instrument.quote = match market_of(&instrument.symbol).unwrap() {
+            clock::Market::Us => "USD",
+            clock::Market::Hk => "HKD",
+            _ => "CNY",
         }
+        .to_owned();
         if let Some(name) = &mut instrument.name {
             *name = name.trim().chars().take(40).collect();
         }

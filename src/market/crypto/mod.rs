@@ -117,6 +117,31 @@ impl<E: Exchange> Provider for E {
         E::ID
     }
 
+    fn instrument_meta(&self, instrument: &Instrument) -> super::InstrumentMeta {
+        let quote = instrument.quote.as_str();
+        let usd_conversion =
+            if crate::currency::is_dollar_quote(quote) || matches!(quote, "CNY" | "HKD" | "JPY") {
+                None
+            } else {
+                Some(Instrument {
+                    provider: E::ID,
+                    symbol: E::symbol(quote, "USDT"),
+                    base: quote.to_owned(),
+                    quote: "USDT".to_owned(),
+                    name: None,
+                    decimals: None,
+                    pinned: false,
+                    venue: None,
+                })
+            };
+        super::InstrumentMeta {
+            asset_id: format!("crypto:{}", instrument.base),
+            quantity_unit: super::QuantityUnit::Tokens,
+            price_kind: super::PriceKind::Market,
+            usd_conversion,
+        }
+    }
+
     fn validate(&self, instrument: &mut Instrument) -> Result<(), String> {
         for field in [&mut instrument.symbol, &mut instrument.base, &mut instrument.quote] {
             *field = field.trim().to_uppercase();
@@ -238,8 +263,8 @@ pub fn candle(row: &[String]) -> Option<Candle> {
 
 /// Day statistics from the last price and the one 24 hours before.
 pub fn stats(last: f64, open: f64, high: f64, low: f64, volume: f64, turnover: f64) -> Stats {
-    let change = last - open;
-    let change_pct = if open > 0.0 { change / open * 100.0 } else { 0.0 };
+    let change_pct = crate::portfolio::pct(last, open);
+    let change = change_pct.map(|_| last - open);
     Stats {
         last,
         high: Some(high),

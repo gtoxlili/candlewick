@@ -79,6 +79,15 @@ impl Provider for DexScreener {
         ID
     }
 
+    fn instrument_meta(&self, instrument: &Instrument) -> super::InstrumentMeta {
+        super::InstrumentMeta {
+            asset_id: instrument.id(),
+            quantity_unit: super::QuantityUnit::Tokens,
+            price_kind: super::PriceKind::Market,
+            usd_conversion: None,
+        }
+    }
+
     fn validate(&self, instrument: &mut Instrument) -> Result<(), String> {
         let invalid = || t!("error.invalidPool", symbol = instrument.symbol);
         let Some((chain, address)) = parse(&instrument.symbol) else {

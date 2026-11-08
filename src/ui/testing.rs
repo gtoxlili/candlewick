@@ -560,8 +560,8 @@ fn panels_market(spec: &crate::market::ChartSpec) -> ui::chart::market::Market {
             low: Some(low),
             volume: Some(18_420.0),
             turnover: 1_246_000_000.0,
-            change: last - first,
-            change_pct: (last - first) / first * 100.0,
+            change: Some(last - first),
+            change_pct: Some((last - first) / first * 100.0),
             onchain: spec.onchain.then_some(Onchain {
                 liquidity: Some(42_800_000.0),
                 market_cap: None,
@@ -769,8 +769,8 @@ fn live_market(
             low: Some(last - 160.0),
             volume: Some(12.0),
             turnover: 1.0e9,
-            change: last - first,
-            change_pct: (last - first) / first * 100.0,
+            change: Some(last - first),
+            change_pct: Some((last - first) / first * 100.0),
             onchain: None,
         },
     });
@@ -1369,8 +1369,8 @@ pub fn run() {
                             low: Some(82_000.),
                             volume: Some(12_345.6),
                             turnover: 987_654_321.,
-                            change: 1_024.5,
-                            change_pct: 1.23,
+                            change: Some(1_024.5),
+                            change_pct: Some(1.23),
                             onchain: None,
                         },
                     });

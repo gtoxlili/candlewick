@@ -114,8 +114,8 @@ impl Pair {
             low,
             volume: None,
             turnover: self.volume.as_ref().and_then(|v| v.h24).unwrap_or(0.0),
-            change,
-            change_pct: if open > 0.0 { change / open * 100.0 } else { 0.0 },
+            change: Some(change),
+            change_pct: Some(if open > 0.0 { change / open * 100.0 } else { 0.0 }),
             onchain: Some(Onchain {
                 liquidity: self.liquidity(),
                 market_cap: self.market_cap.filter(|v| v.is_finite()),
@@ -164,7 +164,7 @@ mod tests {
         let open = pair.open().unwrap();
         assert!((open - 0.2175 / 1.0288).abs() < 1e-9);
         let stats = pair.stats(Some(0.23), None).unwrap();
-        assert!((stats.change_pct - 2.88).abs() < 1e-9);
+        assert!((stats.change_pct.unwrap() - 2.88).abs() < 1e-9);
         assert_eq!(stats.turnover, 289_043.58);
         assert_eq!((stats.high, stats.low, stats.volume), (Some(0.23), None, None));
         let onchain = stats.onchain.unwrap();
@@ -181,7 +181,7 @@ mod tests {
         // Only a full EVM address is folded to lower case.
         assert_eq!(pair.symbol(), "base/0xAbC");
         let stats = pair.stats(None, None).unwrap();
-        assert_eq!(stats.change_pct, 0.0);
+        assert_eq!(stats.change_pct, Some(0.0));
         assert_eq!(stats.onchain.unwrap().buys, 0);
         let none: Pairs =
             serde_json::from_str(r#"{"schemaVersion":"1.0.0","pairs":null}"#).unwrap();

@@ -10,18 +10,22 @@ use super::{assets, hero, tiles};
 
 fn asset(name: &str, held: &[(ProviderId, Wallet, f64)]) -> Asset {
     Asset {
+        id: name.to_owned(),
         asset: name.to_owned(),
         amount: held.iter().map(|(_, _, amount)| *amount).sum(),
         price: Some(1.0),
         value: Some(1.0),
+        partial: false,
         change: None,
         change_pct: None,
         stable: false,
         held: held
             .iter()
             .map(|(exchange, wallet, amount)| Holding {
-                exchange: *exchange,
-                wallet: *wallet,
+                source: crate::portfolio::HoldingSource::Exchange {
+                    exchange: *exchange,
+                    wallet: *wallet,
+                },
                 amount: *amount,
             })
             .collect(),

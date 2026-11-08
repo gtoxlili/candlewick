@@ -331,12 +331,13 @@ pub fn view(app: &App) -> View {
     shared.render_pending.store(false, Ordering::Release);
     let update = update::ready(app);
     let model = shared.model();
+    let portfolio = model.has_holdings().then(|| model.portfolio());
     View {
         watchlist: model.settings.watchlist.clone(),
-        holdings: holdings(&model),
+        holdings: portfolio.as_ref().map(holdings),
         rows: rows(&model.settings.watchlist, &model.quotes),
         synced: synced(&model),
-        ticker: ticker(&model),
+        ticker: ticker(&model, portfolio.as_ref()),
         caption: caption(&model),
         scheme: model.settings.color_scheme,
         update,
@@ -346,24 +347,24 @@ pub fn view(app: &App) -> View {
 
 /// What the bar's text shows: the total holdings when the settings ask for
 /// them and an account exists, else the pinned entry; `None` for neither.
-fn ticker(model: &Model) -> Option<Ticker> {
+fn ticker(model: &Model, portfolio: Option<&crate::portfolio::Portfolio>) -> Option<Ticker> {
     let settings = &model.settings;
-    if settings.holdings_in_bar && !model.accounts.is_empty() {
-        let valuation = model.exchange_rates.valuation(settings.currency);
-        let totals = Totals::of(&model.accounts)
-            .map(|t| Totals { total: t.total * valuation.rate, change: t.change * valuation.rate });
+    if let Some(portfolio) = portfolio.filter(|_| settings.holdings_in_bar) {
+        let valuation = &portfolio.valuation;
+        let totals =
+            portfolio.total.zip(portfolio.change).map(|(total, change)| Totals { total, change });
         return Some(Ticker {
             symbol: settings.show_symbol.then(|| t!("tray.totalShort").to_owned()),
-            price: totals.map_or_else(
+            price: portfolio.total.map_or_else(
                 || "—".to_owned(),
-                |t| {
+                |total| {
                     format!(
                         "{}{}",
                         valuation.currency.symbol(),
                         format::price(
-                            t.total,
+                            total,
                             format::compact_decimals(
-                                t.total,
+                                total,
                                 Some(valuation.currency.decimals() as u8),
                             ),
                         )
@@ -375,7 +376,9 @@ fn ticker(model: &Model) -> Option<Ticker> {
                 .and_then(Totals::change_pct)
                 .map(|pct| (format::change_signed(pct), format::direction(pct))),
             two_rows: settings.show_change,
-            stale: model.accounts.values().any(|account| account.error.is_some()),
+            stale: portfolio.partial
+                || portfolio.manual_holdings.iter().any(|holding| holding.stale)
+                || model.accounts.values().any(|account| account.error.is_some()),
         });
     }
     let pinned = settings.pinned()?;
@@ -408,22 +411,18 @@ fn signed(amount: f64, decimals: usize) -> (String, Direction) {
     (text, direction)
 }
 
-fn holdings(model: &Model) -> Option<Holdings> {
-    if model.accounts.is_empty() {
-        return None;
-    }
-    let portfolio = model.portfolio();
+fn holdings(portfolio: &crate::portfolio::Portfolio) -> Holdings {
     let decimals = portfolio.valuation.currency.decimals();
     let totals =
         portfolio.total.zip(portfolio.change).map(|(total, change)| Totals { total, change });
     let total = Row::new(
         t!("common.holdings.total"),
         format!(" {}", portfolio.valuation.currency.code()),
-        totals.map_or_else(|| "—".to_owned(), |t| format::price(t.total, decimals)),
+        portfolio.total.map_or_else(|| "—".to_owned(), |total| format::price(total, decimals)),
     )
     .with_change(totals.and_then(Totals::change_pct));
-    let day = totals.map(|t| Row {
-        value: signed(t.change, decimals),
+    let day = portfolio.change.map(|change| Row {
+        value: signed(change, decimals),
         ..Row::new(t!("common.holdings.dayPnl"), "", String::new())
     });
     let accounts = if portfolio.accounts.len() > 1 {
@@ -498,8 +497,14 @@ fn holdings(model: &Model) -> Option<Holdings> {
             let latest = portfolio.accounts.iter().filter_map(|a| a.updated).fold(0.0, f64::max);
             (latest > 0.0).then(|| t!("common.holdings.updated", time = format::clock(latest)))
         })
-        .unwrap_or_else(|| t!("common.holdings.reading").to_owned());
-    Some(Holdings { total, day, accounts, assets, positions, caption })
+        .unwrap_or_else(|| {
+            if portfolio.manual_holdings.is_empty() {
+                t!("common.holdings.reading").to_owned()
+            } else {
+                t!("holdings.manual.summary", count = portfolio.manual_holdings.len()).to_owned()
+            }
+        });
+    Holdings { total, day, accounts, assets, positions, caption }
 }
 
 fn synced(model: &Model) -> Option<SyncedMenu> {
@@ -538,7 +543,6 @@ fn synced(model: &Model) -> Option<SyncedMenu> {
 /// The first feed that isn't live explains itself; empty while all are.
 fn caption(model: &Model) -> String {
     model
-        .settings
         .symbols()
         .into_keys()
         .map(|provider| {

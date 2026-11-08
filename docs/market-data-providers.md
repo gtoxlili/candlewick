@@ -27,7 +27,8 @@
 实现 `Provider` trait：
 
 - `id`：自己的 `ProviderId`。
-- `validate`：校验设置页传来的自选项。
+- `validate`：校验并归一化标的，包括由来源决定的报价币种。
+- `instrument_meta`：标的的资产身份、数量单位、价格类型、净值日时区及可选 USD 转换标的。自选、登记、界面与 AI 接口共用这些事实。
 - `bare`：只凭代码造一个自选项（AI 接口按 id 读任意品种时用），默认把代码转成大写；代码区分大小写的数据源（链上池子的 Solana 地址）要自己实现。
 - `search`：返回候选；`notes` 说明搜不全的原因。候选的 `liquidity` 只有池子有，用来区分同一代币的多个池子。
 - `drop_search_cache`：设置窗口关闭时释放搜索缓存。
@@ -44,7 +45,7 @@
 - `history`：数据源每页上限比请求的 `limit` 小时就返回能给的（OKX 一页 300 根）；只有返回空才表示没有更早的了，窗口据此停止往前翻。
 - `ChartSpec.day_offset`：日线开盘时刻相对 UTC 的秒数，用于日期标签。
 - `ChartSpec.book_steps`：盘口可选的合并档位，从细到粗；`LiveEvent::Book.books` 按同样顺序各给一份合并好的盘口。留空表示不合并，`books` 只放一份原样的盘口。
-- `ChartSpec.book` 为 false 表示这个数据源没有盘口（链上池子），行情窗口侧栏只放成交，AI 接口的 `/v1/market` 也不等盘口；`ChartSpec.onchain` 为 true 表示统计是池子的：`Stats.volume` 为空（只有美元成交额），`Stats.onchain` 带流动性、市值、FDV 和 24 小时买卖笔数。`Stats.high` / `low` / `volume` 都是 `Option`，数据源给不出的填 `None`，窗口显示「—」。
+- `ChartSpec.book` 为 false 表示这个数据源没有盘口（链上池子），行情窗口侧栏只放成交，AI 接口的 `/v1/market` 也不等盘口；`ChartSpec.onchain` 为 true 表示统计是池子的：`Stats.volume` 为空（只有美元成交额），`Stats.onchain` 带流动性、市值、FDV 和 24 小时买卖笔数。`Stats.high` / `low` / `volume` / `change` / `change_pct` 都是 `Option`，数据源给不出的填 `None`，价格仍可展示，未知涨跌不显示胶囊。
 - `LiveEvent::Tick`：没有成交记录的价格（轮询到的报价），只推动正在形成的 K 线，不进成交列表。
 - `ChartSpec.volume_unit` 是成交数量的单位（池子是代币符号），与 `Stats.volume` 是否有值无关。
 - 本地盘口的价格存成 10^-18 为单位的 `u128` 整数（Bybit 的 tick 细到 10^-13，币安 BTC/IDR 价格到 15 亿），同一价格总能落到同一档；转回 `f64` 时与直接解析原字符串的结果一致。
@@ -191,7 +192,7 @@ WS 帧（大端）：首字节低 4 位为类型（1 请求、2 响应、3 推�
 - 估值：`portfolio.rs`。价格用 `quotes::snapshot` 取：开一条短连接 WS，订阅持仓币种的 `{币}/USDT` ticker，每个币对拿到第一帧就够，最多等 3 秒。没回应的币对保留上次的价格；连续两次没回应、而且两次都是连接撑到最后、别的币对都答了，才视为未上架，1 小时内不再问（`Kept::take`）。连接断了或一个都没答，是网络的问题，不算数。持仓窗口打开期间改为常驻一条 ticker 订阅（`account::Live`）：余额和仓位仍每 10 秒拉一次，价格逐笔到达后按 1 秒合并重新估值，总资产随行情跳动；窗口关闭即断开。拉全表 REST ticker 太大（币安约 1 MB，OKX 约 360 KB），不适合常驻轮询。没有 USDT 交易对的币用交易所自己给的 USD 估值（Bybit `usdValue`、OKX `eqUsd`），再没有就不计价。
 - 口径：合约账户按含未实现盈亏的保证金余额（权益）计入总资产，仓位不再重复计入。24 小时涨跌是「持仓不变的前提下过去 24 小时价格变动带来的盈亏」：币按 `数量 × (现价 − 24h 前价格)`，仓位按 `带符号的美元敞口 × 合约自身的 24h 涨跌比例`，合约行情逐个查询（乘数合约如 `1000PEPEUSDT` 在现货里没有对应币对）。期权不计 24h 涨跌。
 - 合并：`Portfolio::of` 把各交易所的估值合成一张图——每个账户的总额与钱包分布（`AccountView`），同一资产跨交易所合并成一行（`held` 列出每个交易所的每个钱包），仓位带交易所标记。持仓窗口、下拉菜单和 AI 接口都读这一个结构。
-- 展示：下拉菜单最上面一行总资产及其二级菜单（`bar::Holdings`），持仓窗口（`src/ui/holdings/`，见 [holdings.md](holdings.md)），以及「菜单栏显示总资产」时的系统栏本身（`Settings::holdings_in_bar`）。`Settings::currency` 统一选择 CNY / USD / JPY。账户估值以 USD 为基准，USDT 交易对按 USD / USDT 1:1 口径使用；`currency.rs` 的每日 USD/CNY、USD/JPY 汇率仅在读取组合时换算显示金额。仓位原始敞口 `exposure` 为美元口径，`pnl_value` / `exposure_value` 使用所选显示单位。
+- 展示：下拉菜单最上面一行总资产及其二级菜单（`bar::Holdings`），持仓窗口（`src/ui/holdings/`，见 [holdings.md](holdings.md)），以及「菜单栏显示总资产」时的系统栏本身（`Settings::holdings_in_bar`）。`Settings::currency` 统一选择 CNY / USD / JPY。账户估值以 USD 为基准，USDT 交易对按 USD / USDT 1:1 口径使用；`currency.rs` 的每日 USD/CNY、USD/HKD、USD/JPY 汇率负责登记资产原币折算与组合显示金额换算。仓位原始敞口 `exposure` 为美元口径，`pnl_value` / `exposure_value` 使用所选显示单位。
 - 签名的服务器时间：各家拒绝时间偏差过大的请求时，取一次服务器时间（`crypto::account::Clock`）再重试一次。
 
 ### 币安
@@ -308,3 +309,20 @@ GeckoTerminal 的数据和 CoinGecko API 的 `/onchain/*` 是同一份：路径�
 - 想要官方的实时美股：Alpaca（用户自带 key，数据只来自 IEX）。
 - 想要券商级的全市场推送：富途 OpenD（前提是用户愿意在本机运行网关）。
 - 想要链上逐笔：没有免费又公开的；GeckoTerminal 付费档（CoinGecko Analyst）成交接口不缓存、可按时间段翻页。
+
+## 东方财富：场外基金净值与黄金
+
+东方财富是统一 `Provider` 的一员，注册在 `ProviderId::ALL`。统一搜索从注册表派生来源，保留当前选中的加密交易所，并搜索所有其他来源。设置页自选搜索、AI 的 `/v1/search` 和登记持仓搜索共用这一入口；自选与登记持仓通过同一 `FeedControl.symbols` 和 `watch` 订阅行情。未登记任何持仓时，也能把基金或黄金加入自选、显示在系统栏并调用行情接口。
+
+`market/eastmoney.rs` 补充无需凭据的东方财富公开行情：
+
+- 搜索 `searchapi.eastmoney.com/api/suggest/get?input=…&type=14&count=30`，发现来源确认的 `OTCFUND` 人民币份额及明确的 `118.AU9999` 黄金标的。搜索只读取来源元数据，不逐只拉取净值；净值类型和价格可用性由行情任务检查。场内 LOF 和场外基金净值使用不同 ID。
+- `eastmoney:150.<代码>` 读取 `api.fund.eastmoney.com/f10/lsjz?fundCode=…&pageIndex=1&pageSize=2`，附 `Referer: https://fundf10.eastmoney.com/`。`DWJZ` 是人民币每份净值，`FSRQ` 是实际净值日期；前一条公布净值作为可选参考价。只公布过一条净值时仍返回现价，`change` 与 `changePct` 为空。净值日期编码为上海当日零点的 epoch 毫秒。`SYType` 为每万份收益等收益型数据时拒绝估值，外币份额也不作为人民币使用。每 15 分钟查询。
+- `eastmoney:118.AU9999` 读取 `push2.eastmoney.com/api/qt/stock/get?secid=118.AU9999&fields=f43,f58,f59,f60,f86`。`f43` 和 `f60` 除以 `10^f59` 得人民币每克现价和前收盘价；`f86` 是来源报价 epoch 秒。每 15 秒查询。
+- 单次最多 4 个并发请求，按标的独立退避；暂停时取消在途批次。历史 K 线和逐笔成交返回空，实时流仅提供轮询快照统计。
+
+场外基金是公布净值而非盘中实时估值。支付宝黄金基金须用实际基金份额与净值，不能直接用 Au99.99 的每克价格替代。单位、汇率、部分估值与 UI 说明见 [holdings.md](holdings.md)。
+
+## 登记持仓如何使用行情
+
+登记持仓通过 `manual.rs` 的标的索引加入现有 `FeedControl.symbols`，和自选共用报价连接。各来源通过 `market::record_quote` 保存报价、来源时间及收到时间，通过 `quotes_changed` 在原有合并刷新边界通知持仓窗口。只移除自选不会停止仍被登记持仓使用的行情。持有平台独立于行情来源；持仓数量/成本来自本地登记，价格始终来自市场。

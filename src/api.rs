@@ -49,25 +49,18 @@ pub fn get_settings(app: &App) -> Settings {
 pub fn save_settings(app: &App, settings: Settings) -> CmdResult<Settings> {
     let shared = app.shared();
     let settings = settings.validated().map_err(CommandError::Invalid)?;
-    let (currency_changed, currency_available) = {
-        let model = shared.model();
-        (
-            model.settings.currency != settings.currency,
-            model.exchange_rates.valuation(settings.currency).currency == settings.currency,
-        )
-    };
-    if currency_changed && !currency_available && !shared.credentials().exchanges.is_empty() {
-        return Err(CommandError::Invalid(t!("settings.display.currencyUnavailable").to_owned()));
-    }
-    model::save(&shared.settings_path, &settings)?;
-    let before = {
-        let mut model = shared.model();
-        let before = std::mem::replace(&mut model.settings, settings.clone());
-        let kept: Vec<String> =
-            model.quotes.keys().filter(|id| model.instrument(id).is_some()).cloned().collect();
-        model.quotes.retain(|id, _| kept.contains(id));
-        before
-    };
+    let before = shared.update_instruments(|model| -> CmdResult<Settings> {
+        let currency_changed = model.settings.currency != settings.currency;
+        let currency_available =
+            model.exchange_rates.valuation(settings.currency).currency == settings.currency;
+        if currency_changed && !currency_available && model.has_holdings() {
+            return Err(CommandError::Invalid(
+                t!("settings.display.currencyUnavailable").to_owned(),
+            ));
+        }
+        model::save(&shared.settings_path, &settings)?;
+        Ok(std::mem::replace(&mut model.settings, settings.clone()))
+    })?;
     if settings.agent_access != before.agent_access {
         agent::sync(app);
     }
@@ -76,12 +69,6 @@ pub fn save_settings(app: &App, settings: Settings) -> CmdResult<Settings> {
         i18n::set(settings.language.locale());
         window::relabel(app);
     }
-    let symbols = settings.symbols();
-    shared.control.send_if_modified(|control| {
-        let changed = control.symbols != symbols;
-        control.symbols = symbols;
-        changed
-    });
     bar::request_render(app);
     app.notify(Topic::Settings);
     if settings.currency != before.currency {
@@ -362,6 +349,48 @@ pub async fn set_exchange_key(
 pub fn get_portfolio(app: &App) -> Portfolio {
     let shared = app.shared();
     shared.model().portfolio()
+}
+
+pub fn get_manual_holdings(app: &App) -> Result<Vec<crate::manual::Holding>, crate::manual::Error> {
+    let model = app.shared().model();
+    match &model.manual.error {
+        Some(error) => Err(crate::manual::Error::Unavailable(error.clone())),
+        None => Ok(model.manual.entries.clone()),
+    }
+}
+
+/// UI and HTTP writes share one serialized, persist-before-publish path.
+pub fn create_manual_holding(
+    app: &App,
+    input: crate::manual::Input,
+) -> Result<crate::manual::Holding, crate::manual::Error> {
+    let path = app.shared().settings_path.with_file_name("manual-holdings.json");
+    let entry = app.shared().update_instruments(|model| model.manual.create(&path, input))?;
+    manual_changed(app);
+    Ok(entry)
+}
+
+pub fn replace_manual_holding(
+    app: &App,
+    id: &str,
+    input: crate::manual::Input,
+) -> Result<crate::manual::Holding, crate::manual::Error> {
+    let path = app.shared().settings_path.with_file_name("manual-holdings.json");
+    let entry = app.shared().update_instruments(|model| model.manual.replace(&path, id, input))?;
+    manual_changed(app);
+    Ok(entry)
+}
+
+pub fn remove_manual_holding(app: &App, id: &str) -> Result<(), crate::manual::Error> {
+    let path = app.shared().settings_path.with_file_name("manual-holdings.json");
+    app.shared().update_instruments(|model| model.manual.remove(&path, id))?;
+    manual_changed(app);
+    Ok(())
+}
+
+fn manual_changed(app: &App) {
+    bar::request_render(app);
+    app.notify(Topic::Portfolio);
 }
 
 pub fn open_holdings(app: &App) -> CmdResult<()> {

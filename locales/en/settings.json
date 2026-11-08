@@ -111,7 +111,7 @@
       "loginItem_windows": "Start with Windows",
       "autoUpdate": "Update automatically",
       "agentAccess": "AI agent access",
-      "agentsCanRead": "%{agents} can read your quotes and holdings",
+      "agentsCanRead": "%{agents} can read markets and maintain registered holdings",
       "noAgents": "Couldn't find Claude Code, Codex or OpenCode",
       "english": "English",
       "chinese": "简体中文",

@@ -7,6 +7,7 @@ mod allocation;
 mod aside;
 mod assets;
 mod hero;
+mod manual;
 mod tiles;
 
 #[cfg(all(target_os = "macos", feature = "test-support"))]
@@ -63,7 +64,7 @@ struct SmallAssets {
 
 pub struct HoldingsView {
     app: App,
-    portfolio: Portfolio,
+    portfolio: std::sync::Arc<Portfolio>,
     sort: summary::Sort,
     show_small: bool,
     tab: Tab,
@@ -75,6 +76,8 @@ pub struct HoldingsView {
     flash: (usize, Option<bool>),
     _observers: Vec<Task<()>>,
     stale_timer: Option<Task<()>>,
+    manual: Entity<manual::ManualView>,
+    show_manual: bool,
 }
 
 impl HoldingsView {
@@ -96,8 +99,14 @@ impl HoldingsView {
             if let Some(down) = moved {
                 view.flash = (view.flash.0 + 1, Some(down));
             }
-            view.portfolio = next;
-            view.recompute();
+            view.portfolio = std::sync::Arc::new(next);
+            view.manual.update(cx, |manual, cx| {
+                manual.portfolio = view.portfolio.clone();
+                cx.notify();
+            });
+            if !view.show_manual {
+                view.recompute();
+            }
             view.schedule_stale_check(cx);
         }));
         observers.push(observe(&app, crate::app::Topic::Locale, cx, |view, _| {
@@ -105,8 +114,13 @@ impl HoldingsView {
         }));
         let dot_app = app.clone();
         let live_dot = cx.new(|_| allocation::LiveDot::new(dot_app));
+        let portfolio = std::sync::Arc::new(api::get_portfolio(&app));
+        let manual =
+            cx.new(|cx| manual::ManualView::new(app.clone(), portfolio.clone(), window, cx));
         let mut view = Self {
-            portfolio: api::get_portfolio(&app),
+            manual,
+            show_manual: false,
+            portfolio,
             sort: summary::Sort::Value,
             show_small: false,
             tab: Tab::Accounts,
@@ -175,12 +189,12 @@ impl HoldingsView {
             self.show_small,
             portfolio.valuation.rate,
         );
-        let several = portfolio.accounts.len() > 1;
+        let several = portfolio.accounts.len() > 1 || !portfolio.manual_holdings.is_empty();
         let series: std::collections::HashMap<&str, summary::Series> =
             summary::series(&portfolio.assets)
                 .into_iter()
                 .zip(portfolio.assets.iter())
-                .map(|(series, asset)| (asset.asset.as_str(), series))
+                .map(|(series, asset)| (asset.id.as_str(), series))
                 .collect();
         let widest_move = portfolio
             .assets
@@ -190,7 +204,7 @@ impl HoldingsView {
             .max(1.);
         let mut rows = Vec::with_capacity(listed.shown.len());
         for asset in &listed.shown {
-            let series = series.get(asset.asset.as_str()).copied().unwrap_or(summary::Series::Rest);
+            let series = series.get(asset.id.as_str()).copied().unwrap_or(summary::Series::Rest);
             rows.push(assets::Row::new(
                 asset,
                 series,
@@ -278,6 +292,23 @@ impl Render for HoldingsView {
         }
         let app = self.app.clone();
         bar = bar.child(
+            Button::new("manage-manual")
+                .ghost()
+                .small()
+                .label(if self.show_manual {
+                    t!("holdings.manual.back")
+                } else {
+                    t!("holdings.manual.title")
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.show_manual = !this.show_manual;
+                    if !this.show_manual {
+                        this.recompute();
+                    }
+                    cx.notify();
+                })),
+        );
+        bar = bar.child(
             Button::new("manage-keys").ghost().small().label(t!("holdings.manageKeys")).on_click(
                 move |_, _, cx| {
                     let _ = crate::window::open_settings(&app);
@@ -286,8 +317,10 @@ impl Render for HoldingsView {
             ),
         );
 
-        let body = if self.portfolio.accounts.is_empty() {
-            no_keys(self.app.clone(), palette)
+        let body = if self.show_manual {
+            div().flex().flex_1().min_h_0().child(self.manual.clone())
+        } else if self.portfolio.accounts.is_empty() && self.portfolio.manual_holdings.is_empty() {
+            empty_portfolio(self.app.clone(), cx.entity(), palette)
         } else {
             let view = cx.entity();
             let toggle_small = {
@@ -328,6 +361,14 @@ impl Render for HoldingsView {
                         .gap(px(12.))
                         .pb(px(16.))
                         .child(hero::hero(&self.portfolio, &derived.insight, flash, palette))
+                        .children((!self.portfolio.manual_holdings.is_empty()).then(|| {
+                            div().px(px(16.)).text_size(px(11.)).text_color(palette.muted).child(
+                                t!(
+                                    "holdings.manual.summary",
+                                    count = self.portfolio.manual_holdings.len()
+                                ),
+                            )
+                        }))
                         .child(allocation::allocation(&derived.shares, &self.live_dot, palette))
                         .child(sort_tabs(self.sort, view.clone(), palette))
                         .child(assets::panel(
@@ -353,6 +394,16 @@ impl Render for HoldingsView {
             .bg(super::theme::glass(cx))
             .text_color(palette.foreground)
             .child(bar)
+            .children(self.portfolio.manual_error.clone().map(|error| {
+                div().px(px(16.)).text_size(px(11.)).text_color(palette.red).child(error)
+            }))
+            .children(self.portfolio.partial.then(|| {
+                div()
+                    .px(px(16.))
+                    .text_size(px(11.))
+                    .text_color(palette.amber)
+                    .child(t!("holdings.manual.partial"))
+            }))
             .child(body)
     }
 }
@@ -378,8 +429,8 @@ fn sort_tabs(
     ))
 }
 
-/// Nothing to show because no exchange has a key yet.
-fn no_keys(app: App, palette: Palette) -> gpui_kit::Div {
+/// Neither a synced account nor a registered holding exists.
+fn empty_portfolio(app: App, view: Entity<HoldingsView>, palette: Palette) -> gpui_kit::Div {
     div()
         .flex()
         .flex_1()
@@ -400,21 +451,33 @@ fn no_keys(app: App, palette: Palette) -> gpui_kit::Div {
                     div()
                         .text_size(px(15.))
                         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                        .child(t!("holdings.noKeys")),
+                        .child(t!("holdings.emptyTitle")),
                 )
                 .child(
                     div()
                         .w(px(320.))
                         .text_size(px(12.))
                         .text_color(palette.muted)
-                        .child(t!("holdings.noKeysDetail")),
+                        .child(t!("holdings.emptyDetail")),
                 ),
         )
-        .child(Button::new("open-settings").label(t!("holdings.openSettings")).small().on_click(
-            move |_, _, _| {
-                let _ = crate::window::open_settings(&app);
+        .child(Button::new("add-manual").label(t!("holdings.manual.add")).small().on_click(
+            move |_, _, cx| {
+                view.update(cx, |this, cx| {
+                    this.show_manual = true;
+                    cx.notify();
+                })
             },
         ))
+        .child(
+            Button::new("open-settings")
+                .ghost()
+                .label(t!("holdings.openSettings"))
+                .small()
+                .on_click(move |_, _, _| {
+                    let _ = crate::window::open_settings(&app);
+                }),
+        )
 }
 
 /// The color a series of the allocation is drawn with, in the list's share

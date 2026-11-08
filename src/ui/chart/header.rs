@@ -227,22 +227,24 @@ impl Render for Hero {
             }
         };
 
-        let badge = stats.map(|stats| {
-            // A change that rounds to 0.00% reads as flat, never colored.
-            let color_by = if format::direction(stats.change_pct) == format::Direction::Flat {
-                0.
-            } else {
-                stats.change_pct
-            };
-            widgets::change_badge(
-                badge_label(stats.change_pct, stats.change, decimals, span_label(span)),
-                color_by,
-                palette,
-            )
-            .text_size(px(12.))
-            .py(px(2.))
-            .font_weight(FontWeight::MEDIUM)
-        });
+        let badge = stats.and_then(|stats| stats.change_pct.zip(stats.change)).map(
+            |(change_pct, change)| {
+                // A change that rounds to 0.00% reads as flat, never colored.
+                let color_by = if format::direction(change_pct) == format::Direction::Flat {
+                    0.
+                } else {
+                    change_pct
+                };
+                widgets::change_badge(
+                    badge_label(change_pct, change, decimals, span_label(span)),
+                    color_by,
+                    palette,
+                )
+                .text_size(px(12.))
+                .py(px(2.))
+                .font_weight(FontWeight::MEDIUM)
+            },
+        );
 
         let has_book = model.spec().is_none_or(|spec| spec.book);
         let book = has_book

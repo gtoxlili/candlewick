@@ -182,8 +182,8 @@ impl Day {
     }
 
     fn stats(&self) -> Stats {
-        let change = self.last - self.reference;
-        let change_pct = if self.reference > 0.0 { change / self.reference * 100.0 } else { 0.0 };
+        let change_pct = crate::portfolio::pct(self.last, self.reference);
+        let change = change_pct.map(|_| self.last - self.reference);
         Stats {
             last: self.last,
             high: Some(self.high),

@@ -15,7 +15,6 @@ use tokio::{
 
 use super::{ID, Kind, POLL, api, session};
 use crate::{
-    bar,
     market::{self, Error},
     model::{FeedControl, Quote, Status},
 };
@@ -180,18 +179,16 @@ fn apply(app: &App, found: &[(String, api::Snapshot)]) {
     let mut changed = false;
     for (symbol, snapshot) in found {
         let id = market::instrument_id(ID, symbol);
-        // A code removed while the request was out gets no quote.
-        if model.instrument(&id).is_none() {
-            continue;
-        }
-        let quote = Quote { last: snapshot.last, open: snapshot.prev_close, session: None };
-        if model.quotes.get(&id) != Some(&quote) {
-            model.quotes.insert(id, quote);
-            changed = true;
-        }
+        let quote = Quote {
+            last: snapshot.last,
+            open: snapshot.prev_close,
+            session: None,
+            ..Default::default()
+        };
+        changed |= market::record_quote(&mut model, id, quote, None);
     }
     drop(model);
     if changed {
-        bar::request_render(app);
+        market::quotes_changed(app);
     }
 }

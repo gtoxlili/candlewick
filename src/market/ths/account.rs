@@ -367,32 +367,16 @@ fn status(app: &App, status: SyncStatus) {
 /// dropdown and the settings window.
 fn publish(app: &App, change: impl FnOnce(&mut Option<Synced>)) {
     let shared = app.shared();
-    let symbols = {
-        let mut model = shared.model();
-        let before = model.synced.clone();
-        change(&mut model.synced);
-        if model.synced == before {
-            return;
-        }
-        let mut symbols: Vec<String> = model
-            .synced
-            .iter()
-            .flat_map(Synced::all)
-            .map(|instrument| instrument.symbol.clone())
-            .collect();
-        symbols.sort();
-        symbols.dedup();
-        // Quotes of codes that left the watchlist go with them.
-        let kept: Vec<String> =
-            model.quotes.keys().filter(|id| model.instrument(id).is_some()).cloned().collect();
-        model.quotes.retain(|id, _| kept.contains(id));
-        symbols
-    };
-    shared.control.send_if_modified(|control| {
-        let changed = control.ths_synced != symbols;
-        control.ths_synced = symbols;
-        changed
-    });
+    let changed = shared
+        .update_instruments(|model| -> Result<bool, std::convert::Infallible> {
+            let before = model.synced.clone();
+            change(&mut model.synced);
+            Ok(model.synced != before)
+        })
+        .unwrap();
+    if !changed {
+        return;
+    }
     bar::request_render(app);
     app.notify(crate::app::Topic::Ths);
 }

@@ -7,6 +7,18 @@ use gpui_kit::{
 
 use super::{tabular, theme::Palette};
 
+/// Source-defined quantity units, named once for every instrument consumer.
+pub fn quantity_unit(unit: crate::market::QuantityUnit) -> &'static str {
+    use crate::market::QuantityUnit;
+    match unit {
+        QuantityUnit::Tokens => t!("common.quantity.tokens"),
+        QuantityUnit::Shares => t!("common.quantity.shares"),
+        QuantityUnit::FundUnits => t!("common.quantity.fundUnits"),
+        QuantityUnit::Grams => t!("common.quantity.grams"),
+        QuantityUnit::Units => t!("common.quantity.units"),
+    }
+}
+
 /// A signed change in the user's up/down colors.
 pub fn change_badge(label: impl Into<SharedString>, change: f64, palette: Palette) -> Div {
     let color = if change > 0. {

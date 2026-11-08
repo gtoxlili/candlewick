@@ -36,7 +36,6 @@ use super::{
     proto::{self, cmd, sub_type, trade_session},
 };
 use crate::{
-    bar,
     credentials::{self, LongbridgeKeys},
     market::{self, Error, ProviderId},
     model::{FeedControl, Quote, Session, Status},
@@ -566,7 +565,7 @@ impl Service {
                 }
                 () = &mut flush, if dirty => {
                     dirty = false;
-                    bar::request_render(&self.app);
+                    market::quotes_changed(&self.app);
                 }
             }
         }
@@ -760,14 +759,12 @@ impl Service {
 
     /// Writes a menu bar quote; returns whether it changed.
     fn store(&self, symbol: &str, last: f64, reference: f64, session: i32) -> bool {
-        let quote = Quote { last, open: reference, session: session_of(session) };
+        let quote =
+            Quote { last, open: reference, session: session_of(session), ..Default::default() };
         let id = market::instrument_id(PROVIDER, symbol);
         let shared = self.app.shared();
         let mut model = shared.model();
-        if !model.settings.watchlist.iter().any(|i| i.provider == PROVIDER && i.symbol == symbol) {
-            return false;
-        }
-        model.quotes.insert(id, quote) != Some(quote)
+        market::record_quote(&mut model, id, quote, None)
     }
 }
 

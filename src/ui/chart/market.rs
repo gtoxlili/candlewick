@@ -1223,8 +1223,8 @@ mod tests {
             low: Some(90.0),
             volume: Some(5.0),
             turnover: 500.0,
-            change: 1.0,
-            change_pct: 1.0,
+            change: Some(1.0),
+            change_pct: Some(1.0),
             onchain: None,
         };
         assert_eq!(market.apply(LiveEvent::Stats { stats }), Action::None);

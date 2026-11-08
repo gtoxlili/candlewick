@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::{Exchange, KEEPALIVE};
 use crate::{
-    bar, market,
+    market,
     model::{FeedControl, Quote, Status},
     net,
 };
@@ -162,7 +162,7 @@ async fn pump<E: Exchange>(
             () = &mut flush, if dirty => {
                 dirty = false;
                 redrawn = Some(Instant::now());
-                bar::request_render(app);
+                market::quotes_changed(app);
             }
             () = &mut silence => return End::Lost("no quotes for too long".to_owned()),
         }
@@ -177,21 +177,11 @@ fn apply<E: Exchange>(app: &App, text: &str) -> bool {
     if !tick.last.is_finite() {
         return false;
     }
-    let quote = Quote { last: tick.last, open: tick.open, session: None };
+    let quote = Quote { last: tick.last, open: tick.open, session: None, ..Default::default() };
     let id = market::instrument_id(E::ID, &tick.symbol);
     let shared = app.shared();
     let mut model = shared.model();
-    if let Some(existing) = model.quotes.get_mut(&id) {
-        let changed = existing.last != quote.last || existing.open != quote.open;
-        *existing = quote;
-        return changed;
-    }
-    // Ignore frames for pairs removed while this connection was still open.
-    if !model.settings.watchlist.iter().any(|i| i.provider == E::ID && i.symbol == tick.symbol) {
-        return false;
-    }
-    model.quotes.insert(id, quote);
-    true
+    market::record_quote(&mut model, id, quote, None)
 }
 
 /// How long [`snapshot`] waits for pairs to answer once subscribed; a pair

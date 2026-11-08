@@ -6,11 +6,12 @@
       "okx": "OKX",
       "longbridge": "长桥",
       "ths": "同花顺",
-      "dexscreener": "DEX Screener"
+      "dexscreener": "DEX Screener",
+      "eastmoney": "东方财富"
     },
     "holdings": {
       "total": "总资产",
-      "dayPnl": "24h 盈亏",
+      "dayPnl": "价格变动",
       "accounts": "账户",
       "assets": "资产",
       "positions": "合约",
@@ -20,6 +21,13 @@
       "updated": "更新于 %{time}",
       "reading": "正在读取…",
       "readFailed": "%{exchange}读取失败"
+    },
+    "quantity": {
+      "tokens": "枚",
+      "shares": "股 / 份",
+      "fundUnits": "份",
+      "grams": "克",
+      "units": "单位"
     }
   },
   "tray": {

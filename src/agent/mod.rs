@@ -1,5 +1,5 @@
 //! AI agents' access to Candlewick (settings → General → AI Agent Access): while on,
-//! a read-only HTTP API on this machine (`api.rs`) and a skill that tells
+//! a local HTTP API on this machine (`api.rs`) and a skill that tells
 //! Claude Code, Codex and OpenCode how to call it (`skill.rs`). The skill
 //! exists exactly while the API runs: both start when access is turned on or
 //! the app launches with it on, and both go when it is turned off or the app

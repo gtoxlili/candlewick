@@ -128,7 +128,8 @@ impl Feed {
 }
 
 fn stats(snapshot: &api::Snapshot) -> Stats {
-    let change = snapshot.last - snapshot.prev_close;
+    let change_pct = crate::portfolio::pct(snapshot.last, snapshot.prev_close);
+    let change = change_pct.map(|_| snapshot.last - snapshot.prev_close);
     Stats {
         last: snapshot.last,
         high: snapshot.high,
@@ -136,11 +137,7 @@ fn stats(snapshot: &api::Snapshot) -> Stats {
         volume: Some(snapshot.volume),
         turnover: snapshot.turnover,
         change,
-        change_pct: if snapshot.prev_close > 0.0 {
-            change / snapshot.prev_close * 100.0
-        } else {
-            0.0
-        },
+        change_pct,
         onchain: None,
     }
 }

@@ -61,6 +61,10 @@ pub struct Venue {
 }
 
 impl Instrument {
+    pub fn metadata(&self) -> market::InstrumentMeta {
+        self.provider.provider().instrument_meta(self)
+    }
+
     fn preset(base: &str, pinned: bool) -> Self {
         Self {
             provider: ProviderId::Binance,
@@ -176,7 +180,7 @@ pub struct Settings {
     pub color_scheme: ColorScheme,
     /// Check for, download and apply updates on its own (`update.rs`).
     pub auto_update: bool,
-    /// AI agents may read the app's data (`agent`).
+    /// AI agents may read data and maintain manual holdings (`agent`).
     pub agent_access: bool,
     /// What the app speaks (`i18n`).
     pub language: Language,
@@ -290,13 +294,14 @@ pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
     fs::rename(&tmp, path)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Quote {
     pub last: f64,
-    /// What the change counts from: the price 24 hours ago, or the last close.
+    /// Reference price (24h ago, previous close or previous NAV); zero when unknown.
     pub open: f64,
     /// Set outside the regular session (US stocks).
     pub session: Option<Session>,
+    pub time: QuoteTime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -359,6 +364,8 @@ pub struct FeedControl {
     pub credentials: Credentials,
     /// The holdings window is open: holdings refresh often.
     pub holdings_open: bool,
+    /// Manual records also need portfolio display exchange rates.
+    pub manual_holdings: bool,
     /// Goes up when someone is about to look at the holdings (the dropdown
     /// opened), so old ones refresh.
     pub holdings_wanted: u32,
@@ -409,6 +416,27 @@ pub enum SyncStatus {
     Failed(String),
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct QuoteTime {
+    pub received: f64,
+    pub source: Option<f64>,
+}
+
+fn feed_symbols(
+    settings: &Settings,
+    manual: &crate::manual::Store,
+) -> BTreeMap<ProviderId, Vec<String>> {
+    let mut symbols = settings.symbols();
+    for instrument in manual.instruments.values() {
+        symbols.entry(instrument.provider).or_default().push(instrument.symbol.clone());
+    }
+    for list in symbols.values_mut() {
+        list.sort();
+        list.dedup();
+    }
+    symbols
+}
+
 pub struct Model {
     pub settings: Settings,
     pub exchange_rates: crate::currency::ExchangeRates,
@@ -421,21 +449,40 @@ pub struct Model {
     pub chart: Option<String>,
     /// Holdings of each exchange with an API key.
     pub accounts: BTreeMap<ProviderId, portfolio::Account>,
+    pub manual: crate::manual::Store,
     /// The user's Tonghuashun watchlist, while signed in there.
     pub synced: Option<Synced>,
 }
 
 impl Model {
     pub fn portfolio(&self) -> portfolio::Portfolio {
-        portfolio::Portfolio::of(&self.accounts)
-            .converted(self.exchange_rates.valuation(self.settings.currency))
+        let prices = crate::manual::Prices {
+            quotes: &self.quotes,
+            feeds: &self.feeds,
+            rates: &self.exchange_rates,
+        };
+        portfolio::Portfolio::of(
+            &self.accounts,
+            self.manual.entries.iter().map(|entry| entry.valued(&prices)),
+            self.manual.error.as_deref(),
+        )
+        .converted(self.exchange_rates.valuation(self.settings.currency))
     }
 
-    /// The instrument `id` names: the watchlist's, or one from the user's
-    /// Tonghuashun watchlist.
+    pub fn symbols(&self) -> BTreeMap<ProviderId, Vec<String>> {
+        feed_symbols(&self.settings, &self.manual)
+    }
+
+    pub fn has_holdings(&self) -> bool {
+        !self.accounts.is_empty() || !self.manual.entries.is_empty()
+    }
+
+    /// An instrument used by the watchlist, a registered holding (including
+    /// its quote-currency conversion), or the Tonghuashun watchlist.
     pub fn instrument(&self, id: &str) -> Option<&Instrument> {
         self.settings
             .instrument(id)
+            .or_else(|| self.manual.instruments.get(id))
             .or_else(|| self.synced.as_ref()?.all().find(|instrument| instrument.id() == id))
     }
 
@@ -458,6 +505,39 @@ pub struct Shared {
 }
 
 impl Shared {
+    /// Serialize changes to instruments and publication of their subscriptions.
+    /// The model lock remains held until the matching control state is visible.
+    pub fn update_instruments<T, E>(
+        &self,
+        update: impl FnOnce(&mut Model) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let mut model = self.model();
+        let result = update(&mut model)?;
+        let kept: HashSet<_> =
+            model.quotes.keys().filter(|id| model.instrument(id).is_some()).cloned().collect();
+        model.quotes.retain(|id, _| kept.contains(id));
+        let symbols = model.symbols();
+        let manual_holdings = !model.manual.entries.is_empty();
+        let mut ths_synced: Vec<_> = model
+            .synced
+            .iter()
+            .flat_map(Synced::all)
+            .map(|instrument| instrument.symbol.clone())
+            .collect();
+        ths_synced.sort();
+        ths_synced.dedup();
+        self.control.send_if_modified(|control| {
+            let changed = control.symbols != symbols
+                || control.manual_holdings != manual_holdings
+                || control.ths_synced != ths_synced;
+            control.symbols = symbols;
+            control.manual_holdings = manual_holdings;
+            control.ths_synced = ths_synced;
+            changed
+        });
+        Ok(result)
+    }
+
     pub fn new(
         settings: Settings,
         settings_path: PathBuf,
@@ -467,9 +547,12 @@ impl Shared {
         let exchange_rates = crate::currency::ExchangeRates::load(
             &settings_path.with_file_name("exchange-rates.json"),
         );
+        let manual =
+            crate::manual::Store::load(&settings_path.with_file_name("manual-holdings.json"));
         let (control, rx) = watch::channel(FeedControl {
-            symbols: settings.symbols(),
+            symbols: feed_symbols(&settings, &manual),
             credentials: credentials.clone(),
+            manual_holdings: !manual.entries.is_empty(),
             ..FeedControl::default()
         });
         let shared = Self {
@@ -480,6 +563,7 @@ impl Shared {
                 feeds: Feeds::new(),
                 chart: None,
                 accounts: BTreeMap::new(),
+                manual,
                 synced: None,
             }),
             control,
@@ -505,6 +589,73 @@ impl Shared {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // contract: UI and HTTP writers publish the subscriptions belonging to
+    // their state before the next instrument mutation can proceed.
+    #[test]
+    fn instrument_updates_publish_before_the_next_writer() {
+        use std::{
+            sync::{Arc, mpsc},
+            time::Duration,
+        };
+        let dir =
+            tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
+        let (shared, _receiver) = Shared::new(
+            Settings::default(),
+            dir.path().join("settings.json"),
+            Default::default(),
+            dir.path().join("credentials.json"),
+        );
+        let shared = Arc::new(shared);
+        // A slow subscription consumer holds publication while two real
+        // writers update different entries through the production boundary.
+        let pending_publication = shared.control.borrow();
+        let (first_mutated, mutated) = mpsc::channel();
+        let first = shared.clone();
+        let first = std::thread::spawn(move || {
+            first
+                .update_instruments(|model| -> Result<(), ()> {
+                    model
+                        .settings
+                        .watchlist
+                        .push(ProviderId::Eastmoney.provider().bare("118.AU9999").unwrap());
+                    first_mutated.send(()).unwrap();
+                    Ok(())
+                })
+                .unwrap()
+        });
+        mutated.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (started, running) = mpsc::channel();
+        let (second_mutated, entered) = mpsc::channel();
+        let second = shared.clone();
+        let second = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            second
+                .update_instruments(|model| -> Result<(), ()> {
+                    second_mutated.send(()).unwrap();
+                    model
+                        .settings
+                        .watchlist
+                        .push(ProviderId::Eastmoney.provider().bare("150.000216").unwrap());
+                    Ok(())
+                })
+                .unwrap();
+        });
+        running.recv_timeout(Duration::from_secs(2)).unwrap();
+        let premature = entered.recv_timeout(Duration::from_millis(100));
+        drop(pending_publication);
+        first.join().unwrap();
+        second.join().unwrap();
+        assert_eq!(
+            premature,
+            Err(mpsc::RecvTimeoutError::Timeout),
+            "a newer state must not overtake an unpublished mutation"
+        );
+        assert_eq!(
+            shared.control.borrow().symbols[&ProviderId::Eastmoney],
+            ["118.AU9999", "150.000216"]
+        );
+    }
 
     #[test]
     fn another_exchange_takes_the_pairs_off_the_watchlist() {

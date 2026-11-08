@@ -133,14 +133,18 @@ pub struct WalletValue {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Asset {
+    /// Stable identity, independent of display name and quote source.
+    pub id: String,
     pub asset: String,
     pub amount: f64,
     /// In the valuation currency; none without a pair or exchange value.
     pub price: Option<f64>,
     pub value: Option<f64>,
-    /// What the 24h price move made of this amount, in the valuation currency.
+    /// Some quantities have no valuation; value sums only the priced parts.
+    pub partial: bool,
+    /// What the source-reference price move made of this amount, in the valuation currency.
     pub change: Option<f64>,
-    /// The 24h price change, in percent.
+    /// The source-reference price change, in percent.
     pub change_pct: Option<f64>,
     /// A dollar stablecoin: cash, as far as the holdings are concerned.
     pub stable: bool,
@@ -150,13 +154,22 @@ pub struct Asset {
     pub pnl: Option<f64>,
 }
 
-/// Some of an asset in one wallet of one exchange.
+/// Part of an asset in an exchange wallet or a registered platform.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Holding {
-    pub exchange: ProviderId,
-    pub wallet: Wallet,
+    #[serde(flatten)]
+    pub source: HoldingSource,
     pub amount: f64,
+}
+
+/// Exchange locations keep their existing wire fields. Manual locations
+/// carry the user-provided platform and the editable record's ID.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged, rename_all_fields = "camelCase")]
+pub enum HoldingSource {
+    Exchange { exchange: ProviderId, wallet: Wallet },
+    Manual { manual_id: String, platform: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -233,21 +246,35 @@ pub fn value(
             change += moved.unwrap_or(0.0);
             let mut where_held: Vec<Holding> = held
                 .iter()
-                .map(|b| Holding { exchange, wallet: b.wallet, amount: b.amount })
+                .map(|b| Holding {
+                    source: HoldingSource::Exchange { exchange, wallet: b.wallet },
+                    amount: b.amount,
+                })
                 .collect();
             where_held.sort_by(|a, b| b.amount.total_cmp(&a.amount));
-            let costed: Vec<&&Balance> = held.iter().filter(|b| b.cost.is_some()).collect();
+            let cost = if amount != 0. {
+                held.iter()
+                    .map(|b| b.cost.map(|cost| cost * (b.amount / amount)))
+                    .sum::<Option<f64>>()
+            } else {
+                None
+            };
+            let pnl = held.iter().map(|b| b.pnl).sum::<Option<f64>>();
             Asset {
+                id: format!("crypto:{asset}"),
                 asset: asset.to_owned(),
                 amount,
-                price: price.map(|p| p.last).or_else(|| value.map(|v| v / amount)),
+                price: price
+                    .map(|p| p.last)
+                    .or_else(|| value.and_then(|v| (amount != 0.).then_some(v / amount))),
                 value,
+                partial: price.is_none() && held.iter().any(|balance| balance.usd.is_none()),
                 change: moved,
                 change_pct: price.and_then(|p| pct(p.last, p.open)),
                 stable: is_stable(asset),
                 held: where_held,
-                cost: costed.first().and_then(|b| b.cost),
-                pnl: costed.iter().filter_map(|b| b.pnl).reduce(|a, b| a + b),
+                cost,
+                pnl,
             }
         })
         .collect();
@@ -335,25 +362,57 @@ pub struct AccountView {
     pub error: Option<String>,
 }
 
-/// Every exchange with a key, as one picture: each account's totals, and
-/// the assets and positions of all of them together.
+/// Synced exchange equity and registered quantities, valued as one portfolio.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Portfolio {
     pub valuation: Valuation,
     pub accounts: Vec<AccountView>,
-    /// Over accounts with a valuation, in `valuation.currency`; none before.
+    /// Sum of valued holdings in `valuation.currency`; none before any valuation.
     pub total: Option<f64>,
     pub change: Option<f64>,
     /// Merged by asset across the accounts, most valuable first.
     pub assets: Vec<Asset>,
     /// Largest unrealized PnL (either way) first.
     pub positions: Vec<PositionValue>,
+    /// Quantities/costs in instrument units, plus their live valuation.
+    pub manual_holdings: Vec<crate::manual::Value>,
+    pub partial: bool,
+    pub manual_error: Option<String>,
 }
 
 impl Portfolio {
-    pub fn of(accounts: &BTreeMap<ProviderId, Account>) -> Self {
+    pub fn of(
+        accounts: &BTreeMap<ProviderId, Account>,
+        registered: impl IntoIterator<Item = (Asset, crate::manual::Value)>,
+        manual_error: Option<&str>,
+    ) -> Self {
         let totals = Totals::of(accounts);
+        let mut total = totals.map(|totals| totals.total);
+        let mut change = totals.map(|totals| totals.change);
+        let mut partial = manual_error.is_some()
+            || accounts.values().any(|account| {
+                account
+                    .holdings
+                    .as_ref()
+                    .is_none_or(|holdings| holdings.assets.iter().any(|asset| asset.partial))
+            });
+        let mut manual_assets = Vec::new();
+        let mut manual_holdings = Vec::new();
+        for (asset, value) in registered {
+            partial |= asset.partial;
+            total = add(total, asset.value);
+            change = if manual_holdings.is_empty() && accounts.is_empty() {
+                asset.change
+            } else {
+                change.zip(asset.change).map(|(a, b)| a + b)
+            };
+            manual_assets.push(asset);
+            manual_holdings.push(value);
+        }
+        if partial {
+            change = None;
+        }
         let valued = accounts.values().filter_map(|a| a.holdings.as_ref());
         let mut positions: Vec<PositionValue> =
             valued.clone().flat_map(|h| h.positions.iter().cloned()).collect();
@@ -378,10 +437,13 @@ impl Portfolio {
                     error: account.error.clone(),
                 })
                 .collect(),
-            total: totals.map(|t| t.total),
-            change: totals.map(|t| t.change),
-            assets: merge(valued.flat_map(|h| h.assets.iter())),
+            total,
+            change,
+            assets: merge(valued.flat_map(|h| h.assets.iter()).chain(manual_assets.iter())),
             positions,
+            manual_holdings,
+            partial,
+            manual_error: manual_error.map(str::to_owned),
         }
     }
 
@@ -409,6 +471,11 @@ impl Portfolio {
             asset.cost = convert(asset.cost);
             asset.pnl = convert(asset.pnl);
         }
+        for manual in &mut self.manual_holdings {
+            manual.value = convert(manual.value);
+            manual.change = convert(manual.change);
+            manual.pnl = convert(manual.pnl);
+        }
         for position in &mut self.positions {
             position.pnl_value = convert(position.pnl_value);
             position.exposure_value *= valuation.rate;
@@ -424,18 +491,30 @@ impl Portfolio {
 fn merge<'a>(assets: impl Iterator<Item = &'a Asset>) -> Vec<Asset> {
     let mut by_asset: BTreeMap<&str, Asset> = BTreeMap::new();
     for asset in assets {
-        match by_asset.get_mut(asset.asset.as_str()) {
+        match by_asset.get_mut(asset.id.as_str()) {
             None => {
-                by_asset.insert(&asset.asset, asset.clone());
+                by_asset.insert(&asset.id, asset.clone());
             }
             Some(merged) => {
+                let amount = merged.amount + asset.amount;
+                merged.cost = merged.cost.zip(asset.cost).and_then(|(a, b)| {
+                    (amount != 0.)
+                        .then(|| a * (merged.amount / amount) + b * (asset.amount / amount))
+                });
                 merged.amount += asset.amount;
                 merged.value = add(merged.value, asset.value);
-                merged.change = add(merged.change, asset.change);
-                merged.pnl = add(merged.pnl, asset.pnl);
-                merged.price = merged.price.or(asset.price);
-                merged.change_pct = merged.change_pct.or(asset.change_pct);
-                merged.cost = merged.cost.or(asset.cost);
+                merged.change = merged.change.zip(asset.change).map(|(a, b)| a + b);
+                merged.pnl = merged.pnl.zip(asset.pnl).map(|(a, b)| a + b);
+                merged.partial |= asset.partial;
+                merged.price = if merged.partial {
+                    None
+                } else {
+                    merged.value.and_then(|value| (amount != 0.).then_some(value / amount))
+                };
+                merged.change_pct = merged
+                    .value
+                    .zip(merged.change)
+                    .and_then(|(value, change)| pct(value, value - change));
                 merged.held.extend(asset.held.iter().cloned());
             }
         }
@@ -444,7 +523,7 @@ fn merge<'a>(assets: impl Iterator<Item = &'a Asset>) -> Vec<Asset> {
     for asset in &mut merged {
         asset.held.sort_by(|a, b| b.amount.total_cmp(&a.amount));
         // Priced on one exchange, valued by the other: one price for the whole.
-        if asset.price.is_none() {
+        if asset.price.is_none() && !asset.partial && asset.amount != 0. {
             asset.price = asset.value.map(|v| v / asset.amount);
         }
     }
@@ -519,7 +598,10 @@ mod tests {
         let wallets: Vec<(Wallet, f64)> =
             holdings.wallets.iter().map(|w| (w.wallet, w.value)).collect();
         assert_eq!(wallets, [(Wallet::Spot, 100.0), (Wallet::Funding, 57.0), (Wallet::Earn, 50.0)]);
-        assert_eq!(holdings.assets[0].held[0].wallet, Wallet::Spot);
+        assert!(matches!(
+            holdings.assets[0].held[0].source,
+            HoldingSource::Exchange { wallet: Wallet::Spot, .. }
+        ));
     }
 
     #[test]
@@ -583,20 +665,27 @@ mod tests {
             (ProviderId::Bybit, Account::new(ProviderId::Bybit)),
         ]
         .into();
-        let portfolio = Portfolio::of(&accounts);
-        assert_eq!((portfolio.total, portfolio.change), (Some(160.0), Some(30.0)));
+        let portfolio = Portfolio::of(&accounts, std::iter::empty(), None);
+        assert_eq!((portfolio.total, portfolio.change), (Some(160.0), None));
+        assert!(portfolio.partial, "Bybit has not supplied a valuation yet");
         let btc = &portfolio.assets[0];
         assert_eq!((btc.asset.as_str(), btc.amount, btc.value), ("BTC", 1.5, Some(150.0)));
         assert_eq!(btc.change, Some(30.0));
-        let held: Vec<(ProviderId, f64)> =
-            btc.held.iter().map(|h| (h.exchange, h.amount)).collect();
+        let held: Vec<(ProviderId, f64)> = btc
+            .held
+            .iter()
+            .map(|h| match h.source {
+                HoldingSource::Exchange { exchange, .. } => (exchange, h.amount),
+                _ => unreachable!(),
+            })
+            .collect();
         assert_eq!(held, [(ProviderId::Binance, 1.0), (ProviderId::Okx, 0.5)]);
         assert_eq!(portfolio.accounts.len(), 3);
         // Accounts come in ProviderId order: Binance, Bybit (never read), OKX.
         assert_eq!(portfolio.accounts[1].total, None);
         let pct = Totals::of(&accounts).and_then(Totals::change_pct).unwrap();
         assert!((pct - 30.0 / 130.0 * 100.0).abs() < 1e-9);
-        assert_eq!(Portfolio::of(&BTreeMap::new()).total, None);
+        assert_eq!(Portfolio::of(&BTreeMap::new(), std::iter::empty(), None).total, None);
     }
 
     // contract: the app values USDT and USD 1:1. Display conversion scales
@@ -633,7 +722,8 @@ mod tests {
             value(ProviderId::Binance, &balances, std::slice::from_ref(&position), &prices());
         let mut account = Account::new(ProviderId::Binance);
         account.holdings = Some(holdings);
-        let portfolio = Portfolio::of(&[(ProviderId::Binance, account)].into());
+        let portfolio =
+            Portfolio::of(&[(ProviderId::Binance, account)].into(), std::iter::empty(), None);
         assert_eq!(portfolio.total, Some(210.));
         assert_eq!(portfolio.valuation.currency, crate::currency::Currency::Usd);
         let valuation = Valuation {

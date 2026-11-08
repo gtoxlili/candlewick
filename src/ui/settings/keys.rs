@@ -368,11 +368,10 @@ impl Render for ApiKeysSection {
         for (exchange, saved) in entries {
             group = group.child(self.exchange_field(exchange, saved, locale, cx));
         }
-        if configured {
-            group = group
-                .child(self.holdings_row(settings.holdings_in_bar, cx))
-                .child(self.open_row(cx));
+        if configured || self.app.shared().model().has_holdings() {
+            group = group.child(self.holdings_row(settings.holdings_in_bar, cx));
         }
+        group = group.child(self.open_row(cx));
         if let Some(error) = self.holdings_problem.clone() {
             group = group.child(parts::problem("holdings-problem", error));
         }

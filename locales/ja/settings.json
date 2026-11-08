@@ -111,7 +111,7 @@
       "loginItem_windows": "Windows の起動時に開始",
       "autoUpdate": "自動でアップデート",
       "agentAccess": "AI エージェント連携",
-      "agentsCanRead": "%{agents} が相場と保有資産を読み取れます",
+      "agentsCanRead": "%{agents} が相場を読み取り、登録資産を管理できます",
       "noAgents": "Claude Code、Codex、OpenCode が見つかりません",
       "english": "English",
       "chinese": "简体中文",

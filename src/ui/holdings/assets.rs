@@ -14,7 +14,7 @@ use super::{series_color, summary};
 use crate::ui::{theme::Palette, widgets};
 
 /// Column widths as shares of the row, with and without the cost column:
-/// asset, amount, price, 24h, value (, cost).
+/// asset, amount, price, price move, value (, cost).
 const COLUMNS: [f32; 5] = [0.268, 0.179, 0.179, 0.161, 0.213];
 const COLUMNS_COSTED: [f32; 6] = [0.224, 0.149, 0.149, 0.134, 0.179, 0.164];
 
@@ -28,7 +28,7 @@ pub struct Row {
     pub amount: String,
     /// "—" without a price.
     pub price: String,
-    /// The 24h change in percent, and what it made of this amount.
+    /// The source-reference change in percent and for this quantity.
     pub pct: Option<String>,
     pub change: Option<String>,
     pub value: String,
@@ -76,7 +76,13 @@ impl Row {
             change: asset.change.map(|change| format::signed(change, decimals)),
             value: asset
                 .value
-                .map(|value| format::price(value, decimals))
+                .map(|value| {
+                    if asset.partial {
+                        format!("{} *", format::price(value, decimals))
+                    } else {
+                        format::price(value, decimals)
+                    }
+                })
                 .unwrap_or_else(|| "—".to_owned()),
             cost: asset.cost.map(|cost| format::price(cost, format::decimals(cost, None))),
             pnl: asset.pnl.map(|pnl| format::signed(pnl, decimals)),
@@ -94,16 +100,23 @@ impl Row {
 /// one of them on one exchange.
 pub(super) fn where_held(asset: &Asset, several: bool) -> String {
     let name_of = |held: &crate::portfolio::Holding| {
-        let wallet = super::aside::wallet_name(held.wallet);
-        match (several, asset.held.len() == 1) {
-            (false, true) => wallet.to_string(),
-            (false, false) => format!("{} {}", wallet, format::amount(held.amount)),
-            (true, true) => format!("{} {wallet}", super::aside::provider_name(held.exchange)),
-            (true, false) => format!(
-                "{} {wallet} {}",
-                super::aside::provider_name(held.exchange),
-                format::amount(held.amount)
-            ),
+        let location = match &held.source {
+            crate::portfolio::HoldingSource::Exchange { exchange, wallet } => {
+                let wallet = super::aside::wallet_name(*wallet);
+                if several {
+                    format!("{} {wallet}", super::aside::provider_name(*exchange))
+                } else {
+                    wallet.to_string()
+                }
+            }
+            crate::portfolio::HoldingSource::Manual { platform, .. } => {
+                format!("{platform} · {}", t!("holdings.manual.label"))
+            }
+        };
+        if asset.held.len() == 1 {
+            location
+        } else {
+            format!("{location} {}", format::amount(held.amount))
         }
     };
     asset.held.iter().map(name_of).collect::<Vec<_>>().join(" · ")
@@ -137,7 +150,7 @@ pub fn panel(
         t!("holdings.asset").into(),
         t!("holdings.amount").into(),
         t!("holdings.price").into(),
-        "24h".into(),
+        t!("common.holdings.dayPnl").into(),
         t!("holdings.value", currency = currency.code()).into(),
     ];
     for (index, label) in labels.into_iter().enumerate() {
@@ -252,7 +265,7 @@ fn row_element(row: &Row, columns: &[f32], costed: bool, palette: Palette) -> gp
                 .truncate()
                 .child(row.where_held.clone()),
         );
-    // The 24h cell: percent on top, what it made below; stables read faint
+    // The price-move cell: percent on top, what it made below; stables read faint
     // and keep the second line to themselves.
     let pct_text = row.pct.clone().unwrap_or_else(|| "—".to_owned());
     let pct_color = match (row.stable, row.pct.is_some()) {

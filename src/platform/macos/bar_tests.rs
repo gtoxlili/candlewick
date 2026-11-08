@@ -31,10 +31,10 @@ pub(crate) fn verify_closed_menu_refresh(app: &App) {
         item.button(mtm).unwrap()
     });
     for (price, expected) in [(84_001.0, "BTC 84,001"), (84_002.0, "BTC 84,002")] {
-        shared
-            .model()
-            .quotes
-            .insert("binance:BTCUSDT".into(), Quote { last: price, open: 84_000.0, session: None });
+        shared.model().quotes.insert(
+            "binance:BTCUSDT".into(),
+            Quote { last: price, open: 84_000.0, session: None, ..Default::default() },
+        );
         bar::request_render(app);
         assert_eq!(button.title().to_string(), expected);
     }
@@ -65,7 +65,7 @@ pub(crate) fn verify_closed_menu_refresh(app: &App) {
         model.settings.watchlist[1].pinned = true;
         model.quotes.insert(
             "binance:ETHUSDT".into(),
-            Quote { last: 3_001.0, open: 3_000.0, session: None },
+            Quote { last: 3_001.0, open: 3_000.0, session: None, ..Default::default() },
         );
     }
     bar::request_render(app);
@@ -238,7 +238,7 @@ fn verify_synced_menu(app: &App) {
             updated: Some(updated),
             status: SyncStatus::Read,
         });
-        let quote = |last, open| Quote { last, open, session: None };
+        let quote = |last, open| Quote { last, open, session: None, ..Default::default() };
         model.quotes.insert("ths:600519.SH".into(), quote(1_331.45, 1_355.9));
         model.quotes.insert("ths:510300.SH".into(), quote(4.156, 4.123));
     }
@@ -277,7 +277,7 @@ fn verify_synced_menu(app: &App) {
     // Quotes move the rows, a group's too, without rebuilding the menu.
     {
         let mut model = shared.model();
-        let quote = |last, open| Quote { last, open, session: None };
+        let quote = |last, open| Quote { last, open, session: None, ..Default::default() };
         model.quotes.insert("ths:600519.SH".into(), quote(1_340.0, 1_355.9));
         model.quotes.insert("ths:510300.SH".into(), quote(4.2, 4.123));
     }

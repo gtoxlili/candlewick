@@ -279,16 +279,20 @@ mod tests {
 
     fn asset(name: &str, value: Option<f64>, change: Option<f64>, stable: bool) -> Asset {
         Asset {
+            id: name.to_owned(),
             asset: name.to_owned(),
             amount: 1.0,
             price: value,
             value,
+            partial: value.is_none(),
             change,
             change_pct: change.map(|_| 1.0),
             stable,
             held: vec![Holding {
-                exchange: ProviderId::Binance,
-                wallet: Wallet::Spot,
+                source: crate::portfolio::HoldingSource::Exchange {
+                    exchange: ProviderId::Binance,
+                    wallet: Wallet::Spot,
+                },
                 amount: 1.0,
             }],
             cost: None,
@@ -390,6 +394,7 @@ mod tests {
             change: Some(-500.25),
             assets: assets(),
             positions: positions(),
+            ..Default::default()
         }
     }
 

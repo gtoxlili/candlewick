@@ -6,11 +6,12 @@
       "okx": "OKX",
       "longbridge": "Longbridge",
       "ths": "Tonghuashun",
-      "dexscreener": "DEX Screener"
+      "dexscreener": "DEX Screener",
+      "eastmoney": "Eastmoney"
     },
     "holdings": {
       "total": "Total",
-      "dayPnl": "24h P&L",
+      "dayPnl": "Price move",
       "accounts": "Accounts",
       "assets": "Assets",
       "positions": "Positions",
@@ -20,6 +21,13 @@
       "updated": "Updated %{time}",
       "reading": "Loading…",
       "readFailed": "Couldn't read %{exchange}"
+    },
+    "quantity": {
+      "tokens": "tokens",
+      "shares": "shares / units",
+      "fundUnits": "fund shares",
+      "grams": "grams",
+      "units": "units"
     }
   },
   "tray": {
