@@ -286,9 +286,15 @@ pub struct Candidate {
 
 /// What the chart window offers for an instrument: data, not text; the window
 /// names it in its own language.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChartSpec {
     pub source: ProviderId,
+    pub presentation: Presentation,
+    /// Whether a trade tape exists, independently of the order book.
+    pub trades: bool,
+    /// How often provider-bucketed history needs checking, in seconds.
+    pub refresh_secs: u32,
     pub intervals: Vec<IntervalSpec>,
     /// What the statistics cover.
     pub stats_span: StatsSpan,
@@ -300,8 +306,7 @@ pub struct ChartSpec {
     /// Price steps the order book can be grouped by, finest first; book events
     /// carry it grouped by each. Empty: the book comes as it is.
     pub book_steps: Vec<f64>,
-    /// The stream carries an order book; without one the window shows the
-    /// trades alone.
+    /// The stream carries an order book. Trade tape availability is independent.
     pub book: bool,
     /// The statistics are a pool's: volume in the quote currency only, with
     /// liquidity, market cap and swap counts beside (`Stats::onchain`).
@@ -310,15 +315,28 @@ pub struct ChartSpec {
     pub link: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The asset's detail view, independent of which provider supplies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Presentation {
+    Trading,
+    NetAssetValue,
+    Commodity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum StatsSpan {
     /// The last 24 hours, as crypto counts a day.
     Rolling24h,
     /// The current trading day.
     Today,
+    /// Change against the previous published valuation.
+    Publication,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IntervalSpec {
     pub secs: u32,
     /// How the chart first shows it.
@@ -330,7 +348,8 @@ pub struct IntervalSpec {
     pub regular_only: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ChartMode {
     Line,
     Candle,
@@ -356,7 +375,9 @@ pub struct Stats {
     pub low: Option<f64>,
     /// In the base asset (see [`ChartSpec::volume_unit`]).
     pub volume: Option<f64>,
-    pub turnover: f64,
+    pub turnover: Option<f64>,
+    /// Source quotation time in epoch milliseconds; a NAV uses its valuation date.
+    pub source_time: Option<f64>,
     pub change: Option<f64>,
     pub change_pct: Option<f64>,
     /// What a pool adds to the picture; none for exchanges and stocks.

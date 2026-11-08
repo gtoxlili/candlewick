@@ -26,7 +26,7 @@ use tokio::{
 
 use crate::{
     bar,
-    market::{self, Candle, LiveEvent, ProviderId, Trade},
+    market::{self, Candle, LiveEvent, Presentation, ProviderId, Trade},
     model::{Instrument, Session, Shared, Venue},
     portfolio::{self, Portfolio, now_ms},
 };
@@ -72,6 +72,7 @@ pub fn router(app: App, port: u16, token: &str) -> Router {
         .route("/v1/watchlist", get(watchlist))
         .route("/v1/search", get(search))
         .route("/v1/candles", get(candles))
+        .route("/v1/history", get(history))
         .route("/v1/trades", get(trades))
         .route("/v1/market", get(market_now))
         .fallback(|| async { failure(StatusCode::NOT_FOUND, "no such endpoint; see GET /v1") })
@@ -134,7 +135,7 @@ struct Index {
     manual_holdings: bool,
     /// Stock sources whose credentials are set.
     stocks: Vec<ProviderId>,
-    /// Candle intervals in seconds, by source.
+    /// History intervals in seconds, by source; instrument-specific capabilities are in /market.
     intervals: BTreeMap<ProviderId, Vec<u32>>,
 }
 
@@ -352,8 +353,40 @@ async fn candles(
     let instrument = resolve(&api.app, &query.id)?;
     let limit = query.limit.unwrap_or(500).clamp(1, MAX_CANDLES);
     let provider = instrument.provider.provider();
+    if provider.chart_spec(&instrument).presentation == Presentation::NetAssetValue {
+        return Err(failure(
+            StatusCode::BAD_REQUEST,
+            "this instrument has published NAVs; use /v1/history",
+        ));
+    }
     let found = provider.history(&instrument, query.interval, query.end, limit).await;
     found.map(Json).map_err(|e| failure(StatusCode::BAD_GATEWAY, e.to_string()))
+}
+
+/// A common history interface that preserves value-series semantics.
+async fn history(
+    State(api): State<Api>,
+    query: Result<Query<CandlesQuery>, QueryRejection>,
+) -> Answer<Value> {
+    let Query(query) = query.map_err(bad_query)?;
+    let instrument = resolve(&api.app, &query.id)?;
+    let provider = instrument.provider.provider();
+    let spec = provider.chart_spec(&instrument);
+    let limit = query.limit.unwrap_or(500).clamp(1, MAX_CANDLES);
+    let found = provider
+        .history(&instrument, query.interval, query.end, limit)
+        .await
+        .map_err(|error| failure(StatusCode::BAD_GATEWAY, error.to_string()))?;
+    Ok(Json(history_response(spec.presentation, query.interval, found)))
+}
+
+fn history_response(presentation: Presentation, interval: u32, points: Vec<Candle>) -> Value {
+    if presentation == Presentation::NetAssetValue {
+        json!({ "kind": "nav", "interval": interval, "points": points.into_iter()
+            .map(|point| json!({"time": point.time, "value": point.close})).collect::<Vec<_>>() })
+    } else {
+        json!({ "kind": "ohlc", "interval": interval, "points": points })
+    }
 }
 
 #[derive(Deserialize)]
@@ -388,7 +421,8 @@ async fn market_now(
     let instrument = resolve(&api.app, &id)?;
     let metadata = instrument.metadata();
     let provider = instrument.provider.provider();
-    let wants_book = provider.chart_spec(&instrument).book;
+    let chart = provider.chart_spec(&instrument);
+    let wants_book = chart.book;
     let (events, mut received) = mpsc::unbounded_channel::<LiveEvent>();
     let (stop, stopped) = oneshot::channel();
     let stream = provider.stream(instrument, stopped, events);
@@ -408,7 +442,7 @@ async fn market_now(
     })
     .await;
     drop(stop);
-    Ok(Json(json!({ "metadata": metadata, "stats": stats, "book": book })))
+    Ok(Json(json!({ "metadata": metadata, "chart": chart, "stats": stats, "book": book })))
 }
 
 /// The instrument an id names: the watchlist's entry when it is one, else
@@ -446,6 +480,22 @@ mod tests {
             .map(|(name, value)| (name.clone(), HeaderValue::from_str(value).unwrap()))
             .collect();
         admit(&headers, 52733, |token| token == "t0ken").err().map(|f| f.0)
+    }
+
+    // contract: /v1/history gives NAV samples as values, without invented OHLC.
+    #[test]
+    fn history_wire_distinguishes_nav_samples_from_market_candles() {
+        let points = || {
+            vec![Candle { time: 1793894400., open: 3.003, high: 3.003, low: 3.003, close: 3.003 }]
+        };
+        assert_eq!(
+            history_response(Presentation::NetAssetValue, 86400, points()),
+            json!({"kind":"nav","interval":86400,"points":[{"time":1793894400.,"value":3.003}]})
+        );
+        let ohlc = history_response(Presentation::Commodity, 86400, points());
+        assert_eq!(ohlc["kind"], "ohlc");
+        assert_eq!(ohlc["points"][0]["close"], 3.003);
+        assert!(ohlc["points"][0].get("value").is_none());
     }
 
     // contract: Eastmoney is a program-wide source. A normal watchlist entry
@@ -529,8 +579,7 @@ mod tests {
         assert_eq!(watchlist[1]["metadata"]["quantityUnit"], "grams");
         assert_eq!(watchlist[0]["last"], 3.0022);
         assert_eq!(watchlist[1]["last"], 874.);
-        // These routes resolve the source even for a symbol outside the watchlist.
-        assert_eq!(get("/v1/candles?id=eastmoney:150.002611&interval=86400"), json!([]));
+        // Routes resolve the source even for a symbol outside the watchlist.
         assert_eq!(get("/v1/trades?id=eastmoney:150.002611"), json!([]));
         assert!(app.shared().model().manual.entries.is_empty());
     }

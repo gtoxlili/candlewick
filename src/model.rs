@@ -544,11 +544,16 @@ impl Shared {
         credentials: Credentials,
         credentials_path: PathBuf,
     ) -> (Self, watch::Receiver<FeedControl>) {
-        let exchange_rates = crate::currency::ExchangeRates::load(
-            &settings_path.with_file_name("exchange-rates.json"),
-        );
-        let manual =
-            crate::manual::Store::load(&settings_path.with_file_name("manual-holdings.json"));
+        let (exchange_rates, manual) = if settings_path.as_os_str().is_empty() {
+            (crate::currency::ExchangeRates::default(), crate::manual::Store::default())
+        } else {
+            (
+                crate::currency::ExchangeRates::load(
+                    &settings_path.with_file_name("exchange-rates.json"),
+                ),
+                crate::manual::Store::load(&settings_path.with_file_name("manual-holdings.json")),
+            )
+        };
         let (control, rx) = watch::channel(FeedControl {
             symbols: feed_symbols(&settings, &manual),
             credentials: credentials.clone(),

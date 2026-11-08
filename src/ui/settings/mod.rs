@@ -50,6 +50,14 @@ pub struct SettingsView {
     _observers: Vec<Task<()>>,
 }
 impl SettingsView {
+    #[cfg(all(target_os = "macos", feature = "test-support"))]
+    pub(crate) fn instrument_picker(
+        &self,
+        cx: &gpui_kit::App,
+    ) -> Entity<super::instrument_picker::InstrumentPicker> {
+        self.watchlist.read(cx).picker()
+    }
+
     /// The exchange keys section, for offscreen render checks.
     #[cfg(all(target_os = "macos", feature = "test-support"))]
     pub fn keys(&self) -> Entity<ApiKeysSection> {

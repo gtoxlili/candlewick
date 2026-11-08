@@ -1,6 +1,6 @@
 ---
 name: candlewick
-description: The user's synced and registered holdings and live market data from Candlewick, a desktop app running on this machine. Holdings across Binance, Bybit and OKX (spot, funding, earn, futures positions with PnL), registered stocks, ETFs, funds and gold held on other platforms, the user's watchlist with live quotes, and candles, recent trades and order books for any crypto pair, any on-chain DEX pool, US, Hong Kong and China A-share stock, or China index, Tonghuashun sector board, exchange-traded fund, CNY fund NAV or Au99.99 gold. Use when the user asks about their portfolio, positions, PnL or exposure, or about a market, or wants to weigh a trade with real numbers (持仓、仓位、盈亏、资产、登记、基金、黄金、ETF、行情、K 线、盘口、链上、池子).
+description: The user's synced and registered holdings and live market data from Candlewick, a desktop app running on this machine. Holdings across Binance, Bybit and OKX (spot, funding, earn, futures positions with PnL), registered stocks, ETFs, funds and gold held on other platforms, the user's watchlist with live quotes, and source-supported price history, recent trades and order books for any crypto pair, any on-chain DEX pool, US, Hong Kong and China A-share stock, or China index, Tonghuashun sector board, exchange-traded fund, CNY fund NAV or Au99.99 gold. Use when the user asks about their portfolio, positions, PnL or exposure, or about a market, or wants to weigh a trade with real numbers (持仓、仓位、盈亏、资产、登记、基金、黄金、ETF、行情、K 线、盘口、链上、池子).
 ---
 
 # Candlewick
@@ -19,7 +19,7 @@ The API reads market and account data and maintains local records of holdings on
 
 | Request | Returns |
 |---|---|
-| `GET /v1` | Version, the exchange the quotes come from, the exchanges whose holdings are read, the stock sources set up (`stocks`), registered-holdings support (`manualHoldings: true`), and each source's candle intervals |
+| `GET /v1` | Version, the exchange the quotes come from, the exchanges whose holdings are read, the stock sources set up (`stocks`), registered-holdings support (`manualHoldings: true`), and each source's history intervals |
 | `GET /v1/portfolio` | Synced exchange holdings and valued registered holdings |
 | `GET /v1/manual-holdings` | All registered source records |
 | `GET /v1/manual-holdings/{id}` | One registered source record |
@@ -28,13 +28,14 @@ The API reads market and account data and maintains local records of holdings on
 | `DELETE /v1/manual-holdings/{id}` | Delete a local record; HTTP 204 |
 | `GET /v1/watchlist` | The user's watchlist with live quotes |
 | `GET /v1/search?q=SOL` | `{found: [{id, instrument, metadata, liquidity}], notes}`; `instrument` can be used in a registered holding |
-| `GET /v1/candles?id=…&interval=3600&limit=500&end=…` | Candles, oldest first |
+| `GET /v1/history?id=…&interval=86400&limit=500&end=…` | `{kind, interval, points}`, oldest first; NAV values or OHLC according to the instrument |
+| `GET /v1/candles?id=…&interval=3600&limit=500&end=…` | OHLC candles, oldest first; NAV instruments return HTTP 400 |
 | `GET /v1/trades?id=…&limit=100` | Recent trades, oldest first |
-| `GET /v1/market?id=…` | Day statistics and up to 20 order book levels per side |
+| `GET /v1/market?id=…` | Instrument chart capabilities, source statistics and up to 20 order book levels per side |
 
 An instrument id is `source:symbol`: `binance:BTCUSDT`, `bybit:BTCUSDT`, `okx:BTC-USDT`, `longbridge:AAPL.US`, `longbridge:700.HK`, `longbridge:600519.SH`, `ths:600519.SH`, and for an on-chain pool `dexscreener:<chain>/<pool address>` as in DEX Screener's URLs, e.g. `dexscreener:solana/EP2ib6dYdEeqD8MfE2ezHCxX3kP3K2eLKkirfPm5eyMx`. Candles, trades and market take any symbol the source lists, whether or not it is in the watchlist. Stocks come from two sources, each needing the user's credentials in Candlewick: `longbridge` (US, Hong Kong and China A-shares) and `ths`, Tonghuashun (China only: A-shares such as `ths:600519.SH`, the exchanges' indexes such as `ths:000001.SH`, Tonghuashun's sector boards such as `ths:885525.TI`, ETFs such as `ths:510300.SH`, and LOFs). Both write a China share the same way, so `600519.SH` can be in the watchlist from either. `/v1/search` finds `ths` codes by Chinese name as well as by code. Pools are priced in USD whatever their quote token; their `quote` is `USD`, `base` the token's symbol, and `venue` names the chain and DEX. `/v1/search` finds pools by token symbol, name or address, with each pool's `liquidity` in USD to tell the pools of one token apart.
 
-Eastmoney is also available through the shared search, watchlist and market endpoints, independently of registered holdings. Eastmoney needs no credentials. `eastmoney:150.<six-digit code>` supplies the latest published CNY unit NAV and, when available, the previous published NAV, polled every 15 minutes. This is daily fund data, not an intraday estimate. `priceUpdated` encodes the NAV date at Shanghai midnight; the date uses UTC+8. Income-per-10,000-share money-market series and foreign-currency fund shares are unsupported. `eastmoney:118.AU9999` is Shanghai Gold Exchange gold in CNY per gram, polled every 15 seconds, with the source quote timestamp. Discovery uses source metadata; NAV and price availability are checked by the quote feed. A missing reference NAV or previous close leaves the price usable, with null changes. Eastmoney history and trades are empty; market supplies snapshot statistics. Stock sources retain their credential requirements.
+Eastmoney is also available through the shared search, watchlist and market endpoints, independently of registered holdings. Eastmoney needs no credentials. `eastmoney:150.<six-digit code>` supplies the latest published CNY unit NAV and, when available, the previous published NAV, polled every 15 minutes. This is daily fund data, not an intraday estimate. `priceUpdated` encodes the NAV date at Shanghai midnight; the date uses UTC+8. Income-per-10,000-share money-market series and foreign-currency fund shares are unsupported. `eastmoney:118.AU9999` is Shanghai Gold Exchange gold in CNY per gram, polled every 15 seconds, with the source quote timestamp. Discovery uses source metadata; NAV and price availability are checked by the quote feed. A missing reference NAV or previous close leaves the price usable, with null changes. Eastmoney supplies daily published NAV history and real Au99.99 daily OHLC history, both at interval 86400. Recent trades and order books are unavailable. NAV history refreshes every 15 minutes in the detail window; gold history every 30 seconds. A connected NAV source means the latest published valuation, not an intraday price. Stock sources retain their credential requirements.
 
 Search results, watchlist entries, market responses and valued registered holdings include `metadata`: `{assetId, quantityUnit, priceKind, usdConversion}`. `quantityUnit` is `tokens`, `shares`, `fundUnits`, `grams` or `units`. `priceKind` is `{kind: "market"}` or `{kind: "nav", utcOffset: seconds east of UTC}`; the latter supplies the timezone for the NAV's calendar date. `usdConversion` is an additional quoted instrument used to convert a crypto quote currency, or null. These properties belong to the market source and apply throughout the app.
 
@@ -87,6 +88,14 @@ A platform describes where the user holds an asset. An instrument describes the 
 - `session` is `pre`, `post` or `overnight` for US stocks outside regular hours, null otherwise.
 - `priceUpdated` is the optional source timestamp and `received` the quote receipt time, in epoch ms. `last` is null until the first quote arrives. `pinned` marks the one shown in the menu bar.
 
+## Price history
+
+`GET /v1/history` returns `{kind, interval, points}`. For published fund NAVs, `kind` is `nav` and each point is `{time, value}`. `time` is the valuation date at Shanghai midnight in epoch seconds, and `value` is CNY per fund unit. The curve describes unit NAV changes; it is not a total-return series with reinvested distributions. There are no intraday observations or OHLC fields. Fund history returns at most 20 observations per call. Passing the oldest `time` as `end` fetches earlier observations.
+
+For market prices, `kind` is `ohlc` and points have `{time, open, high, low, close}`. Au99.99 prices are CNY per gram, with daily bars dated by the Shanghai trading day, including its night session. At most 1000 gold bars are returned per call. No intraday bars are offered for Eastmoney instruments.
+
+`GET /v1/candles` reads OHLC history directly and rejects NAV instruments. Both history endpoints use an exclusive `end` cursor; an empty page means there is no older data.
+
 ## Candles
 
 `[{time, open, high, low, close}]`; `time` is the epoch second the candle opened, and the last candle is still forming.
@@ -103,9 +112,10 @@ A platform describes where the user holds an asset. An instrument describes the 
 
 ## Market
 
-`{metadata, stats, book}`; `stats` and `book` are null if they did not arrive in time.
+`{metadata, chart, stats, book}`; `stats` and `book` are null if they did not arrive in time.
 
-- `stats`: `{last, high, low, volume, turnover, change, changePct, onchain}`; volume in the base asset, turnover in the quote; `high`, `low` and `volume` are null where the source gives none. `change` and `changePct` are null when the reference price is unavailable, while `last` remains usable. Crypto and pool stats cover the last 24 hours, stocks the current day. For a pool, `onchain` is `{liquidity, marketCap, fdv, buys, sells}`: USD in the pool, the token's market cap and fully diluted valuation (either may be null), and the day's swap counts; elsewhere it is null.
+- `chart` describes this instrument: `presentation` is `trading`, `netAssetValue` or `commodity`; `book` and `trades` state whether those feeds exist, `intervals` lists supported history resolutions through `secs`, `refreshSecs` is the history refresh interval, and `statsSpan` is `rolling24h`, `today` or `publication`. Native detail windows use these semantics: NAVs show a dated valuation and value curve; commodities show a price overview with real daily OHLC available.
+- `stats`: `{last, high, low, volume, turnover, sourceTime, change, changePct, onchain}`; volume in the base asset, turnover in the quote; `high`, `low`, `volume` and `turnover` are null where the source gives none. `sourceTime` is an optional source timestamp in epoch milliseconds; for NAVs it encodes the Shanghai valuation date. `change` and `changePct` are null when the reference price is unavailable, while `last` remains usable. Crypto and pool stats cover the last 24 hours, stocks the current day. For a pool, `onchain` is `{liquidity, marketCap, fdv, buys, sells}`: USD in the pool, the token's market cap and fully diluted valuation (either may be null), and the day's swap counts; elsewhere it is null.
 - `book`: `{bids, asks}`, best level first, each `{price, qty}`; null for pools and `ths`, which have no order book.
 - `ths` stats come from a snapshot that Candlewick reads every few seconds while Shanghai trades; `volume` is in shares, fund units for funds and the members' shares for an index.
 - It opens a live connection to the source and waits for its first data, which takes up to a few seconds.

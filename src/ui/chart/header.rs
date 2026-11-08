@@ -33,6 +33,7 @@ fn span_label(span: StatsSpan) -> &'static str {
     match span {
         StatsSpan::Rolling24h => t!("chart.span_rolling24h"),
         StatsSpan::Today => t!("chart.span_today"),
+        StatsSpan::Publication => t!("chart.overview.previousNav"),
     }
 }
 
@@ -227,6 +228,20 @@ impl Render for Hero {
             }
         };
 
+        let unit_label = model.spec().and_then(|spec| match spec.presentation {
+            crate::market::Presentation::Trading => None,
+            crate::market::Presentation::NetAssetValue => Some(format!(
+                "{} / {}",
+                spec.turnover_unit,
+                t!("chart.overview.perUnit")
+            )),
+            crate::market::Presentation::Commodity => Some(format!(
+                "{} / {}",
+                spec.turnover_unit,
+                t!("chart.overview.perGram")
+            )),
+        });
+
         let badge = stats.and_then(|stats| stats.change_pct.zip(stats.change)).map(
             |(change_pct, change)| {
                 // A change that rounds to 0.00% reads as flat, never colored.
@@ -265,7 +280,22 @@ impl Render for Hero {
             .flex()
             .flex_col()
             .gap(px(8.))
-            .child(div().flex().items_baseline().gap(px(12.)).child(price).children(badge))
+            .child(
+                div()
+                    .flex()
+                    .items_baseline()
+                    .gap(px(12.))
+                    .child(price)
+                    .children(unit_label.map(|unit| {
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(palette.muted)
+                            .whitespace_nowrap()
+                            .child(unit)
+                    }))
+                    .children(badge),
+            )
             .child(
                 div()
                     .min_w_0()
@@ -347,7 +377,9 @@ impl Render for LiveBadge {
             FeedState::Connecting => (widgets::Status::Busy, t!("chart.connecting")),
             FeedState::Offline => (widgets::Status::Error, t!("chart.reconnecting")),
         };
-        let dot = if state == FeedState::Live {
+        let dot = if state == FeedState::Live
+            && model.presentation() == crate::market::Presentation::Trading
+        {
             // A ring swells out of the dot with each new price and rests until
             // the next one; a repeating ring would keep the whole window
             // redrawing every frame while the feed is idle.

@@ -10,7 +10,7 @@ use crate::{
     model::{Instrument, MAX_INSTRUMENTS},
     ui::{
         self,
-        instrument_picker::{InstrumentPicker, Presentation, Selected},
+        instrument_picker::{InstrumentPicker, Selected},
     },
 };
 use gpui_kit::{
@@ -74,6 +74,11 @@ pub struct WatchlistSection {
     _subscriptions: Vec<Subscription>,
 }
 impl WatchlistSection {
+    #[cfg(all(target_os = "macos", feature = "test-support"))]
+    pub(super) fn picker(&self) -> Entity<InstrumentPicker> {
+        self.picker.clone()
+    }
+
     pub fn new(app: App, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = api::get_settings(&app);
         let exchange_value = settings.exchange;
@@ -82,16 +87,8 @@ impl WatchlistSection {
         } else {
             t!("settings.watchlist.search").to_owned()
         };
-        let picker = cx.new(|cx| {
-            InstrumentPicker::new(
-                app.clone(),
-                "watchlist",
-                Presentation::Popover,
-                placeholder,
-                window,
-                cx,
-            )
-        });
+        let picker =
+            cx.new(|cx| InstrumentPicker::new(app.clone(), "watchlist", placeholder, window, cx));
         let exchange = cx.new(|cx| {
             SelectState::new(
                 exchanges(),

@@ -15,7 +15,7 @@ use gpui_kit::{
     size, test::TestWindowExt,
 };
 
-struct Backdrop<V> {
+pub(crate) struct Backdrop<V> {
     app: App,
     view: Entity<V>,
 }
@@ -25,7 +25,11 @@ impl<V: Render> Render for Backdrop<V> {
     }
 }
 
-fn backdrop<V: Render>(view: Entity<V>, app: &App, cx: &mut gpui_kit::App) -> Entity<Backdrop<V>> {
+pub(crate) fn backdrop<V: Render>(
+    view: Entity<V>,
+    app: &App,
+    cx: &mut gpui_kit::App,
+) -> Entity<Backdrop<V>> {
     cx.new(|_| Backdrop { app: app.clone(), view })
 }
 
@@ -559,7 +563,8 @@ fn panels_market(spec: &crate::market::ChartSpec) -> ui::chart::market::Market {
             high: Some(high),
             low: Some(low),
             volume: Some(18_420.0),
-            turnover: 1_246_000_000.0,
+            turnover: Some(1_246_000_000.0),
+            source_time: None,
             change: Some(last - first),
             change_pct: Some((last - first) / first * 100.0),
             onchain: spec.onchain.then_some(Onchain {
@@ -768,7 +773,8 @@ fn live_market(
             high: Some(last + 180.0),
             low: Some(last - 160.0),
             volume: Some(12.0),
-            turnover: 1.0e9,
+            turnover: Some(1.0e9),
+            source_time: None,
             change: Some(last - first),
             change_pct: Some((last - first) / first * 100.0),
             onchain: None,
@@ -1303,11 +1309,20 @@ pub fn run() {
     );
     cx.update(gpui_kit::init);
     let runtime = tokio::runtime::Runtime::new().unwrap();
+    let dir = std::env::temp_dir().join(format!(
+        "candlewick-asset-overviews-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::create_dir_all(&dir);
     let (shared, _) = Shared::new(
         Settings::default(),
+        dir.join("settings.json"),
         Default::default(),
-        Default::default(),
-        Default::default(),
+        dir.join("credentials.json"),
     );
     let app = cx.update(|cx| App::new(cx, runtime.handle().clone(), shared));
     {
@@ -1368,7 +1383,8 @@ pub fn run() {
                             high: Some(85_000.),
                             low: Some(82_000.),
                             volume: Some(12_345.6),
-                            turnover: 987_654_321.,
+                            turnover: Some(987_654_321.),
+                            source_time: None,
                             change: Some(1_024.5),
                             change_pct: Some(1.23),
                             onchain: None,
@@ -1499,6 +1515,7 @@ pub fn run() {
     chart_live_samples(&mut cx, &app);
     display_samples(&mut cx, &app);
     picker_sample(&mut cx, &app, &windows);
+    asset_overview_samples(&mut cx, &app);
     app.shared().model().settings.color_scheme = ColorScheme::RedUp;
     app.notify(crate::app::Topic::Settings);
     cx.run_until_parked();
@@ -1510,6 +1527,7 @@ pub fn run() {
     let reversed = Palette::new(false, ColorScheme::RedUp);
     assert_eq!(normal.up, reversed.down);
     assert_eq!(normal.down, reversed.up);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The chart's instrument picker open, in both themes: its list sits close to
@@ -1649,4 +1667,95 @@ fn keys_samples(cx: &mut HeadlessAppContext, app: &App) {
 /// and both checked languages.
 fn display_samples(cx: &mut HeadlessAppContext, app: &App) {
     crate::ui::settings::display_samples(cx, app, &render_png);
+}
+
+/// The asset overview's real render and input boundary. Prepared source samples
+/// keep the check offline; no provider workers or production settings are opened.
+fn asset_overview_samples(cx: &mut HeadlessAppContext, app: &App) {
+    use crate::market::{Candle, FeedState, LiveEvent, ProviderId, Stats};
+    use ui::chart::{market::Market, model_state::ChartModel};
+    let locale = crate::i18n::current();
+    crate::i18n::set(crate::i18n::Locale::ZhCn);
+    for (symbol, label) in [("150.110022", "fund"), ("118.AU9999", "gold")] {
+        for (width, height) in [(980., 640.), (760., 480.)] {
+            let nav = label == "fund";
+            let provider = ProviderId::Eastmoney.provider();
+            let mut instrument = provider.bare(symbol).unwrap();
+            instrument.name = Some(if nav { "易方达消费行业股票" } else { "黄金9999" }.into());
+            let spec = provider.chart_spec(&instrument);
+            let mut market = Market::new(spec.intervals[0]);
+            let last_time = 1_793_894_400.; // 2026-11-06 Shanghai midnight.
+            let points = (0..400)
+                .map(|index| {
+                    let value = if nav { 3.005 } else { 874. };
+                    let close = value
+                        * (1. - f64::from(399 - index) * 0.0003
+                            + ((f64::from(index) / 15.).sin() - (399_f64 / 15.).sin()) * 0.01);
+                    Candle {
+                        time: last_time - f64::from(399 - index) * 86400.,
+                        open: if nav { close } else { close - 2. },
+                        high: if nav { close } else { close + 3. },
+                        low: if nav { close } else { close - 4. },
+                        close,
+                    }
+                })
+                .collect();
+            let load = market.begin_history();
+            market.finish_history(load, points);
+            let older = market.begin_older().unwrap();
+            market.finish_older(older.load, Vec::new());
+            market.apply(LiveEvent::Stats {
+                stats: Stats {
+                    last: if nav { 3.005 } else { 874. },
+                    high: (!nav).then_some(874.),
+                    low: (!nav).then_some(865.),
+                    volume: None,
+                    turnover: (!nav).then_some(343430928.),
+                    source_time: Some(last_time * 1000.),
+                    change: Some(if nav { 0.002 } else { 5.43 }),
+                    change_pct: Some(if nav { 0.0666 } else { 0.625 }),
+                    onchain: None,
+                },
+            });
+            market.apply(LiveEvent::State { state: FeedState::Live });
+            let model = cx.update(|cx| {
+                cx.new(|_| ChartModel::with_market(app.clone(), Some(instrument), spec, market))
+            });
+            cx.update(|cx| model.update(cx, |model, cx| model.select_overview_range(90, cx)));
+            let window = chart_live_window(cx, app, width, height, model.clone());
+            for (theme, dark) in [("light", false), ("dark", true)] {
+                cx.update(|cx| ui::theme::apply(app, dark, cx));
+                assert!(chart_settle(cx, window, 400));
+                chart_png(cx, window, &format!("overview-{label}-{width}-{theme}"));
+                cx.update_window(window, |_, window, _| {
+                    assert!(window.try_find("asset-overview").is_some());
+                    assert!(window.try_find("chart-indicators-button").is_none());
+                    assert!(window.try_find("chart-mode-candle").is_some() != nav);
+                })
+                .unwrap();
+            }
+            // Real keyboard routing cannot enable hidden drawing tools.
+            cx.update_window(window, |_, window, cx| window.press("alt-t", cx)).unwrap();
+            assert_eq!(
+                cx.update(|cx| model.read(cx).analysis().tool),
+                ui::chart::analysis::Tool::Cursor
+            );
+            cx.update(|cx| {
+                model.update(cx, |model, cx| {
+                    model.select_overview_range(365, cx);
+                    assert_eq!(model.viewport().view.span, 365. * 86400.);
+                    assert_eq!(model.chart_now(last_time + 4. * 86400.), last_time + 86400.);
+                })
+            });
+            if !nav {
+                cx.update_window(window, |_, window, cx| window.click("chart-mode-candle", cx))
+                    .unwrap();
+                assert_eq!(cx.update(|cx| model.read(cx).mode()), ui::prefs::Mode::Candle);
+                chart_png(cx, window, &format!("overview-gold-{width}-candles"));
+            }
+            cx.update_window(window, |_, window, _| window.remove_window()).unwrap();
+        }
+    }
+    ui::holdings::fixtures::registered_samples(cx, app, &render_png);
+    crate::i18n::set(locale);
 }

@@ -147,15 +147,6 @@ pub fn clock(ms: f64) -> String {
     format!("{hour:02}:{minute:02}:{second:02}")
 }
 
-/// A manually maintained record needs its date as well as its local time.
-pub fn timestamp(ms: f64) -> String {
-    let time = local_time_parts((ms / 1000.).floor() as i64);
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        time.year, time.month, time.day, time.hour, time.minute
-    )
-}
-
 /// A stretch of time in words, rounded to its largest unit: `45 seconds`,
 /// `15分钟`, `1.5 時間`.
 pub fn duration(secs: f64) -> String {

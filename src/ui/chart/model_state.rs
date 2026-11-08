@@ -18,7 +18,7 @@ use super::{
 use crate::{
     api,
     app::{App, Topic},
-    market::{Candle, ChartMode, ChartSpec, FeedState, IntervalSpec, LiveEvent},
+    market::{Candle, ChartMode, ChartSpec, FeedState, IntervalSpec, LiveEvent, Presentation},
     model::Instrument,
     ui::{
         self,
@@ -35,6 +35,8 @@ pub struct ChartModel {
     market: Option<Market>,
     visible: Option<VisibleStats>,
     last_direction: i8,
+    overview_days: u32,
+    overview_mode: Mode,
     viewport: Viewport,
     analysis: Analysis,
     analysis_revision: Option<(u32, u64)>,
@@ -81,6 +83,8 @@ impl ChartModel {
             market: None,
             visible: None,
             last_direction: 0,
+            overview_days: 90,
+            overview_mode: Mode::Line,
             viewport: Viewport::new(now(), 60.0, prefs.chart.bars),
             analysis,
             analysis_revision: None,
@@ -114,6 +118,10 @@ impl ChartModel {
         model.spec = Some(spec);
         model.market = Some(market);
         model.viewport.select_interval(f64::from(secs));
+        if model.presentation() != Presentation::Trading {
+            model.analysis = Analysis::new();
+            model.viewport.show_span(f64::from(model.overview_days) * 86_400.);
+        }
         model.update_history_bounds();
         model.sync_analysis_candles();
         model
@@ -193,7 +201,49 @@ impl ChartModel {
     pub fn book_step(&self) -> usize {
         self.prefs.chart.book_step
     }
+    pub fn presentation(&self) -> Presentation {
+        self.spec.as_ref().map_or(Presentation::Trading, |spec| spec.presentation)
+    }
+    pub fn overview_days(&self) -> u32 {
+        self.overview_days
+    }
+    pub fn select_overview_range(&mut self, days: u32, cx: &mut Context<Self>) {
+        if ![30, 90, 365].contains(&days) || self.presentation() == Presentation::Trading {
+            return;
+        }
+        self.overview_days = days;
+        self.viewport.show_span(f64::from(days) * 86_400.);
+        self.viewport_changed(cx);
+        cx.notify();
+    }
+    pub fn update_clock(&mut self, clock: f64) {
+        self.viewport.set_time(clock, self.chart_now(clock));
+    }
+
+    /// A published series ends at its last observation, including after weekends.
+    pub fn chart_now(&self, clock: f64) -> f64 {
+        if self.presentation() == Presentation::Trading {
+            return clock;
+        }
+        self.market
+            .as_ref()
+            .and_then(|market| {
+                market
+                    .current()
+                    .live()
+                    .or_else(|| market.current().candles().last().copied())
+                    .map(|candle| candle.time + 86_400.)
+            })
+            .unwrap_or(clock)
+    }
+
     pub fn mode(&self) -> Mode {
+        if self.presentation() == Presentation::NetAssetValue {
+            return Mode::Line;
+        }
+        if self.presentation() == Presentation::Commodity {
+            return self.overview_mode;
+        }
         let Some(market) = &self.market else {
             return Mode::Candle;
         };
@@ -233,6 +283,14 @@ impl ChartModel {
     }
 
     pub fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
+        if self.presentation() == Presentation::NetAssetValue {
+            return;
+        }
+        if self.presentation() == Presentation::Commodity {
+            self.overview_mode = mode;
+            cx.notify();
+            return;
+        }
         if let Some(market) = &self.market {
             self.prefs.chart.modes.insert(market.interval(), mode);
             self.schedule_save(cx);
@@ -263,11 +321,11 @@ impl ChartModel {
         for event in self.viewport.take_events() {
             match event {
                 ViewportEvent::Older => self.load_older(cx),
-                ViewportEvent::Zoom(bars) => {
+                ViewportEvent::Zoom(bars) if self.presentation() == Presentation::Trading => {
                     self.prefs.chart.bars = bars;
                     self.schedule_save(cx);
                 }
-                ViewportEvent::Live(_) => {}
+                ViewportEvent::Live(_) | ViewportEvent::Zoom(_) => {}
             }
         }
         cx.notify();
@@ -316,21 +374,25 @@ impl ChartModel {
         self.viewport = Viewport::new(now(), 60.0, self.prefs.chart.bars);
         self.visible = None;
         self.last_direction = 0;
+        self.overview_days = 90;
+        self.overview_mode = Mode::Line;
         self.frame.set(None);
         self.older_backoff = Duration::ZERO;
         self.older_retry_at = None;
         self.analysis = Analysis::new();
-        for choice in &self.prefs.chart.indicators {
-            self.analysis.set_indicator(&choice.id, Some(choice.on), Some(choice.period));
+        if self.presentation() == Presentation::Trading {
+            for choice in &self.prefs.chart.indicators {
+                self.analysis.set_indicator(&choice.id, Some(choice.on), Some(choice.period));
+            }
+            self.analysis.set_instrument(
+                id.clone(),
+                id.as_ref()
+                    .and_then(|id| self.prefs.chart.drawings.get(id))
+                    .cloned()
+                    .unwrap_or_default(),
+            );
         }
         let _ = self.analysis.take_persist();
-        self.analysis.set_instrument(
-            id.clone(),
-            id.as_ref()
-                .and_then(|id| self.prefs.chart.drawings.get(id))
-                .cloned()
-                .unwrap_or_default(),
-        );
         let interval = self
             .spec
             .as_ref()
@@ -338,6 +400,9 @@ impl ChartModel {
         if let Some(interval) = interval {
             self.market = Some(Market::new(interval));
             self.viewport = Viewport::new(now(), f64::from(interval.secs), self.prefs.chart.bars);
+            if self.presentation() != Presentation::Trading {
+                self.viewport.show_span(f64::from(self.overview_days) * 86_400.);
+            }
             self.load_history(cx);
             self.load_trades(cx);
             self.connect(cx);
@@ -554,6 +619,9 @@ impl ChartModel {
         self.keep(task);
     }
     fn load_trades(&mut self, cx: &mut Context<Self>) {
+        if !self.spec.as_ref().is_some_and(|spec| spec.trades) {
+            return;
+        }
         let Some(id) = self.instrument_id.clone() else {
             return;
         };
@@ -614,9 +682,10 @@ impl ChartModel {
     }
     fn start_refresh_timer(&mut self, cx: &mut Context<Self>) {
         let generation = self.generation;
+        let refresh_secs = self.spec.as_ref().map_or(30, |spec| spec.refresh_secs).max(1);
         let task = cx.spawn(async move |weak, cx| {
             loop {
-                cx.background_executor().timer(Duration::from_secs(30)).await;
+                cx.background_executor().timer(Duration::from_secs(u64::from(refresh_secs))).await;
                 if weak
                     .update(cx, |model, cx| {
                         if model.generation == generation {

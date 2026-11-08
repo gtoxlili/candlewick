@@ -24,9 +24,9 @@
     },
     "quantity": {
       "tokens": "トークン",
-      "shares": "株 / 口",
+      "shares": "株",
       "fundUnits": "口",
-      "grams": "グラム",
+      "grams": "g",
       "units": "単位"
     }
   },

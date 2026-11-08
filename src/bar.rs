@@ -494,16 +494,20 @@ fn holdings(portfolio: &crate::portfolio::Portfolio) -> Holdings {
             })
         })
         .or_else(|| {
-            let latest = portfolio.accounts.iter().filter_map(|a| a.updated).fold(0.0, f64::max);
+            let latest = portfolio
+                .accounts
+                .iter()
+                .filter_map(|a| a.updated)
+                .chain(
+                    portfolio
+                        .manual_holdings
+                        .iter()
+                        .filter_map(|h| h.received.or(h.price_updated)),
+                )
+                .fold(0.0, f64::max);
             (latest > 0.0).then(|| t!("common.holdings.updated", time = format::clock(latest)))
         })
-        .unwrap_or_else(|| {
-            if portfolio.manual_holdings.is_empty() {
-                t!("common.holdings.reading").to_owned()
-            } else {
-                t!("holdings.manual.summary", count = portfolio.manual_holdings.len()).to_owned()
-            }
-        });
+        .unwrap_or_else(|| t!("common.holdings.reading").to_owned());
     Holdings { total, day, accounts, assets, positions, caption }
 }
 

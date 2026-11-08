@@ -68,6 +68,20 @@
       "close": "終値"
     },
     "bars": "%{count} 本",
-    "barsOne": "%{count} 本"
+    "barsOne": "%{count} 本",
+    "overview": {
+      "perUnit": "口",
+      "perGram": "g",
+      "unitNav": "基準価額",
+      "navDate": "基準日",
+      "quoteTime": "更新日時",
+      "previousNav": "前回比",
+      "previousValue": "前回基準価額",
+      "month": "1か月",
+      "quarter": "3か月",
+      "year": "1年",
+      "rangeHigh": "期間高値",
+      "rangeLow": "期間安値"
+    }
   }
 }

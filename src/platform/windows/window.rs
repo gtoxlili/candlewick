@@ -12,7 +12,7 @@ pub const ACTIVATION_RAISES_WINDOWS: bool = false;
 pub fn init(_app: &App, _cx: &mut gpui_kit::App) {}
 pub fn relabel(_cx: &mut gpui_kit::App) {}
 
-pub fn will_show(_app: &App, _cx: &mut gpui_kit::App, _label: &'static str) {
+pub fn will_show(_app: &App, _cx: &mut gpui_kit::App, _label: &str) {
     super::set_efficiency_mode(false);
 }
 

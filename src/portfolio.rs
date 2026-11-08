@@ -402,16 +402,9 @@ impl Portfolio {
         for (asset, value) in registered {
             partial |= asset.partial;
             total = add(total, asset.value);
-            change = if manual_holdings.is_empty() && accounts.is_empty() {
-                asset.change
-            } else {
-                change.zip(asset.change).map(|(a, b)| a + b)
-            };
+            change = add(change, asset.change);
             manual_assets.push(asset);
             manual_holdings.push(value);
-        }
-        if partial {
-            change = None;
         }
         let valued = accounts.values().filter_map(|a| a.holdings.as_ref());
         let mut positions: Vec<PositionValue> =
@@ -666,7 +659,7 @@ mod tests {
         ]
         .into();
         let portfolio = Portfolio::of(&accounts, std::iter::empty(), None);
-        assert_eq!((portfolio.total, portfolio.change), (Some(160.0), None));
+        assert_eq!((portfolio.total, portfolio.change), (Some(160.0), Some(30.0)));
         assert!(portfolio.partial, "Bybit has not supplied a valuation yet");
         let btc = &portfolio.assets[0];
         assert_eq!((btc.asset.as_str(), btc.amount, btc.value), ("BTC", 1.5, Some(150.0)));

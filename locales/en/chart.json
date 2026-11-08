@@ -68,6 +68,20 @@
       "close": "Close"
     },
     "bars": "%{count} bars",
-    "barsOne": "%{count} bar"
+    "barsOne": "%{count} bar",
+    "overview": {
+      "perUnit": "unit",
+      "perGram": "g",
+      "unitNav": "Unit NAV",
+      "navDate": "Valuation date",
+      "quoteTime": "Updated",
+      "previousNav": "prev.",
+      "previousValue": "Previous NAV",
+      "month": "1M",
+      "quarter": "3M",
+      "year": "1Y",
+      "rangeHigh": "Period high",
+      "rangeLow": "Period low"
+    }
   }
 }

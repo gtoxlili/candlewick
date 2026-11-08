@@ -96,6 +96,9 @@ impl Provider for Longbridge {
         let market = market_of(&instrument.symbol);
         ChartSpec {
             source: ProviderId::Longbridge,
+            presentation: super::Presentation::Trading,
+            trades: true,
+            refresh_secs: 30,
             intervals: INTERVALS
                 .iter()
                 .map(|i| IntervalSpec {

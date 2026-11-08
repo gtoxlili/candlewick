@@ -8,6 +8,7 @@ mod aside;
 mod assets;
 mod hero;
 mod manual;
+pub(crate) use manual::ManualView;
 mod tiles;
 
 #[cfg(all(target_os = "macos", feature = "test-support"))]
@@ -76,8 +77,6 @@ pub struct HoldingsView {
     flash: (usize, Option<bool>),
     _observers: Vec<Task<()>>,
     stale_timer: Option<Task<()>>,
-    manual: Entity<manual::ManualView>,
-    show_manual: bool,
 }
 
 impl HoldingsView {
@@ -100,13 +99,7 @@ impl HoldingsView {
                 view.flash = (view.flash.0 + 1, Some(down));
             }
             view.portfolio = std::sync::Arc::new(next);
-            view.manual.update(cx, |manual, cx| {
-                manual.portfolio = view.portfolio.clone();
-                cx.notify();
-            });
-            if !view.show_manual {
-                view.recompute();
-            }
+            view.recompute();
             view.schedule_stale_check(cx);
         }));
         observers.push(observe(&app, crate::app::Topic::Locale, cx, |view, _| {
@@ -115,11 +108,7 @@ impl HoldingsView {
         let dot_app = app.clone();
         let live_dot = cx.new(|_| allocation::LiveDot::new(dot_app));
         let portfolio = std::sync::Arc::new(api::get_portfolio(&app));
-        let manual =
-            cx.new(|cx| manual::ManualView::new(app.clone(), portfolio.clone(), window, cx));
         let mut view = Self {
-            manual,
-            show_manual: false,
             portfolio,
             sort: summary::Sort::Value,
             show_small: false,
@@ -262,7 +251,7 @@ impl HoldingsView {
 }
 
 impl Render for HoldingsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = Palette::current(&self.app, cx);
         let now = portfolio::now_ms();
         let mut bar = TitleBar::new()
@@ -291,22 +280,15 @@ impl Render for HoldingsView {
             );
         }
         let app = self.app.clone();
+        let manage = self.app.clone();
         bar = bar.child(
             Button::new("manage-manual")
                 .ghost()
                 .small()
-                .label(if self.show_manual {
-                    t!("holdings.manual.back")
-                } else {
-                    t!("holdings.manual.title")
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.show_manual = !this.show_manual;
-                    if !this.show_manual {
-                        this.recompute();
-                    }
-                    cx.notify();
-                })),
+                .label(t!("holdings.manual.title"))
+                .on_click(move |_, _, _| {
+                    let _ = crate::window::open_manual_holdings(&manage);
+                }),
         );
         bar = bar.child(
             Button::new("manage-keys").ghost().small().label(t!("holdings.manageKeys")).on_click(
@@ -317,75 +299,72 @@ impl Render for HoldingsView {
             ),
         );
 
-        let body = if self.show_manual {
-            div().flex().flex_1().min_h_0().child(self.manual.clone())
-        } else if self.portfolio.accounts.is_empty() && self.portfolio.manual_holdings.is_empty() {
-            empty_portfolio(self.app.clone(), cx.entity(), palette)
-        } else {
-            let view = cx.entity();
-            let toggle_small = {
-                let view = view.clone();
-                move |cx: &mut gpui_kit::App| {
-                    view.update(cx, |view, cx| {
-                        view.show_small = !view.show_small;
-                        view.recompute();
+        let body =
+            if self.portfolio.accounts.is_empty() && self.portfolio.manual_holdings.is_empty() {
+                empty_portfolio(self.app.clone(), palette)
+            } else {
+                let view = cx.entity();
+                let toggle_small = {
+                    let view = view.clone();
+                    move |cx: &mut gpui_kit::App| {
+                        view.update(cx, |view, cx| {
+                            view.show_small = !view.show_small;
+                            view.recompute();
+                            cx.notify();
+                        });
+                    }
+                };
+                let flash = self.flash;
+                let derived = &self.derived;
+                let live = self
+                    .portfolio
+                    .accounts
+                    .iter()
+                    .filter_map(|account| account.updated)
+                    .fold(0., f64::max);
+                let live = live > 0. && now - live < LIVE_MS;
+                if self.live_dot.read(cx).live != live {
+                    self.live_dot.update(cx, |dot, cx| {
+                        dot.live = live;
                         cx.notify();
                     });
                 }
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .flex_col()
+                            .gap(px(12.))
+                            .pb(px(16.))
+                            .child(hero::hero(&self.portfolio, &derived.insight, flash, palette))
+                            .child(allocation::allocation(&derived.shares, &self.live_dot, palette))
+                            .child(sort_tabs(self.sort, view.clone(), palette))
+                            .child(assets::panel(
+                                &derived.rows,
+                                derived.costed,
+                                derived.small.count,
+                                derived.small.value,
+                                self.portfolio.valuation.currency,
+                                self.show_small,
+                                &self.assets_scroll,
+                                palette,
+                                toggle_small,
+                            ))
+                            .child(tiles::tiles(&self.portfolio, &derived.figures, palette)),
+                    )
+                    .child(aside::aside(
+                        &self.portfolio,
+                        self.tab,
+                        derived.several,
+                        view,
+                        palette,
+                    ))
             };
-            let flash = self.flash;
-            let derived = &self.derived;
-            let live = self
-                .portfolio
-                .accounts
-                .iter()
-                .filter_map(|account| account.updated)
-                .fold(0., f64::max);
-            let live = live > 0. && now - live < LIVE_MS;
-            if self.live_dot.read(cx).live != live {
-                self.live_dot.update(cx, |dot, cx| {
-                    dot.live = live;
-                    cx.notify();
-                });
-            }
-            div()
-                .flex()
-                .flex_1()
-                .min_h_0()
-                .child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .min_w_0()
-                        .flex_col()
-                        .gap(px(12.))
-                        .pb(px(16.))
-                        .child(hero::hero(&self.portfolio, &derived.insight, flash, palette))
-                        .children((!self.portfolio.manual_holdings.is_empty()).then(|| {
-                            div().px(px(16.)).text_size(px(11.)).text_color(palette.muted).child(
-                                t!(
-                                    "holdings.manual.summary",
-                                    count = self.portfolio.manual_holdings.len()
-                                ),
-                            )
-                        }))
-                        .child(allocation::allocation(&derived.shares, &self.live_dot, palette))
-                        .child(sort_tabs(self.sort, view.clone(), palette))
-                        .child(assets::panel(
-                            &derived.rows,
-                            derived.costed,
-                            derived.small.count,
-                            derived.small.value,
-                            self.portfolio.valuation.currency,
-                            self.show_small,
-                            &self.assets_scroll,
-                            palette,
-                            toggle_small,
-                        ))
-                        .child(tiles::tiles(&self.portfolio, &derived.figures, palette)),
-                )
-                .child(aside::aside(&self.portfolio, self.tab, derived.several, view, palette))
-        };
 
         div()
             .size_full()
@@ -396,13 +375,6 @@ impl Render for HoldingsView {
             .child(bar)
             .children(self.portfolio.manual_error.clone().map(|error| {
                 div().px(px(16.)).text_size(px(11.)).text_color(palette.red).child(error)
-            }))
-            .children(self.portfolio.partial.then(|| {
-                div()
-                    .px(px(16.))
-                    .text_size(px(11.))
-                    .text_color(palette.amber)
-                    .child(t!("holdings.manual.partial"))
             }))
             .child(body)
     }
@@ -430,7 +402,8 @@ fn sort_tabs(
 }
 
 /// Neither a synced account nor a registered holding exists.
-fn empty_portfolio(app: App, view: Entity<HoldingsView>, palette: Palette) -> gpui_kit::Div {
+fn empty_portfolio(app: App, palette: Palette) -> gpui_kit::Div {
+    let add = app.clone();
     div()
         .flex()
         .flex_1()
@@ -449,24 +422,22 @@ fn empty_portfolio(app: App, view: Entity<HoldingsView>, palette: Palette) -> gp
                 .items_center()
                 .child(
                     div()
-                        .text_size(px(15.))
+                        .text_size(px(20.))
                         .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                         .child(t!("holdings.emptyTitle")),
                 )
                 .child(
                     div()
-                        .w(px(320.))
-                        .text_size(px(12.))
+                        .w(px(360.))
+                        .whitespace_normal()
+                        .text_size(px(13.))
                         .text_color(palette.muted)
                         .child(t!("holdings.emptyDetail")),
                 ),
         )
-        .child(Button::new("add-manual").label(t!("holdings.manual.add")).small().on_click(
-            move |_, _, cx| {
-                view.update(cx, |this, cx| {
-                    this.show_manual = true;
-                    cx.notify();
-                })
+        .child(Button::new("add-manual").primary().label(t!("holdings.manual.title")).on_click(
+            move |_, _, _| {
+                let _ = crate::window::open_manual_holdings(&add);
             },
         ))
         .child(

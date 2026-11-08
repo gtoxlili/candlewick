@@ -89,14 +89,15 @@ pub fn relabel(cx: &mut gpui_kit::App) {
     ]);
 }
 
-pub fn will_show(app: &App, cx: &mut gpui_kit::App, label: &'static str) {
+pub fn will_show(app: &App, cx: &mut gpui_kit::App, label: &str) {
     cx.set_activation_policy(ActivationPolicy::Regular);
     let handle = app.clone();
+    let label = label.to_owned();
     app.spawn(async move {
         tokio::time::sleep(Duration::from_millis(100)).await;
         handle.on_gpui(move |cx| {
             cx.activate(true);
-            window::raise_label(cx, label);
+            window::raise_label(cx, &label);
         });
     });
 }

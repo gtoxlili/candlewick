@@ -170,6 +170,9 @@ impl<E: Exchange> Provider for E {
     fn chart_spec(&self, instrument: &Instrument) -> ChartSpec {
         ChartSpec {
             source: E::ID,
+            presentation: super::Presentation::Trading,
+            trades: true,
+            refresh_secs: 30,
             intervals: E::INTERVALS
                 .iter()
                 .map(|interval| IntervalSpec {
@@ -270,7 +273,8 @@ pub fn stats(last: f64, open: f64, high: f64, low: f64, volume: f64, turnover: f
         high: Some(high),
         low: Some(low),
         volume: Some(volume),
-        turnover,
+        turnover: Some(turnover),
+        source_time: None,
         change,
         change_pct,
         onchain: None,

@@ -126,6 +126,9 @@ impl Provider for DexScreener {
     fn chart_spec(&self, instrument: &Instrument) -> ChartSpec {
         ChartSpec {
             source: ID,
+            presentation: super::Presentation::Trading,
+            trades: true,
+            refresh_secs: 30,
             intervals: INTERVALS
                 .iter()
                 .map(|i| IntervalSpec {

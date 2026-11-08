@@ -28,16 +28,13 @@ impl Render for StatsGrid {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let app = app_of(&self.model, cx);
         let palette = Palette::current(&app, cx);
-        let (spec, stats, decimals) = {
+        let items = {
             let model = self.model.read(cx);
             let market = model.market();
-            (
-                model.spec().cloned(),
-                market.and_then(|m| m.stats()),
-                price_decimals(model.instrument(), market.and_then(|m| m.stats()).map(|s| s.last)),
-            )
+            let stats = market.and_then(|m| m.stats());
+            let decimals = price_decimals(model.instrument(), stats.map(|s| s.last));
+            grid_items(model, stats, decimals)
         };
-        let items = grid_items(spec.as_ref(), stats, decimals);
         // Five tiles share the width at the narrowest window; a point smaller
         // keeps compact pool figures on one line.
         let small = items.len() > 4;
@@ -52,12 +49,13 @@ impl Render for StatsGrid {
 
 /// Exchanges and stocks: the range, volume and turnover. Pools: the range,
 /// volume in dollars, and what the pool holds and the token is worth.
+/// Fund NAVs and daily commodities: publication date, reference/range extremes.
 fn grid_items(
-    spec: Option<&crate::market::ChartSpec>,
+    model: &ChartModel,
     stats: Option<Stats>,
     decimals: usize,
 ) -> Vec<(String, String)> {
-    let Some(spec) = spec else { return Vec::new() };
+    let Some(spec) = model.spec() else { return Vec::new() };
     let span = span_suffix(spec.stats_span);
     let price = |value: Option<f64>| value.map(|v| format::price(v, decimals));
     let compact = |value: Option<f64>| {
@@ -65,51 +63,139 @@ fn grid_items(
     };
     let onchain = stats.and_then(|s| s.onchain);
     let dash = || "—".to_owned();
-    if spec.onchain {
-        // A token without a circulating supply figure shows its fully diluted
-        // value instead.
-        let worth = if onchain.is_some_and(|o| o.market_cap.is_none() && o.fdv.is_some()) {
-            (t!("chart.fdv").to_owned(), compact(onchain.and_then(|o| o.fdv)).unwrap_or_else(dash))
-        } else {
-            (
-                t!("chart.marketCap").to_owned(),
-                compact(onchain.and_then(|o| o.market_cap)).unwrap_or_else(dash),
-            )
-        };
-        vec![
-            (label("high", span), price(stats.and_then(|s| s.high)).unwrap_or_else(dash)),
-            (label("low", span), price(stats.and_then(|s| s.low)).unwrap_or_else(dash)),
-            (
-                label("volume", span),
-                stats
-                    .map(|s| format!("{} {}", format::compact(s.turnover), spec.turnover_unit))
-                    .unwrap_or_else(dash),
-            ),
-            (
-                t!("chart.liquidity").to_owned(),
-                compact(onchain.and_then(|o| o.liquidity)).unwrap_or_else(dash),
-            ),
-            (worth.0, worth.1),
-        ]
+    match spec.presentation {
+        crate::market::Presentation::NetAssetValue => {
+            let candles = model.analysis().candles();
+            let source_ms = stats
+                .and_then(|s| s.source_time)
+                .or_else(|| candles.last().map(|c| c.time * 1000.));
+            let previous = stats
+                .and_then(|s| Some(s.last - s.change?))
+                .filter(|v| v.is_finite() && *v > 0.)
+                .or_else(|| candles.iter().rev().nth(1).map(|c| c.close));
+            let (high, low) = visible_extremes(model, candles);
+            let priced = |value: Option<f64>| {
+                value
+                    .map(|v| format!("{} {}", format::price(v, decimals), spec.turnover_unit))
+                    .unwrap_or_else(dash)
+            };
+            vec![
+                (
+                    t!("chart.overview.navDate").to_owned(),
+                    source_ms
+                        .map(|ms| source_date(ms, spec.day_offset, true))
+                        .unwrap_or_else(dash),
+                ),
+                (t!("chart.overview.previousValue").to_owned(), priced(previous)),
+                (t!("chart.overview.rangeHigh").to_owned(), priced(high)),
+                (t!("chart.overview.rangeLow").to_owned(), priced(low)),
+            ]
+        }
+        crate::market::Presentation::Commodity => {
+            let candles = model.analysis().candles();
+            let source_ms = stats
+                .and_then(|s| s.source_time)
+                .or_else(|| candles.last().map(|c| c.time * 1000.));
+            let per_gram =
+                format!("{}/{}", spec.turnover_unit, t!("chart.overview.perGram"));
+            let priced = |value: Option<f64>| {
+                value
+                    .map(|v| format!("{} {per_gram}", format::price(v, decimals)))
+                    .unwrap_or_else(dash)
+            };
+            vec![
+                (label("high", span), priced(stats.and_then(|s| s.high))),
+                (label("low", span), priced(stats.and_then(|s| s.low))),
+                (
+                    label("turnover", span),
+                    stats.and_then(|s| compact(s.turnover)).unwrap_or_else(dash),
+                ),
+                (
+                    t!("chart.overview.quoteTime").to_owned(),
+                    source_ms
+                        .map(|ms| source_date(ms, spec.day_offset, false))
+                        .unwrap_or_else(dash),
+                ),
+            ]
+        }
+        crate::market::Presentation::Trading if spec.onchain => {
+            // A token without a circulating supply figure shows its fully diluted
+            // value instead.
+            let worth = if onchain.is_some_and(|o| o.market_cap.is_none() && o.fdv.is_some()) {
+                (
+                    t!("chart.fdv").to_owned(),
+                    compact(onchain.and_then(|o| o.fdv)).unwrap_or_else(dash),
+                )
+            } else {
+                (
+                    t!("chart.marketCap").to_owned(),
+                    compact(onchain.and_then(|o| o.market_cap)).unwrap_or_else(dash),
+                )
+            };
+            vec![
+                (label("high", span), price(stats.and_then(|s| s.high)).unwrap_or_else(dash)),
+                (label("low", span), price(stats.and_then(|s| s.low)).unwrap_or_else(dash)),
+                (
+                    label("volume", span),
+                    stats.and_then(|s| compact(s.turnover)).unwrap_or_else(dash),
+                ),
+                (
+                    t!("chart.liquidity").to_owned(),
+                    compact(onchain.and_then(|o| o.liquidity)).unwrap_or_else(dash),
+                ),
+                (worth.0, worth.1),
+            ]
+        }
+        crate::market::Presentation::Trading => {
+            let volume_unit =
+                spec.volume_unit.clone().unwrap_or_else(|| t!("chart.shares").to_owned());
+            vec![
+                (label("high", span), price(stats.and_then(|s| s.high)).unwrap_or_else(dash)),
+                (label("low", span), price(stats.and_then(|s| s.low)).unwrap_or_else(dash)),
+                (
+                    label("volume", span),
+                    stats
+                        .and_then(|s| s.volume)
+                        .map(|v| format!("{} {}", format::compact(v), volume_unit))
+                        .unwrap_or_else(dash),
+                ),
+                (
+                    label("turnover", span),
+                    stats.and_then(|s| compact(s.turnover)).unwrap_or_else(dash),
+                ),
+            ]
+        }
+    }
+}
+
+fn visible_extremes(
+    model: &ChartModel,
+    candles: &[crate::market::Candle],
+) -> (Option<f64>, Option<f64>) {
+    let view = &model.viewport().view;
+    let slice = match (view.left, view.right) {
+        (Some(left), Some(right)) => {
+            let start = candles.partition_point(|c| c.time + 86_400. < left);
+            let end = candles.partition_point(|c| c.time <= right);
+            candles.get(start..end).filter(|s| !s.is_empty()).unwrap_or(candles)
+        }
+        _ => candles,
+    };
+    let high = slice.iter().map(|c| c.high).reduce(f64::max);
+    let low = slice.iter().map(|c| c.low).reduce(f64::min);
+    (high, low)
+}
+
+fn source_date(ms: f64, day_offset: i64, date_only: bool) -> String {
+    let shifted = (ms / 1000.).floor() as i64 + day_offset;
+    let parts = crate::calendar::civil(shifted);
+    if date_only || (parts.hour == 0 && parts.minute == 0) {
+        format!("{:04}-{:02}-{:02}", parts.year, parts.month, parts.day)
     } else {
-        let volume_unit = spec.volume_unit.clone().unwrap_or_else(|| t!("chart.shares").to_owned());
-        vec![
-            (label("high", span), price(stats.and_then(|s| s.high)).unwrap_or_else(dash)),
-            (label("low", span), price(stats.and_then(|s| s.low)).unwrap_or_else(dash)),
-            (
-                label("volume", span),
-                stats
-                    .and_then(|s| s.volume)
-                    .map(|v| format!("{} {}", format::compact(v), volume_unit))
-                    .unwrap_or_else(dash),
-            ),
-            (
-                label("turnover", span),
-                stats
-                    .map(|s| format!("{} {}", format::compact(s.turnover), spec.turnover_unit))
-                    .unwrap_or_else(dash),
-            ),
-        ]
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}",
+            parts.year, parts.month, parts.day, parts.hour, parts.minute
+        )
     }
 }
 
@@ -131,6 +217,7 @@ fn span_suffix(span: crate::market::StatsSpan) -> &'static str {
     match span {
         crate::market::StatsSpan::Rolling24h => "rolling24h",
         crate::market::StatsSpan::Today => "today",
+        crate::market::StatsSpan::Publication => "publication",
     }
 }
 

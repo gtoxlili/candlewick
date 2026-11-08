@@ -318,8 +318,14 @@ GeckoTerminal 的数据和 CoinGecko API 的 `/onchain/*` 是同一份：路径�
 
 - 搜索 `searchapi.eastmoney.com/api/suggest/get?input=…&type=14&count=30`，发现来源确认的 `OTCFUND` 人民币份额及明确的 `118.AU9999` 黄金标的。搜索只读取来源元数据，不逐只拉取净值；净值类型和价格可用性由行情任务检查。场内 LOF 和场外基金净值使用不同 ID。
 - `eastmoney:150.<代码>` 读取 `api.fund.eastmoney.com/f10/lsjz?fundCode=…&pageIndex=1&pageSize=2`，附 `Referer: https://fundf10.eastmoney.com/`。`DWJZ` 是人民币每份净值，`FSRQ` 是实际净值日期；前一条公布净值作为可选参考价。只公布过一条净值时仍返回现价，`change` 与 `changePct` 为空。净值日期编码为上海当日零点的 epoch 毫秒。`SYType` 为每万份收益等收益型数据时拒绝估值，外币份额也不作为人民币使用。每 15 分钟查询。
-- `eastmoney:118.AU9999` 读取 `push2.eastmoney.com/api/qt/stock/get?secid=118.AU9999&fields=f43,f58,f59,f60,f86`。`f43` 和 `f60` 除以 `10^f59` 得人民币每克现价和前收盘价；`f86` 是来源报价 epoch 秒。每 15 秒查询。
-- 单次最多 4 个并发请求，按标的独立退避；暂停时取消在途批次。历史 K 线和逐笔成交返回空，实时流仅提供轮询快照统计。
+- `eastmoney:118.AU9999` 读取 `push2.eastmoney.com/api/qt/stock/get?secid=118.AU9999&fields=f43,f44,f45,f48,f58,f59,f60,f86`。`f43`、`f44`、`f45` 和 `f60` 除以 `10^f59` 得人民币每克现价、最高、最低和前收盘价；`f48` 是人民币成交额，`f86` 是来源报价 epoch 秒。每 15 秒查询。
+- 基金历史继续使用 `f10/lsjz`。2026-11-08 实测每页最多 20 条；以 `endDate` 查询更早净值。来源日期上界包含当天，程序把排他的 epoch 秒游标换成上海前一日期。净值和快照共用 `SYType` 校验，拒绝每万份收益序列。
+- 黄金日线使用 `push2his.eastmoney.com/api/qt/stock/kline/get`，`klt=101`、`fqt=0`，`fields2=f51,f52,f53,f54,f55` 按日期、开盘、收盘、最高、最低返回。价格已是人民币每克，不再按 `f59` 缩放。省略 `beg`，使用 `end` 和 `lmt` 翻页；实测 `beg=0` 会忽略 `lmt` 返回全部历史。日期采用上海交易日，夜盘可能归属下一交易日。
+- 单次报价最多 4 个并发请求，按标的独立退避；暂停时取消在途批次。逐笔成交和盘口不可用，流只提供报价统计；历史使用真实来源数据，不从轮询价格拼造分钟线。缺少成交额用 `None`，净值没有成交额。
+
+`ChartSpec` 声明资产详情的 `presentation`、逐笔能力 `trades` 和历史刷新间隔 `refresh_secs`。基金窗口显示净值日期、前次净值变动和可翻页的净值折线，固定折线模式；黄金窗口显示每克报价、来源时间、日内高低与成交额，默认曲线并支持真实日线 K 线。两者共用图表绘制、悬浮和翻页机制，不加载股票图表保存的指标或画线。历史刷新分别为 15 分钟和 30 秒，独立于报价轮询。
+
+内部图表共用 `Candle` 存储净值样本，同一净值填入四个价格槽，仅用于折线绘制。公开 `/v1/history` 按语义输出 `{time, value}`；`/v1/candles` 对净值返回 400，不承诺其存在 OHLC。`/v1/market.chart` 暴露每个标的实际能力。
 
 场外基金是公布净值而非盘中实时估值。支付宝黄金基金须用实际基金份额与净值，不能直接用 Au99.99 的每克价格替代。单位、汇率、部分估值与 UI 说明见 [holdings.md](holdings.md)。
 

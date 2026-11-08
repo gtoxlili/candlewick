@@ -12,22 +12,17 @@ use gpui_kit::{
     AppContext as _, Context, Entity, EventEmitter, Focusable as _, InteractiveElement as _,
     IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task, Window,
     component::{
-        Disableable as _, Sizable as _,
-        button::{Button, ButtonVariants as _},
+        Sizable as _,
         input::{Input, InputEvent, InputState},
         list::ListItem,
         popover::Popover,
         scroll::ScrollableElement as _,
+        tag::Tag,
     },
     div, px,
 };
 use std::{collections::HashSet, time::Duration};
 
-#[derive(Clone, Copy)]
-pub enum Presentation {
-    Popover,
-    Inline,
-}
 pub struct Selected(pub Instrument);
 
 #[derive(Default)]
@@ -52,7 +47,6 @@ impl SearchGeneration {
 pub struct InstrumentPicker {
     app: App,
     prefix: &'static str,
-    presentation: Presentation,
     input: Entity<InputState>,
     query: String,
     selected: Option<Instrument>,
@@ -73,7 +67,6 @@ impl InstrumentPicker {
     pub fn new(
         app: App,
         prefix: &'static str,
-        presentation: Presentation,
         placeholder: String,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -106,7 +99,6 @@ impl InstrumentPicker {
             shown_exchange: api::get_settings(&app).exchange,
             app,
             prefix,
-            presentation,
             input,
             query: String::new(),
             selected: None,
@@ -262,10 +254,12 @@ impl InstrumentPicker {
     fn list(&self, p: Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let mut list = div()
             .id(SharedString::from(format!("{}-search-results", self.prefix)))
-            .max_h(px(240.))
+            .max_h(px(260.))
             .overflow_y_scrollbar()
+            .p(px(4.))
             .flex()
-            .flex_col();
+            .flex_col()
+            .gap(px(2.));
         let results = self.results.as_ref();
         if results.is_none_or(|results| results.candidates.is_empty()) {
             let text = if self.loading {
@@ -274,7 +268,7 @@ impl InstrumentPicker {
                 t!("settings.watchlist.noResults")
             };
             list =
-                list.child(div().px_2().py_1().text_size(px(11.)).text_color(p.muted).child(text));
+                list.child(div().px_3().py_2().text_xs().text_color(p.muted).child(text));
         }
         if let Some(results) = results {
             for (index, candidate) in results.candidates.iter().enumerate() {
@@ -282,52 +276,79 @@ impl InstrumentPicker {
                 let id = item.id();
                 let added = self.existing.contains(&id);
                 let detail = if added {
-                    t!("settings.watchlist.added").to_owned()
+                    Some(t!("settings.watchlist.added").to_owned())
                 } else if candidate.manual {
-                    t!("settings.watchlist.manual").to_owned()
+                    Some(t!("settings.watchlist.manual").to_owned())
                 } else {
-                    candidate
-                        .liquidity
-                        .map(|value| {
-                            t!(
-                                "settings.watchlist.liquidity",
-                                value = crate::format::compact(value)
-                            )
-                        })
-                        .unwrap_or_default()
+                    candidate.liquidity.map(|value| {
+                        t!(
+                            "settings.watchlist.liquidity",
+                            value = crate::format::compact(value)
+                        )
+                    })
                 };
+                let (name, sub) = candidate_labels(&item);
                 list = list.child(
-                    ListItem::new((self.prefix, index))
+                    ListItem::new(SharedString::from(format!("{}-pick-{id}", self.prefix)))
                         .selected(self.active() == Some(index) && !added)
+                        .disabled(added)
+                        .px(px(8.))
+                        .py(px(6.))
+                        .rounded(px(6.))
                         .child(
                             div()
                                 .w_full()
+                                .min_w_0()
                                 .flex()
-                                .flex_col()
+                                .items_center()
+                                .gap_2()
                                 .child(
-                                    Button::new(SharedString::from(format!(
-                                        "{}-pick-{id}",
-                                        self.prefix
-                                    )))
-                                    .small()
-                                    .ghost()
-                                    .disabled(added)
-                                    .label(item.pair_label())
-                                    .on_click(cx.listener(
-                                        move |this, _, window, cx| {
-                                            this.choose(item.clone(), window, cx)
-                                        },
-                                    )),
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .items_baseline()
+                                        .gap(px(6.))
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(
+                                            div()
+                                                .text_size(px(13.))
+                                                .text_color(p.foreground)
+                                                .child(name),
+                                        )
+                                        .children((!sub.is_empty()).then(|| {
+                                            div()
+                                                .flex_shrink_0()
+                                                .text_xs()
+                                                .text_color(p.muted)
+                                                .child(sub)
+                                        })),
                                 )
-                                .child(div().px_2().text_size(px(10.)).text_color(p.muted).child(
-                                    format!("{} {detail}", candidate.instrument.provider.name()),
-                                )),
-                        ),
+                                .children(detail.map(|text| {
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_xs()
+                                        .text_color(p.muted)
+                                        .whitespace_nowrap()
+                                        .child(text)
+                                }))
+                                .child(
+                                    div().flex_shrink_0().child(
+                                        Tag::secondary()
+                                            .small()
+                                            .child(candidate.instrument.provider.name()),
+                                    ),
+                                ),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.choose(item.clone(), window, cx)
+                        })),
                 );
             }
             for note in &results.notes {
                 list = list.child(
-                    div().px_2().py_1().text_size(px(10.)).text_color(p.amber).child(note.clone()),
+                    div().px_2().py_1().text_xs().text_color(p.amber).child(note.clone()),
                 );
             }
         }
@@ -335,42 +356,96 @@ impl InstrumentPicker {
     }
 }
 
+fn candidate_labels(item: &Instrument) -> (String, String) {
+    use crate::market::ProviderId;
+    if item.provider == ProviderId::DexScreener {
+        let mut parts = Vec::new();
+        if let Some(name) = &item.name {
+            parts.push(name.clone());
+        }
+        if let Some(venue) = &item.venue {
+            match &venue.dex {
+                Some(dex) => parts.push(format!("{} · {dex}", venue.chain)),
+                None => parts.push(venue.chain.clone()),
+            }
+        }
+        return (item.base.clone(), parts.join(" · "));
+    }
+    let (name, detail) = item.row_label();
+    let detail = detail.trim();
+    let market = if item.provider == ProviderId::Ths
+        || item.symbol.ends_with(".SH")
+        || item.symbol.ends_with(".SZ")
+    {
+        Some(t!("market.CN"))
+    } else if item.provider == ProviderId::Longbridge && item.symbol.ends_with(".US") {
+        Some(t!("market.US"))
+    } else if item.provider == ProviderId::Longbridge && item.symbol.ends_with(".HK") {
+        Some(t!("market.HK"))
+    } else {
+        None
+    };
+    let sub = match (!detail.is_empty(), market) {
+        (true, Some(m)) => format!("{detail} · {m}"),
+        (true, None) => detail.to_owned(),
+        (false, Some(m)) => m.to_owned(),
+        (false, None) => String::new(),
+    };
+    (name, sub)
+}
+
 impl Render for InstrumentPicker {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::current(&self.app, cx);
         let open = self.selected.is_none() && !self.query.trim().is_empty() && !self.disabled;
-        let body = match self.presentation {
-            Presentation::Inline => div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(Input::new(&self.input).small().disabled(self.disabled))
-                .children(open.then(|| self.list(p, cx).into_any_element()))
-                .into_any_element(),
-            Presentation::Popover => {
-                let view = cx.entity();
-                let dismiss = cx.entity();
-                Popover::new("instrument-results")
-                    .w_full()
-                    .p(px(4.))
-                    .mouse_button(gpui_kit::MouseButton::Middle)
-                    .overlay_closable(false)
-                    .track_focus(&self.input.read(cx).focus_handle(cx))
-                    .trigger(Input::new(&self.input).disabled(self.disabled))
-                    .open(open)
-                    .on_open_change(move |open, window, cx| {
-                        if !*open {
-                            dismiss.update(cx, |this, cx| this.set_selection(None, window, cx));
-                        }
-                    })
-                    .content(move |_, _, cx| {
-                        view.update(cx, |this, cx| div().w(px(390.)).child(this.list(p, cx)))
-                    })
-                    .into_any_element()
-            }
-        };
+        let view = cx.entity();
+        let dismiss = cx.entity();
+        let body = Popover::new("instrument-results")
+            .bg(p.popover.alpha(1.))
+            .w(px(420.))
+            .p_0()
+            .mouse_button(gpui_kit::MouseButton::Middle)
+            .overlay_closable(false)
+            .track_focus(&self.input.read(cx).focus_handle(cx))
+            .trigger(Input::new(&self.input).cleanable(true).disabled(self.disabled))
+            .open(open)
+            .on_open_change(move |open, window, cx| {
+                if !*open {
+                    dismiss.update(cx, |this, cx| this.set_selection(None, window, cx));
+                }
+            })
+            .content(move |_, _, cx| {
+                view.update(cx, |this, cx| div().w(px(420.)).child(this.list(p, cx)))
+            });
         div().w_full().capture_key_down(cx.listener(Self::key)).child(body)
     }
+}
+
+/// Install source results after input events settle, so render checks stay offline.
+#[cfg(all(target_os = "macos", feature = "test-support"))]
+pub(crate) fn sample_results(
+    cx: &mut gpui_kit::HeadlessAppContext,
+    window: gpui_kit::AnyWindowHandle,
+    picker: &Entity<InstrumentPicker>,
+    query: &str,
+    results: Search,
+) {
+    cx.update_window(window, |_, window, cx| {
+        let input = picker.read(cx).input.clone();
+        input.update(cx, |input, cx| input.set_value(query.to_owned(), window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        picker.update(cx, |picker, cx| {
+            picker.generation.invalidate();
+            picker.search_task = None;
+            picker.query = query.to_owned();
+            picker.results = Some(results);
+            picker.loading = false;
+            cx.notify();
+        })
+    });
 }
 
 #[cfg(test)]
@@ -386,10 +461,10 @@ mod tests {
         gate.invalidate();
         assert!(!gate.accepts(second));
     }
-    // UX contract: both presentations select the same source instrument and
+    // UX contract: the result row selects the source instrument and
     // emit it to their consumer without fetching a portfolio or placing an order.
     #[test]
-    fn inline_and_popover_emit_selected_instruments() {
+    fn popover_emits_selected_instruments() {
         use crate::{
             market::{Candidate, ProviderId},
             model::{Settings, Shared},
@@ -420,7 +495,7 @@ mod tests {
             dir.path().join("credentials.json"),
         );
         let app = cx.update(|cx| App::new(cx, runtime.handle().clone(), shared));
-        for presentation in [Presentation::Inline, Presentation::Popover] {
+        {
             let mut stage = None;
             let window = cx.update(|cx| {
                 gpui_kit::open_window(
@@ -437,7 +512,6 @@ mod tests {
                             InstrumentPicker::new(
                                 app.clone(),
                                 "sample",
-                                presentation,
                                 "Search".into(),
                                 window,
                                 cx,

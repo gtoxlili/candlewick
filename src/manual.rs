@@ -401,7 +401,7 @@ mod tests {
         model.quotes.remove("ths:510300.SH");
         let partial = model.portfolio();
         assert!(partial.partial);
-        assert_eq!(partial.change, None);
+        assert!((partial.change.unwrap() - 182.5).abs() < 1e-9);
         assert_eq!(partial.manual_holdings[0].value, None);
         assert!((partial.total.unwrap() - 2475.).abs() < 1e-9);
         model.exchange_rates.snapshot = None;
@@ -458,7 +458,7 @@ mod tests {
         assert!(partial.partial && partial.assets[0].partial);
         assert_eq!(partial.assets[0].amount, 4.);
         assert_eq!(partial.assets[0].price, None);
-        assert_eq!(partial.change, None);
+        assert!((partial.change.unwrap() - 60.).abs() < 1e-9);
     }
 
     // contract: persistence failures preserve both the saved records and the

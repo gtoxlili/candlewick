@@ -15,9 +15,10 @@ use crate::{
 const SETTINGS: &str = "settings";
 const CHART: &str = "chart";
 const HOLDINGS: &str = "holdings";
+const MANUAL: &str = "manual-holdings";
 
 #[derive(Default)]
-struct Windows(HashMap<&'static str, AnyWindowHandle>);
+struct Windows(HashMap<String, AnyWindowHandle>);
 impl Global for Windows {}
 
 pub(crate) fn init(app: &App, cx: &mut gpui_kit::App) {
@@ -28,11 +29,11 @@ pub(crate) fn init(app: &App, cx: &mut gpui_kit::App) {
             .global::<Windows>()
             .0
             .iter()
-            .find_map(|(label, window)| (window.window_id() == id).then_some(*label));
+            .find_map(|(label, window)| (window.window_id() == id).then(|| label.clone()));
         if let Some(label) = label {
-            cx.global_mut::<Windows>().0.remove(label);
+            cx.global_mut::<Windows>().0.remove(&label);
             app.set_window_count(cx.global::<Windows>().0.len());
-            on_destroyed(&app, label);
+            on_destroyed(&app, &label);
             if cx.global::<Windows>().0.is_empty() {
                 platform::window::did_close_all(cx);
             }
@@ -47,6 +48,10 @@ pub fn open_settings(app: &App) -> io::Result<()> {
 
 pub fn open_holdings(app: &App) -> io::Result<()> {
     enqueue_open(app, HOLDINGS, t!("window.holdings").to_owned())
+}
+
+pub fn open_manual_holdings(app: &App) -> io::Result<()> {
+    enqueue_open(app, MANUAL, t!("holdings.manual.title").to_owned())
 }
 
 pub fn open_chart(app: &App, id: &str) -> io::Result<()> {
@@ -82,6 +87,7 @@ pub fn relabel(app: &App) {
             (SETTINGS, Some(t!("window.settings").to_owned())),
             (CHART, chart),
             (HOLDINGS, Some(t!("window.holdings").to_owned())),
+            (MANUAL, Some(t!("holdings.manual.title").to_owned())),
         ] {
             if let Some((window, title)) = cx.global::<Windows>().0.get(label).copied().zip(title) {
                 let _ = window.update(cx, |_, window, _| window.set_window_title(&title));
@@ -95,7 +101,7 @@ pub fn relabel(app: &App) {
 pub fn reopen(app: &App) -> io::Result<()> {
     let handle = app.clone();
     dispatch(app, move |cx| {
-        let open: Vec<_> = [CHART, HOLDINGS, SETTINGS]
+        let open: Vec<_> = [CHART, HOLDINGS, MANUAL, SETTINGS]
             .into_iter()
             .filter_map(|label| cx.global::<Windows>().0.get(label).copied())
             .collect();
@@ -148,7 +154,7 @@ fn enqueue_open(app: &App, label: &'static str, title: String) -> io::Result<()>
     dispatch(app, move |cx| open_on_main(&handle, cx, label, title))
 }
 
-fn open_on_main(app: &App, cx: &mut gpui_kit::App, label: &'static str, title: String) {
+fn open_on_main(app: &App, cx: &mut gpui_kit::App, label: &str, title: String) {
     platform::window::will_show(app, cx, label);
     if let Some(window) = cx.global::<Windows>().0.get(label).copied() {
         let _ = window.update(cx, |_, window, _| window.set_window_title(&title));
@@ -166,6 +172,10 @@ fn open_on_main(app: &App, cx: &mut gpui_kit::App, label: &'static str, title: S
             cx.new(|cx| ui::holdings::HoldingsView::new(handle, window, cx))
         })
         .map(|(w, _)| w),
+        MANUAL => gpui_kit::open_window(options, cx, |window, cx| {
+            cx.new(|cx| ui::holdings::ManualView::new(handle, window, cx))
+        })
+        .map(|(w, _)| w),
         CHART => gpui_kit::open_window(options, cx, |window, cx| {
             cx.new(|cx| ui::chart::ChartView::new(handle, window, cx))
         })
@@ -174,12 +184,10 @@ fn open_on_main(app: &App, cx: &mut gpui_kit::App, label: &'static str, title: S
     };
     match result {
         Ok(window) => {
-            cx.global_mut::<Windows>().0.insert(label, window);
-            app.set_window_count(cx.global::<Windows>().0.len());
+            remember(app, cx, label, window);
             if label == HOLDINGS {
                 set_holdings_open(app, true);
             }
-            raise(cx, window);
         }
         Err(error) => {
             log::error!("cannot open {label}: {error}");
@@ -190,9 +198,15 @@ fn open_on_main(app: &App, cx: &mut gpui_kit::App, label: &'static str, title: S
     }
 }
 
+fn remember(app: &App, cx: &mut gpui_kit::App, label: &str, window: AnyWindowHandle) {
+    cx.global_mut::<Windows>().0.insert(label.to_owned(), window);
+    app.set_window_count(cx.global::<Windows>().0.len());
+    raise(cx, window);
+}
+
 pub(crate) fn window_options(cx: &mut gpui_kit::App, label: &str, title: String) -> WindowOptions {
     let (width, height, min_width, min_height, resizable) = match label {
-        SETTINGS => (460., 640., 460., 640., false),
+        SETTINGS | MANUAL => (460., 640., 460., 640., false),
         HOLDINGS => (980., 640., 800., 500., true),
         CHART => (980., 640., 760., 480., true),
         _ => unreachable!(),
@@ -251,6 +265,52 @@ pub fn on_destroyed(app: &App, label: &str) {
 mod tests {
     use super::*;
     use gpui_kit::{TestAppContext, VisualTestContext};
+
+    #[test]
+    fn manual_holdings_window_reuses_and_preserves_entries_on_close() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let cx = TestAppContext::single();
+        cx.update(gpui_kit::init);
+        let (shared, _) = crate::model::Shared::new(
+            crate::model::Settings::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
+        let app = cx.update(|cx| {
+            let app = App::new(cx, runtime.handle().clone(), shared);
+            init(&app, cx);
+            app
+        });
+        let entry = crate::manual::Holding {
+            id: "record".into(),
+            updated: 1.,
+            input: crate::manual::Input {
+                platform: "Broker".into(),
+                instrument: ProviderId::Ths.provider().bare("510300.SH").unwrap(),
+                amount: 100.,
+                cost: None,
+            },
+        };
+        app.shared().model().manual.entries = vec![entry];
+        open_manual_holdings(&app).unwrap();
+        cx.run_until_parked();
+        let first = cx.read(|cx| cx.global::<Windows>().0[MANUAL]);
+        open_manual_holdings(&app).unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.read(|cx| cx.global::<Windows>().0[MANUAL]), first);
+        let handles = cx.read(|cx| cx.global::<Windows>().0.clone());
+        assert_eq!(handles.len(), 1);
+        for window in handles.values() {
+            cx.update(|cx| window.update(cx, |_, window, _| window.remove_window()).unwrap());
+        }
+        assert!(!app.windows_open());
+        assert_eq!(
+            app.shared().model().manual.entries.len(),
+            1,
+            "closing windows does not mutate registered quantities"
+        );
+    }
 
     #[test]
     fn windows_reuse_retarget_relabel_and_cleanup() {
@@ -334,7 +394,7 @@ mod tests {
         reopen(&app).unwrap();
         cx.run_until_parked();
         assert_eq!(
-            cx.read(|cx| cx.global::<Windows>().0.keys().copied().collect::<Vec<_>>()),
+            cx.read(|cx| cx.global::<Windows>().0.keys().cloned().collect::<Vec<_>>()),
             [SETTINGS]
         );
     }

@@ -24,9 +24,9 @@
     },
     "quantity": {
       "tokens": "tokens",
-      "shares": "shares / units",
-      "fundUnits": "fund shares",
-      "grams": "grams",
+      "shares": "shares",
+      "fundUnits": "units",
+      "grams": "g",
       "units": "units"
     }
   },

@@ -147,17 +147,23 @@ impl Provider for Eastmoney {
     }
 
     fn chart_spec(&self, instrument: &Instrument) -> ChartSpec {
+        let fund = matches!(Symbol::parse(&instrument.symbol), Some(Symbol::Fund(_)));
         ChartSpec {
             source: ID,
-            // No candle history or trade tape is promised. The chart can
-            // receive polled statistics and display its empty-history state.
+            presentation: if fund {
+                super::Presentation::NetAssetValue
+            } else {
+                super::Presentation::Commodity
+            },
+            trades: false,
+            refresh_secs: if fund { FUND_POLL.as_secs() as u32 } else { 30 },
             intervals: vec![IntervalSpec {
                 secs: DAY,
                 mode: ChartMode::Line,
                 aligned: false,
                 regular_only: false,
             }],
-            stats_span: StatsSpan::Today,
+            stats_span: if fund { StatsSpan::Publication } else { StatsSpan::Today },
             volume_unit: None,
             turnover_unit: QUOTE.to_owned(),
             day_offset: SHANGHAI_OFFSET,
@@ -173,12 +179,44 @@ impl Provider for Eastmoney {
 
     fn history<'a>(
         &'a self,
-        _instrument: &'a Instrument,
-        _interval: u32,
-        _end: Option<f64>,
-        _limit: usize,
+        instrument: &'a Instrument,
+        interval: u32,
+        end: Option<f64>,
+        limit: usize,
     ) -> BoxFuture<'a, Result<Vec<Candle>, Error>> {
-        Box::pin(async { Ok(Vec::new()) })
+        Box::pin(async move {
+            if interval != DAY {
+                return Err(Error::Message(t!("error.unsupportedInterval", seconds = interval)));
+            }
+            if end.is_some_and(|end| !end.is_finite()) {
+                return Err(bad_data());
+            }
+            match Symbol::parse(&instrument.symbol).ok_or_else(|| unknown(&instrument.symbol))? {
+                Symbol::Fund(code) => {
+                    ensure_fund(&code).await?;
+                    let limit = limit.clamp(1, 20);
+                    let mut url = reqwest::Url::parse(&format!(
+                        "https://api.fund.eastmoney.com/f10/lsjz?fundCode={code}&pageIndex=1&pageSize={limit}"
+                    )).map_err(|_| bad_data())?;
+                    if let Some(end) = end {
+                        url.query_pairs_mut().append_pair("endDate", &before_date(end, "-"));
+                    }
+                    let found: NavEnvelope = http::get_json_with(url.as_str(), REFERER).await?;
+                    found.history(end, limit)
+                }
+                Symbol::Gold => {
+                    let end_date =
+                        end.map(|end| before_date(end, "")).unwrap_or_else(|| "20991231".into());
+                    let limit = limit.clamp(1, 1000);
+                    // `beg=0` makes this endpoint ignore lmt and return the full history.
+                    let url = format!(
+                        "https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={GOLD}&klt=101&fqt=0&end={end_date}&lmt={limit}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55"
+                    );
+                    let found: GoldHistory = http::get_json(&url).await?;
+                    found.history(end, limit)
+                }
+            }
+        })
     }
 
     fn recent_trades<'a>(
@@ -360,10 +398,13 @@ async fn search(query: &str) -> Search {
     Search { candidates, notes: Vec::new() }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Snapshot {
     last: f64,
     reference: Option<f64>,
+    high: Option<f64>,
+    low: Option<f64>,
+    turnover: Option<f64>,
     /// Epoch milliseconds. A fund's date is Shanghai local midnight.
     source_time: Option<f64>,
 }
@@ -373,10 +414,11 @@ impl Snapshot {
         let change = self.reference.map(|reference| self.last - reference);
         Stats {
             last: self.last,
-            high: None,
-            low: None,
+            high: self.high,
+            low: self.low,
             volume: None,
-            turnover: 0.,
+            turnover: self.turnover,
+            source_time: self.source_time,
             change,
             change_pct: self
                 .reference
@@ -398,7 +440,7 @@ async fn snapshot(symbol: &Symbol) -> Result<Snapshot, Error> {
         }
         Symbol::Gold => {
             let url = format!(
-                "https://push2.eastmoney.com/api/qt/stock/get?secid={GOLD}&fields=f43,f58,f59,f60,f86"
+                "https://push2.eastmoney.com/api/qt/stock/get?secid={GOLD}&fields=f43,f44,f45,f48,f58,f59,f60,f86"
             );
             let found: GoldEnvelope = http::get_json(&url).await?;
             found.snapshot()
@@ -446,7 +488,7 @@ struct Nav {
 }
 
 impl NavEnvelope {
-    fn snapshot(self) -> Result<Snapshot, Error> {
+    fn data(self) -> Result<NavData, Error> {
         if self.error != 0 {
             return Err(bad_data());
         }
@@ -454,6 +496,29 @@ impl NavEnvelope {
         if data.income_type.as_ref().is_some_and(|kind| !kind.is_empty()) {
             return Err(bad_data());
         }
+        Ok(data)
+    }
+
+    fn history(self, end: Option<f64>, limit: usize) -> Result<Vec<Candle>, Error> {
+        let mut points = self
+            .data()?
+            .navs
+            .into_iter()
+            .map(|nav| {
+                let time = nav_time(&nav.date).ok_or_else(bad_data)? / 1000.;
+                let value = positive(&nav.value).ok_or_else(bad_data)?;
+                // The shared painter stores price samples as degenerate candles.
+                // Presentation::NetAssetValue prevents OHLC or candle-mode UI;
+                // the public history endpoint exposes these as {time, value}.
+                Ok(Candle { time, open: value, high: value, low: value, close: value })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        finish_history(&mut points, end, limit);
+        Ok(points)
+    }
+
+    fn snapshot(self) -> Result<Snapshot, Error> {
+        let data = self.data()?;
         let latest = data.navs.first().ok_or_else(bad_data)?;
         let source_time = nav_time(&latest.date).ok_or_else(bad_data)?;
         let reference = data
@@ -465,6 +530,7 @@ impl NavEnvelope {
             last: positive(&latest.value).ok_or_else(bad_data)?,
             reference,
             source_time: Some(source_time),
+            ..Snapshot::default()
         })
     }
 }
@@ -503,6 +569,12 @@ struct GoldEnvelope {
 #[derive(Deserialize)]
 struct GoldData {
     f43: Value,
+    #[serde(default)]
+    f44: Value,
+    #[serde(default)]
+    f45: Value,
+    #[serde(default)]
+    f48: Value,
     f59: u32,
     #[serde(default)]
     f60: Value,
@@ -525,8 +597,71 @@ impl GoldEnvelope {
         Ok(Snapshot {
             last: number(&data.f43).ok_or_else(bad_data)? / scale,
             reference: number(&data.f60).map(|reference| reference / scale),
+            high: number(&data.f44).map(|value| value / scale),
+            low: number(&data.f45).map(|value| value / scale),
+            turnover: data.f48.as_f64().filter(|value| value.is_finite() && *value >= 0.),
             source_time: number(&data.f86).map(|time| time * 1000.),
         })
+    }
+}
+
+/// Source date bounds are inclusive; our history cursor is exclusive.
+fn before_date(end: f64, separator: &str) -> String {
+    let date =
+        calendar::civil((end.ceil() as i64).saturating_sub(1).saturating_add(SHANGHAI_OFFSET));
+    format!("{:04}{separator}{:02}{separator}{:02}", date.year, date.month, date.day)
+}
+
+fn finish_history(points: &mut Vec<Candle>, end: Option<f64>, limit: usize) {
+    points.retain(|point| end.is_none_or(|end| point.time < end));
+    points.sort_unstable_by(|a, b| a.time.total_cmp(&b.time));
+    points.dedup_by(|a, b| a.time == b.time);
+    if points.len() > limit {
+        points.drain(..points.len() - limit);
+    }
+}
+
+#[derive(Deserialize)]
+struct GoldHistory {
+    rc: i64,
+    data: Option<GoldBars>,
+}
+
+#[derive(Deserialize)]
+struct GoldBars {
+    code: String,
+    klines: Vec<String>,
+}
+
+impl GoldHistory {
+    fn history(self, end: Option<f64>, limit: usize) -> Result<Vec<Candle>, Error> {
+        if self.rc != 0 {
+            return Err(bad_data());
+        }
+        let data = self.data.ok_or_else(bad_data)?;
+        if !data.code.eq_ignore_ascii_case("AU9999") {
+            return Err(bad_data());
+        }
+        let mut candles = data
+            .klines
+            .iter()
+            .map(|row| {
+                let fields: Vec<_> = row.split(',').collect();
+                let time =
+                    fields.first().and_then(|date| nav_time(date)).ok_or_else(bad_data)? / 1000.;
+                let read = |index: usize| {
+                    fields.get(index).and_then(|value| positive(value)).ok_or_else(bad_data)
+                };
+                // Eastmoney orders daily fields date, open, CLOSE, high, low.
+                let (open, close, high, low) = (read(1)?, read(2)?, read(3)?, read(4)?);
+                if low > open.min(close) || high < open.max(close) || low > high {
+                    return Err(bad_data());
+                }
+                Ok(Candle { time, open, high, low, close })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        finish_history(&mut candles, end, limit);
+        Ok(candles)
     }
 }
 
@@ -664,6 +799,7 @@ mod tests {
         let stats = serde_json::to_value(first_nav.stats()).unwrap();
         assert_eq!(stats["last"], 3.0022);
         assert!(stats["change"].is_null() && stats["changePct"].is_null());
+        assert!(stats["turnover"].is_null(), "a NAV has no trading turnover");
         assert_eq!(
             calendar::iso8601_ms(snapshot.source_time.unwrap() as i64),
             "2026-11-05T16:00:00.000Z"
@@ -679,10 +815,14 @@ mod tests {
     // Source placeholders must fail rather than creating a zero-price asset.
     #[test]
     fn gold_quotes_scale_prices_and_preserve_source_time() {
-        let response = r#"{"rc":0,"data":{"f43":87400,"f59":2,"f60":86857,"f86":1793989794}}"#;
+        let response = r#"{"rc":0,"data":{"f43":87400,"f44":87400,"f45":86500,"f48":343430928.0,"f59":2,"f60":86857,"f86":1793989794}}"#;
         let snapshot = serde_json::from_str::<GoldEnvelope>(response).unwrap().snapshot().unwrap();
         assert_eq!(snapshot.last, 874.);
         assert_eq!(snapshot.reference, Some(868.57));
+        assert_eq!(
+            (snapshot.stats().high, snapshot.stats().low, snapshot.stats().turnover),
+            (Some(874.), Some(865.), Some(343430928.))
+        );
         assert_eq!(snapshot.source_time, Some(1793989794000.));
         let mut omitted: Value = serde_json::from_str(response).unwrap();
         omitted["data"].as_object_mut().unwrap().remove("f60");
@@ -702,6 +842,40 @@ mod tests {
         );
         let missing = response.replace("87400", "\"-\"");
         assert!(serde_json::from_str::<GoldEnvelope>(&missing).unwrap().snapshot().is_err());
+    }
+
+    // upstream: /f10/lsjz and /api/qt/stock/kline/get, captured 2026-11-08.
+    // Cursor dates are inclusive upstream and exclusive in Candlewick.
+    #[test]
+    fn published_history_keeps_dates_values_and_exclusive_cursors() {
+        let response = r#"{"Data":{"LSJZList":[{"FSRQ":"2026-11-06","DWJZ":"3.0050"},{"FSRQ":"2026-11-05","DWJZ":"3.0030"},{"FSRQ":"2026-11-04","DWJZ":"2.9520"}],"SYType":null},"ErrCode":0}"#;
+        let end = nav_time("2026-11-06").unwrap() / 1000.;
+        assert_eq!(before_date(end, "-"), "2026-11-05");
+        assert_eq!(before_date(end, ""), "20261105");
+        let history =
+            serde_json::from_str::<NavEnvelope>(response).unwrap().history(Some(end), 2).unwrap();
+        assert_eq!(history.iter().map(|point| point.close).collect::<Vec<_>>(), [2.952, 3.003]);
+        assert_eq!(history[1].time * 1000., nav_time("2026-11-05").unwrap());
+        let income = response.replace("\"SYType\":null", "\"SYType\":\"每万份收益\"");
+        assert!(serde_json::from_str::<NavEnvelope>(&income).unwrap().history(None, 20).is_err());
+
+        // Gold prices are already decimals here, unlike scaled quote fields.
+        let gold = r#"{"rc":0,"data":{"code":"AU9999","klines":["2026-11-05,868.30,884.09,891.00,865.00","2026-11-06,887.00,868.57,887.00,866.14"]}}"#;
+        let history = serde_json::from_str::<GoldHistory>(gold).unwrap().history(None, 1).unwrap();
+        assert_eq!(
+            (history[0].open, history[0].close, history[0].high, history[0].low),
+            (887., 868.57, 887., 866.14)
+        );
+        let older =
+            serde_json::from_str::<GoldHistory>(gold).unwrap().history(Some(end), 1000).unwrap();
+        assert_eq!(older.len(), 1);
+        assert_eq!(older[0].close, 884.09);
+        assert!(
+            serde_json::from_str::<GoldHistory>(&gold.replace("866.14", "900.00"))
+                .unwrap()
+                .history(None, 10)
+                .is_err()
+        );
     }
 
     // Contract: a platform's purchase of a fund uses its published NAV,

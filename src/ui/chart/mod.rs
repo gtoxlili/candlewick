@@ -16,14 +16,15 @@ pub mod viewport;
 
 use crate::{
     app::{App, Topic},
+    market::Presentation,
     ui::{prefs::SideTab, theme::Palette, widgets},
 };
 use canvas::PriceCanvas;
 use gpui_kit::{
     AppContext, Context, Entity, Global, InteractiveElement as _, IntoElement, KeyBinding,
-    ParentElement, Render, SharedString, Styled, Task, Window,
+    ParentElement, Render, SharedString, Styled, Task, TestSupportExt as _, Window,
     component::{Sizable as _, TitleBar},
-    div, px,
+    div, prelude::FluentBuilder as _, px,
 };
 use header::{Hero, InstrumentPicker, LiveBadge, ModeToggle};
 use model::DrawingKind;
@@ -121,6 +122,7 @@ impl ChartView {
         self.mode.update(cx, |_, cx| cx.notify());
         self.live.update(cx, |_, cx| cx.notify());
         self.picker.update(cx, |_, cx| cx.notify());
+        self.stats.update(cx, |_, cx| cx.notify());
     }
     fn cancel(&mut self, _: &actions::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         self.model.update(cx, |model, cx| {
@@ -148,6 +150,9 @@ impl ChartView {
         });
     }
     fn choose_tool(&mut self, tool: analysis::Tool, cx: &mut Context<Self>) {
+        if self.model.read(cx).presentation() != crate::market::Presentation::Trading {
+            return;
+        }
         self.model.update(cx, |model, cx| {
             model.analysis_mut().set_tool(tool);
             model.analysis_changed(cx);
@@ -182,24 +187,64 @@ impl Render for ChartView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = Palette::current(&self.app, cx);
         let model = self.model.read(cx);
+        let presentation = model.presentation();
         let has_book = model.spec().is_none_or(|s| s.book);
         let show_book = has_book && model.side_tab() == SideTab::Book;
-        let tabs = model.spec().and_then(|spec| {
-            let current = model.market()?.interval();
-            let intervals: Vec<u32> = spec.intervals.iter().map(|i| i.secs).collect();
-            let selected = intervals.iter().position(|secs| *secs == current)?;
+        let tabs = if presentation != Presentation::Trading {
+            let ranges = [
+                (30_u32, t!("chart.overview.month")),
+                (90_u32, t!("chart.overview.quarter")),
+                (365_u32, t!("chart.overview.year")),
+            ];
+            let selected =
+                ranges.iter().position(|(days, _)| *days == model.overview_days()).unwrap_or(1);
             let labels: Vec<SharedString> =
-                intervals.iter().map(|secs| interval_label(*secs).into()).collect();
+                ranges.iter().map(|(_, label)| (*label).into()).collect();
             let entity = self.model.clone();
             Some(
-                widgets::pill_tabs("chart-interval", labels, selected, move |index, _, cx| {
-                    if let Some(secs) = intervals.get(*index) {
-                        entity.update(cx, |model, cx| model.select_interval(*secs, cx));
+                widgets::pill_tabs("overview-range", labels, selected, move |index, _, cx| {
+                    if let Some((days, _)) = ranges.get(*index) {
+                        entity.update(cx, |model, cx| model.select_overview_range(*days, cx));
                     }
                 })
                 .small(),
             )
-        });
+        } else {
+            model.spec().and_then(|spec| {
+                let current = model.market()?.interval();
+                let intervals: Vec<u32> = spec.intervals.iter().map(|i| i.secs).collect();
+                let selected = intervals.iter().position(|secs| *secs == current)?;
+                let labels: Vec<SharedString> =
+                    intervals.iter().map(|secs| interval_label(*secs).into()).collect();
+                let entity = self.model.clone();
+                Some(
+                    widgets::pill_tabs("chart-interval", labels, selected, move |index, _, cx| {
+                        if let Some(secs) = intervals.get(*index) {
+                            entity.update(cx, |model, cx| model.select_interval(*secs, cx));
+                        }
+                    })
+                    .small(),
+                )
+            })
+        };
+        let controls = if presentation == Presentation::Trading {
+            controls_row(tabs, self.toolbar.clone(), self.mode.clone(), window).into_any_element()
+        } else {
+            div()
+                .id("asset-overview")
+                .test_support()
+                .h(px(28.))
+                .px_4()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .children(tabs)
+                .when(presentation == Presentation::Commodity, |row| {
+                    row.child(div().w(px(70.)).h_full().flex_shrink_0().child(self.mode.clone()))
+                })
+                .into_any_element()
+        };
         div()
             .id("chart-window")
             .key_context("Chart")
@@ -261,12 +306,7 @@ impl Render for ChartView {
                             .gap_3()
                             .pb_4()
                             .child(div().h(px(66.)).child(self.hero.clone()))
-                            .child(controls_row(
-                                tabs,
-                                self.toolbar.clone(),
-                                self.mode.clone(),
-                                window,
-                            ))
+                            .child(controls)
                             .child(
                                 widgets::panel(
                                     div()
@@ -293,46 +333,48 @@ impl Render for ChartView {
                             )
                             .child(div().h(px(60.)).px_4().child(self.stats.clone())),
                     )
-                    .child(
-                        div()
-                            .w(px(280.))
-                            .flex_shrink_0()
-                            .min_h_0()
-                            .border_l_1()
-                            .border_color(palette.border)
-                            .pt_2()
-                            .flex()
-                            .flex_col()
-                            .child(div().flex_shrink_0().px_3().child(if has_book {
-                                let selected = usize::from(model.side_tab() == SideTab::Trades);
-                                let entity = self.model.clone();
-                                div()
-                                    .pb(px(10.))
-                                    .child(widgets::pill_tabs(
-                                        "chart-side-tab",
-                                        [t!("chart.book").into(), t!("chart.trades").into()],
-                                        selected,
-                                        move |index, _, cx| {
-                                            let tab = if *index == 0 {
-                                                SideTab::Book
-                                            } else {
-                                                SideTab::Trades
-                                            };
-                                            entity.update(cx, |model, cx| {
-                                                model.set_side_tab(tab, cx)
-                                            });
-                                        },
-                                    ))
-                                    .into_any_element()
-                            } else {
-                                self.flow.clone().into_any_element()
-                            }))
-                            .child(div().flex_1().min_h_0().child(if show_book {
-                                self.order_book.clone().into_any_element()
-                            } else {
-                                self.trades.clone().into_any_element()
-                            })),
-                    ),
+                    .when(presentation == Presentation::Trading, |body| {
+                        body.child(
+                            div()
+                                .w(px(280.))
+                                .flex_shrink_0()
+                                .min_h_0()
+                                .border_l_1()
+                                .border_color(palette.border)
+                                .pt_2()
+                                .flex()
+                                .flex_col()
+                                .child(div().flex_shrink_0().px_3().child(if has_book {
+                                    let selected = usize::from(model.side_tab() == SideTab::Trades);
+                                    let entity = self.model.clone();
+                                    div()
+                                        .pb(px(10.))
+                                        .child(widgets::pill_tabs(
+                                            "chart-side-tab",
+                                            [t!("chart.book").into(), t!("chart.trades").into()],
+                                            selected,
+                                            move |index, _, cx| {
+                                                let tab = if *index == 0 {
+                                                    SideTab::Book
+                                                } else {
+                                                    SideTab::Trades
+                                                };
+                                                entity.update(cx, |model, cx| {
+                                                    model.set_side_tab(tab, cx)
+                                                });
+                                            },
+                                        ))
+                                        .into_any_element()
+                                } else {
+                                    self.flow.clone().into_any_element()
+                                }))
+                                .child(div().flex_1().min_h_0().child(if show_book {
+                                    self.order_book.clone().into_any_element()
+                                } else {
+                                    self.trades.clone().into_any_element()
+                                })),
+                        )
+                    }),
             )
     }
 }

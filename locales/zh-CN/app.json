@@ -24,10 +24,10 @@
     },
     "quantity": {
       "tokens": "枚",
-      "shares": "股 / 份",
+      "shares": "股",
       "fundUnits": "份",
       "grams": "克",
-      "units": "单位"
+      "units": "份"
     }
   },
   "tray": {

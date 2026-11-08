@@ -132,13 +132,17 @@ impl Overlay {
             && self.last_drag.is_none_or(|t| t.elapsed() > Duration::from_millis(500));
         let press = self.model.update(cx, |model, cx| {
             model.analysis_mut().panning = false;
-            model.viewport_mut().set_now(epoch_now());
+            model.update_clock(epoch_now());
             let frame = Self::frame_at(model, p);
             let interval = model.market().map_or(60., |m| f64::from(m.interval()));
             if double && model.analysis().tool == Tool::Cursor && model.analysis().hovered.is_none()
             {
-                model.viewport_mut().reset();
-                model.viewport_changed(cx);
+                if model.presentation() == crate::market::Presentation::Trading {
+                    model.viewport_mut().reset();
+                    model.viewport_changed(cx);
+                } else {
+                    model.select_overview_range(90, cx);
+                }
                 return Press::Draw;
             }
             let press =
@@ -168,7 +172,7 @@ impl Overlay {
             if started {
                 self.model.update(cx, |m, cx| {
                     m.analysis_mut().panning = true;
-                    m.viewport_mut().set_now(epoch_now());
+                    m.update_clock(epoch_now());
                     m.viewport_mut().drag_start();
                     m.viewport_changed(cx);
                 });
@@ -211,7 +215,7 @@ impl Overlay {
                 if ms > 0. { (p.x - x) / ms } else { 0. }
             });
             let glide = self.model.update(cx, |m, cx| {
-                m.viewport_mut().set_now(epoch_now());
+                m.update_clock(epoch_now());
                 let glide = m.viewport_mut().drag_end(speed);
                 m.viewport_changed(cx);
                 glide
@@ -225,7 +229,7 @@ impl Overlay {
     fn glide(window: &mut Window, cx: &mut Context<Self>) {
         cx.on_next_frame(window, |this, window, cx| {
             let again = this.model.update(cx, |m, cx| {
-                m.viewport_mut().set_now(epoch_now());
+                m.update_clock(epoch_now());
                 let again = m.viewport_mut().glide_tick();
                 m.viewport_changed(cx);
                 again
@@ -241,7 +245,7 @@ impl Overlay {
         let dy = -(f32::from(delta.y) as f64);
         let x = self.local(e.position).x;
         self.model.update(cx, |m, cx| {
-            m.viewport_mut().set_now(epoch_now());
+            m.update_clock(epoch_now());
             match wheel_action(dx, dy, e.modifiers.control) {
                 WheelAction::Scroll(dx) => m.viewport_mut().scroll_by(dx),
                 WheelAction::Zoom(factor) => m.viewport_mut().zoom(factor, x),
@@ -253,7 +257,7 @@ impl Overlay {
     fn pinch(&mut self, e: &PinchEvent, _: &mut Window, cx: &mut Context<Self>) {
         let x = self.local(e.position).x;
         self.model.update(cx, |m, cx| {
-            m.viewport_mut().set_now(epoch_now());
+            m.update_clock(epoch_now());
             m.viewport_mut().zoom(1. / (1. + f64::from(e.delta)).max(0.01), x);
             m.viewport_changed(cx);
         });

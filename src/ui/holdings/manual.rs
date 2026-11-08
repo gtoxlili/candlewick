@@ -6,22 +6,23 @@ use crate::{
     app::{App, Topic},
     format,
     manual::{Holding, Input, Value},
-    market::{PriceKind, QuantityUnit},
     model::Instrument,
     ui::{
         self,
-        instrument_picker::{InstrumentPicker, Presentation, Selected},
+        instrument_picker::{InstrumentPicker, Selected},
+        settings::parts,
         theme::Palette,
     },
 };
 use gpui_kit::{
     AppContext as _, Context, Div, Entity, InteractiveElement as _, IntoElement, ParentElement,
-    Render, SharedString, Styled, Subscription, Task, Window,
+    Render, SharedString, Styled, Subscription, Task, TestSupportExt as _, Window,
     component::{
         Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         input::{Input as TextInput, InputEvent, InputState},
         scroll::ScrollableElement as _,
+        tag::Tag,
     },
     div, px,
 };
@@ -29,9 +30,9 @@ use std::sync::Arc;
 
 pub struct ManualView {
     app: App,
-    inputs: Vec<Entity<InputState>>,
+    portfolio: Arc<crate::portfolio::Portfolio>,
     picker: Entity<InstrumentPicker>,
-    pub(super) portfolio: Arc<crate::portfolio::Portfolio>,
+    inputs: [Entity<InputState>; 3],
     editing: Option<String>,
     removing: Option<String>,
     problem: Option<SharedString>,
@@ -40,37 +41,62 @@ pub struct ManualView {
 }
 
 impl ManualView {
-    pub fn new(
-        app: App,
-        portfolio: Arc<crate::portfolio::Portfolio>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(app: App, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let portfolio = Arc::new(api::get_portfolio(&app));
         let mut subscriptions = Vec::new();
-        let inputs = (0..3)
-            .map(|_| {
-                let input = cx.new(|cx| InputState::new(window, cx));
-                subscriptions.push(cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
-                    if matches!(event, InputEvent::Change) {
-                        cx.notify();
-                    }
-                }));
-                input
-            })
-            .collect();
+        let inputs = [
+            t!("holdings.manual.platformPlaceholder"),
+            t!("holdings.manual.amountPlaceholder"),
+            t!("holdings.manual.costPlaceholder"),
+        ]
+        .map(|placeholder| {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+            subscriptions.push(cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }));
+            input
+        });
         let picker = cx.new(|cx| {
             InstrumentPicker::new(
                 app.clone(),
                 "manual",
-                Presentation::Inline,
                 t!("holdings.manual.search").to_owned(),
                 window,
                 cx,
             )
         });
-        subscriptions.push(cx.subscribe(&picker, |_, _, _: &Selected, cx| cx.notify()));
-        let observers =
-            vec![ui::observe_in(&app, Topic::Locale, window, cx, |this, window, cx| {
+        subscriptions.push(cx.subscribe_in(
+            &picker,
+            window,
+            |this: &mut Self, _, _: &Selected, window, cx| {
+                if this.editing.take().is_some() {
+                    this.clear_inputs(window, cx);
+                }
+                this.removing = None;
+                this.problem = None;
+                cx.notify();
+            },
+        ));
+        let mut observers = ui::setup(&app, window, cx);
+        observers.push(ui::observe(&app, Topic::Portfolio, cx, |this: &mut Self, _| {
+            this.portfolio = Arc::new(api::get_portfolio(&this.app));
+        }));
+        observers.push(ui::observe_in(
+            &app,
+            Topic::Locale,
+            window,
+            cx,
+            |this: &mut Self, window, cx| {
+                this.portfolio = Arc::new(api::get_portfolio(&this.app));
+                for (input, placeholder) in this.inputs.iter().zip([
+                    t!("holdings.manual.platformPlaceholder"),
+                    t!("holdings.manual.amountPlaceholder"),
+                    t!("holdings.manual.costPlaceholder"),
+                ]) {
+                    input.update(cx, |input, cx| input.set_placeholder(placeholder, window, cx));
+                }
                 this.picker.update(cx, |picker, cx| {
                     picker.configure(
                         std::iter::empty(),
@@ -80,12 +106,16 @@ impl ManualView {
                         cx,
                     )
                 });
-            })];
+            },
+        ));
+        observers.push(ui::observe_title(&app, window, cx, |_: &mut Self, _| {
+            t!("holdings.manual.title").to_owned()
+        }));
         Self {
             app,
-            inputs,
-            picker,
             portfolio,
+            picker,
+            inputs,
             editing: None,
             removing: None,
             problem: None,
@@ -94,31 +124,60 @@ impl ManualView {
         }
     }
 
-    fn edit(&mut self, entry: Option<&Holding>, window: &mut Window, cx: &mut Context<Self>) {
-        self.editing = entry.map(|entry| entry.id.clone());
+    #[cfg(any(test, all(target_os = "macos", feature = "test-support")))]
+    pub(crate) fn picker(&self) -> Entity<InstrumentPicker> {
+        self.picker.clone()
+    }
+
+    pub(crate) fn begin_edit(
+        &mut self,
+        entry: &Holding,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editing = Some(entry.id.clone());
         self.removing = None;
         self.problem = None;
-        let values = entry.map_or_else(
-            || vec![String::new(); 3],
-            |entry| {
-                vec![
-                    entry.input.platform.clone(),
-                    entry.input.amount.to_string(),
-                    entry.input.cost.map(|cost| cost.to_string()).unwrap_or_default(),
-                ]
-            },
-        );
+        self.picker.update(cx, |picker, cx| picker.set_selection(None, window, cx));
+        let values = [
+            entry.input.platform.clone(),
+            format::amount(entry.input.amount),
+            entry.input.cost.map(format::amount).unwrap_or_default(),
+        ];
         for (input, value) in self.inputs.iter().zip(values) {
             input.update(cx, |input, cx| input.set_value(value, window, cx));
         }
-        self.picker.update(cx, |picker, cx| {
-            picker.set_selection(entry.map(|entry| entry.input.instrument.clone()), window, cx)
-        });
         cx.notify();
     }
 
+    fn clear_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for input in &self.inputs {
+            input.update(cx, |input, cx| input.set_value(String::new(), window, cx));
+        }
+    }
+
+    fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing = None;
+        self.problem = None;
+        self.picker.update(cx, |picker, cx| picker.set_selection(None, window, cx));
+        self.clear_inputs(window, cx);
+        cx.notify();
+    }
+
+    fn target_instrument(&self, cx: &gpui_kit::App) -> Option<Instrument> {
+        if let Some(id) = &self.editing {
+            self.portfolio
+                .manual_holdings
+                .iter()
+                .find(|v| &v.holding.id == id)
+                .map(|v| v.holding.input.instrument.clone())
+        } else {
+            self.picker.read(cx).selection().cloned()
+        }
+    }
+
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(instrument) = self.picker.read(cx).selection().cloned() else {
+        let Some(instrument) = self.target_instrument(cx) else {
             return;
         };
         let values: Vec<_> =
@@ -140,319 +199,369 @@ impl ManualView {
             .map_err(|error| error.to_string())
         })();
         match result {
-            Ok(_) => self.edit(None, window, cx),
-            Err(error) => self.problem = Some(error.into()),
+            Ok(_) => {
+                self.portfolio = Arc::new(api::get_portfolio(&self.app));
+                self.reset(window, cx);
+            }
+            Err(error) => {
+                self.problem = Some(error.into());
+                cx.notify();
+            }
         }
-        cx.notify();
     }
 
-    fn remove(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+    fn remove(&mut self, id: &str, cx: &mut Context<Self>) {
         match api::remove_manual_holding(&self.app, id) {
             Ok(()) => {
-                if self.editing.as_deref() == Some(id) {
-                    self.edit(None, window, cx);
-                }
                 self.removing = None;
                 self.problem = None;
+                self.portfolio = Arc::new(api::get_portfolio(&self.app));
             }
             Err(error) => self.problem = Some(error.to_string().into()),
         }
         cx.notify();
     }
 
-    fn form(&self, p: Palette, cx: &mut Context<Self>) -> Div {
-        let selected = self.picker.read(cx).selection().cloned();
-        let currency = selected.as_ref().map(|instrument| instrument.quote.as_str()).unwrap_or("—");
-        let metadata = selected.as_ref().map(Instrument::metadata);
-        let unit = metadata
-            .as_ref()
-            .map(|metadata| ui::widgets::quantity_unit(metadata.quantity_unit))
-            .unwrap_or(t!("common.quantity.units"));
-        let labels = [
-            t!("holdings.manual.platform").to_owned(),
-            t!("holdings.manual.amount", unit = unit),
-            t!("holdings.manual.cost", currency = currency),
-        ];
-        let mut form = div()
-            .w(px(280.))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(div().text_size(px(14.)).font_weight(gpui_kit::FontWeight::SEMIBOLD).child(
-                if self.editing.is_some() {
-                    t!("holdings.manual.edit")
-                } else {
-                    t!("holdings.manual.add")
-                },
-            ))
-            .child(div().text_size(px(11.)).text_color(p.muted).child(t!("holdings.manual.search")))
-            .child(self.picker.clone());
-        if let Some(metadata) = &metadata {
-            let hint = match (metadata.price_kind, metadata.quantity_unit) {
-                (PriceKind::Nav { .. }, _) => {
-                    Some(t!("holdings.manual.navHint", currency = currency))
-                }
-                (_, QuantityUnit::Grams) => Some(t!("holdings.manual.gramHint").to_owned()),
-                _ => None,
-            };
-            if let Some(hint) = hint {
-                form = form.child(div().text_size(px(11.)).text_color(p.muted).child(hint));
-            }
-        }
-        for (label, input) in labels.into_iter().zip(&self.inputs) {
-            form = form.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .child(div().text_size(px(11.)).text_color(p.muted).child(label.clone()))
-                    .child(TextInput::new(input).small().aria_label(label)),
-            );
-        }
-        let complete = selected.is_some()
-            && self.inputs[..2].iter().all(|input| !input.read(cx).value().trim().is_empty());
-        form.child(
+    fn form_fields(&self, instrument: &Instrument, p: Palette, cx: &mut Context<Self>) -> Div {
+        let metadata = instrument.metadata();
+        let unit = ui::widgets::quantity_unit(metadata.quantity_unit);
+        let currency = instrument.quote.as_str();
+        let field = |label: String, input: &Entity<InputState>| {
             div()
                 .flex()
-                .gap(px(8.))
+                .flex_col()
+                .gap_1()
+                .child(div().text_xs().text_color(p.muted).whitespace_nowrap().child(label.clone()))
+                .child(TextInput::new(input).small().aria_label(label))
+        };
+        let complete =
+            self.inputs[..2].iter().all(|input| !input.read(cx).value().trim().is_empty());
+        let mut body = div()
+            .px_3()
+            .pt_1()
+            .pb_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(field(t!("holdings.manual.platform").to_owned(), &self.inputs[0]))
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().child(field(
+                        t!("holdings.manual.amount", unit = unit),
+                        &self.inputs[1],
+                    )))
+                    .child(div().flex_1().min_w_0().child(field(
+                        t!("holdings.manual.cost", currency = currency),
+                        &self.inputs[2],
+                    ))),
+            );
+        if let Some(error) = &self.problem {
+            body = body.child(
+                div()
+                    .id("manual-problem")
+                    .text_xs()
+                    .text_color(p.red)
+                    .whitespace_normal()
+                    .child(error.clone()),
+            );
+        }
+        body.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_end()
+                .gap_2()
+                .pt_0p5()
+                .child(
+                    Button::new("manual-reset")
+                        .small()
+                        .label(t!("holdings.manual.cancel"))
+                        .on_click(cx.listener(|this, _, window, cx| this.reset(window, cx))),
+                )
                 .child(
                     Button::new("manual-save")
+                        .primary()
                         .small()
                         .label(t!("holdings.manual.save"))
                         .disabled(!complete)
                         .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                )
-                .child(
-                    Button::new("manual-reset")
-                        .ghost()
-                        .small()
-                        .label(t!("holdings.manual.cancel"))
-                        .on_click(cx.listener(|this, _, window, cx| this.edit(None, window, cx))),
                 ),
         )
     }
 
-    fn card(
+    fn row(
         &self,
-        value: Value,
+        value: &Value,
         currency: crate::currency::Currency,
         p: Palette,
         cx: &mut Context<Self>,
     ) -> Div {
-        let entry = value.holding;
+        let entry = &value.holding;
         let id = entry.id.clone();
         let instrument = &entry.input.instrument;
-        let price = value
-            .price
-            .map(|price| format::price(price, format::decimals(price, instrument.decimals)))
-            .unwrap_or_else(|| "—".to_owned());
-        let total = value
-            .value
-            .map(|value| format::price(value, currency.decimals()))
-            .unwrap_or_else(|| "—".to_owned());
-        let mut card = ui::widgets::panel(div(), p)
-            .p(px(12.))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .child(
-                div()
-                    .flex()
-                    .items_baseline()
-                    .justify_between()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
-                            .child(format!(
-                                "{} · {}",
-                                instrument.pair_label(),
-                                entry.input.platform
-                            )),
-                    )
-                    .child(ui::tabular(
-                        div().whitespace_nowrap().child(format!("{total} {}", currency.code())),
-                    )),
-            )
-            .child(div().text_size(px(11.)).text_color(p.muted).child(format!(
-                "{} × {price} {} · {}",
-                format::amount(entry.input.amount),
-                instrument.quote,
-                instrument.provider.name()
-            )))
-            .children(entry.input.cost.map(|cost| {
-                div().text_size(px(11.)).text_color(p.muted).child(format!(
-                    "{}: {}",
-                    t!("holdings.manual.cost", currency = instrument.quote.clone()),
-                    format::amount(cost)
-                ))
-            }))
-            .children(value.price_updated.or(value.received).map(|time| {
-                let text = if let PriceKind::Nav { utc_offset } = value.metadata.price_kind {
-                    let date = crate::calendar::civil(time as i64 / 1000 + utc_offset);
-                    t!(
-                        "holdings.manual.navDate",
-                        date = format!("{:04}-{:02}-{:02}", date.year, date.month, date.day)
-                    )
-                } else {
-                    t!("holdings.manual.priceUpdated", time = format::timestamp(time))
-                };
-                div()
-                    .text_size(px(10.))
-                    .text_color(if value.stale { p.amber } else { p.muted })
-                    .child(text)
-            }))
-            .children(
-                value.error.map(|error| div().text_size(px(11.)).text_color(p.amber).child(error)),
-            )
-            .children(value.stale.then(|| {
-                div().text_size(px(10.)).text_color(p.amber).child(t!("holdings.manual.stale"))
-            }))
-            .child(
-                div()
-                    .text_size(px(10.))
-                    .text_color(p.muted)
-                    .child(t!("holdings.manual.updated", time = format::timestamp(entry.updated))),
-            );
-        if self.removing.as_deref() == Some(&id) {
-            let remove_id = id.clone();
-            card = card
+        if self.editing.as_deref() == Some(&id) {
+            return div()
+                .flex()
+                .flex_col()
                 .child(
                     div()
-                        .text_size(px(11.))
-                        .text_color(p.amber)
-                        .child(t!("holdings.manual.confirmDelete")),
+                        .h(px(40.))
+                        .px_3()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(instrument_title(instrument, p))
+                        .child(Tag::secondary().small().child(instrument.provider.name())),
                 )
+                .child(self.form_fields(instrument, p, cx));
+        }
+
+        let unit = ui::widgets::quantity_unit(value.metadata.quantity_unit);
+        let mut detail = format!(
+            "{} · {} {}",
+            entry.input.platform,
+            format::amount(entry.input.amount),
+            unit
+        );
+        if let Some(cost) = entry.input.cost {
+            let cost_str = format::price(cost, format::decimals(cost, instrument.decimals));
+            detail.push_str(&format!(" · {}", t!("holdings.manual.costShort", value = cost_str)));
+        }
+
+        let right = if self.removing.as_deref() == Some(&id) {
+            let remove_id = id.clone();
+            div()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Button::new(SharedString::from(format!("manual-keep-{id}")))
+                        .ghost()
+                        .small()
+                        .label(t!("holdings.manual.cancel"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.removing = None;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("manual-confirm-{id}")))
+                        .danger()
+                        .small()
+                        .label(t!("holdings.manual.delete"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.remove(&remove_id, cx);
+                        })),
+                )
+        } else {
+            let total = value
+                .value
+                .map(|v| format!("{} {}", format::price(v, currency.decimals()), currency.code()))
+                .unwrap_or_else(|| "—".to_owned());
+            let quote = value
+                .price
+                .map(|pr| {
+                    format!(
+                        "{} {}",
+                        format::price(pr, format::decimals(pr, instrument.decimals)),
+                        instrument.quote
+                    )
+                })
+                .unwrap_or_else(|| t!("holdings.manual.noQuote").to_owned());
+            let edit_entry = entry.clone();
+            let delete_id = id.clone();
+            div()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(ui::tabular(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_end()
+                        .gap(px(1.))
+                        .child(
+                            div()
+                                .text_size(px(13.))
+                                .font_weight(gpui_kit::FontWeight::MEDIUM)
+                                .whitespace_nowrap()
+                                .child(total),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(p.muted)
+                                .whitespace_nowrap()
+                                .child(quote),
+                        ),
+                ))
                 .child(
                     div()
                         .flex()
-                        .gap(px(8.))
+                        .items_center()
+                        .gap(px(2.))
                         .child(
-                            Button::new(SharedString::from(format!("manual-confirm-{id}")))
+                            Button::new(SharedString::from(format!("manual-edit-{id}")))
+                                .ghost()
                                 .small()
-                                .label(t!("holdings.manual.delete"))
+                                .label(t!("holdings.manual.edit"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.remove(&remove_id, window, cx)
+                                    this.begin_edit(&edit_entry, window, cx);
                                 })),
                         )
                         .child(
-                            Button::new(SharedString::from(format!("manual-keep-{id}")))
-                                .small()
+                            Button::new(SharedString::from(format!("manual-delete-{id}")))
                                 .ghost()
-                                .label(t!("holdings.manual.cancel"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.removing = None;
+                                .small()
+                                .label("×")
+                                .accessibility_label(t!("holdings.manual.delete"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.removing = Some(delete_id.clone());
                                     cx.notify();
                                 })),
                         ),
-                );
-        } else {
-            card = card.child(
+                )
+        };
+
+        div()
+            .px_3()
+            .py(px(10.))
+            .min_h(px(52.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
-                    .gap(px(8.))
-                    .child(
-                        Button::new(SharedString::from(format!("manual-edit-{id}")))
-                            .small()
-                            .ghost()
-                            .label(t!("holdings.manual.edit"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.edit(Some(&entry), window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("manual-delete-{id}")))
-                            .small()
-                            .ghost()
-                            .label(t!("holdings.manual.delete"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.removing = Some(id.clone());
-                                cx.notify();
-                            })),
-                    ),
-            );
-        }
-        card
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(instrument_title(instrument, p))
+                    .child(ui::tabular(
+                        div().text_xs().text_color(p.muted).truncate().child(detail),
+                    )),
+            )
+            .child(right)
     }
+}
+
+fn instrument_title(instrument: &Instrument, p: Palette) -> Div {
+    let (name, code) = instrument.row_label();
+    let code = code.trim().to_owned();
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .items_baseline()
+        .gap(px(6.))
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .child(
+            div()
+                .text_size(px(13.))
+                .font_weight(gpui_kit::FontWeight::MEDIUM)
+                .text_color(p.foreground)
+                .child(name),
+        )
+        .children((!code.is_empty()).then(|| {
+            div().flex_shrink_0().text_xs().text_color(p.muted).child(code)
+        }))
 }
 
 impl Render for ManualView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = Palette::current(&self.app, cx);
-        let portfolio = self.portfolio.clone();
-        let mut list = div()
-            .id("manual-records")
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .overflow_y_scrollbar()
-            .flex()
-            .flex_col()
-            .gap(px(10.));
-        if portfolio.manual_holdings.is_empty() {
-            list = list.child(
-                div().text_size(px(12.)).text_color(p.muted).child(t!("holdings.manual.empty")),
-            );
-        }
-        for value in portfolio.manual_holdings.iter().cloned() {
-            list = list.child(self.card(value, portfolio.valuation.currency, p, cx));
-        }
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .p(px(16.))
-            .child(div().text_size(px(12.)).text_color(p.muted).child(t!("holdings.manual.detail")))
-            .children(
-                portfolio
-                    .manual_error
-                    .clone()
-                    .map(|error| div().text_size(px(12.)).text_color(p.red).child(error)),
-            )
-            .children(self.problem.clone().map(|error| {
-                div().id("manual-problem").text_size(px(12.)).text_color(p.red).child(error)
-            }))
-            .child(
+        let selected =
+            if self.editing.is_none() { self.picker.read(cx).selection().cloned() } else { None };
+        let mut add_section =
+            parts::section(t!("holdings.manual.add"), &self.app, cx).child(self.picker.clone());
+        if let Some(instrument) = &selected {
+            let group = parts::group(&self.app, cx).child(
                 div()
                     .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .gap(px(20.))
+                    .flex_col()
                     .child(
                         div()
-                            .id("manual-form-scroll")
-                            .w(px(280.))
-                            .flex_none()
-                            .min_h_0()
-                            .overflow_y_scrollbar()
-                            .child(self.form(p, cx)),
+                            .h(px(40.))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(instrument_title(instrument, p))
+                            .child(Tag::secondary().small().child(instrument.provider.name())),
                     )
-                    .child(list),
-            )
+                    .child(self.form_fields(instrument, p, cx)),
+            );
+            add_section = add_section.child(group);
+        }
+
+        let mut list_group = parts::group(&self.app, cx);
+        if self.portfolio.manual_holdings.is_empty() {
+            list_group = list_group.child(
+                div()
+                    .px_3()
+                    .py_4()
+                    .text_color(p.muted)
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(t!("holdings.manual.empty")),
+            );
+        } else {
+            let holdings = self.portfolio.manual_holdings.clone();
+            let currency = self.portfolio.valuation.currency;
+            for (index, value) in holdings.iter().enumerate() {
+                let mut row = self.row(value, currency, p, cx);
+                if index > 0 {
+                    row = row.border_t_1().border_color(p.border);
+                }
+                list_group = list_group.child(row);
+            }
+        }
+        let mut list_section =
+            parts::section(t!("holdings.manual.title"), &self.app, cx).child(list_group);
+        if let Some(error) = &self.portfolio.manual_error {
+            list_section = list_section.child(parts::problem("manual-load-error", error.clone()));
+        }
+
+        ui::frame(t!("holdings.manual.title").to_owned(), cx).child(
+            div()
+                .id("manual-scroll")
+                .test_support()
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scrollbar()
+                .px_5()
+                .pt_3()
+                .pb_6()
+                .flex()
+                .flex_col()
+                .gap_5()
+                .child(add_section)
+                .child(list_section),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        market::ProviderId,
-        model::{Settings, Shared},
-    };
+    use crate::model::{Settings, Shared};
     use gpui_kit::{
         Bounds, TestAppContext, WindowBounds, WindowOptions, size, test::TestWindowExt as _,
     };
 
-    // UX contract: without any synced account the user can select a quoted
-    // instrument, save/edit quantity and cost, and cancel or confirm deletion.
+    // UX contract: ManualView adds, edits inline, cancels without mutating,
+    // and supports cancelable deletion in a single Settings-styled window.
     #[test]
-    fn register_edit_and_confirm_delete_without_an_exchange_key() {
+    fn manual_view_adds_edits_cancels_and_deletes_inline() {
         let dir =
             tempfile::tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target"))
                 .unwrap();
@@ -466,68 +575,68 @@ mod tests {
             dir.path().join("credentials.json"),
         );
         let app = cx.update(|cx| App::new(cx, runtime.handle().clone(), shared));
-        let mut root = None;
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                Default::default(),
+                size(px(460.), px(640.)),
+            ))),
+            ..Default::default()
+        };
+        let mut view_entity = None;
         let window = cx.update(|cx| {
-            gpui_kit::open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                        Default::default(),
-                        size(px(800.), px(500.)),
-                    ))),
-                    ..Default::default()
-                },
-                cx,
-                |window, cx| {
-                    let view =
-                        cx.new(|cx| super::super::HoldingsView::new(app.clone(), window, cx));
-                    root = Some(view.clone());
-                    view
-                },
-            )
+            gpui_kit::open_window(options, cx, |window, cx| {
+                let view = cx.new(|cx| ManualView::new(app.clone(), window, cx));
+                view_entity = Some(view.clone());
+                view
+            })
             .unwrap()
             .0
         });
-        let root = root.unwrap();
-        cx.update(|cx| window.update(cx, |_, window, cx| window.click("add-manual", cx)).unwrap());
-        let editor = cx.update(|cx| root.read(cx).manual.clone());
-        let instrument = Instrument {
-            provider: ProviderId::Ths,
-            symbol: "510300.SH".into(),
-            base: "510300".into(),
-            quote: "CNY".into(),
-            name: Some("沪深300ETF".into()),
-            decimals: Some(3),
-            pinned: false,
-            venue: None,
-        };
+        let view = view_entity.unwrap();
+        let instrument = crate::market::ProviderId::Ths.provider().bare("510300.SH").unwrap();
         cx.update(|cx| {
             window
                 .update(cx, |_, window, cx| {
-                    editor.update(cx, |view, cx| {
-                        view.picker.update(cx, |picker, cx| {
-                            picker.set_selection(Some(instrument), window, cx)
-                        });
-                        cx.notify();
+                    view.update(cx, |this, cx| {
+                        this.picker.update(cx, |picker, cx| {
+                            picker.set_selection(Some(instrument.clone()), window, cx)
+                        })
                     });
-                    let inputs = editor.read(cx).inputs.clone();
+                    let inputs = view.read(cx).inputs.clone();
                     for (input, value) in inputs.iter().zip(["Broker", "100", "3.5"]) {
                         input.update(cx, |input, cx| input.set_value(value, window, cx));
                     }
                     window.click("manual-save", cx);
                 })
-                .unwrap();
+                .unwrap()
         });
         cx.run_until_parked();
-        let entries = api::get_manual_holdings(&app).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].input.amount, 100.);
-        assert_eq!(entries[0].input.cost, Some(3.5));
-        let id = &entries[0].id;
+        let entry = api::get_manual_holdings(&app).unwrap().remove(0);
+        assert_eq!((entry.input.amount, entry.input.cost), (100., Some(3.5)));
+
+        // Begin inline edit and cancel: saved quantity stays intact.
         cx.update(|cx| {
             window
                 .update(cx, |_, window, cx| {
-                    window.click(SharedString::from(format!("manual-edit-{id}")), cx);
-                    let amount = editor.read(cx).inputs[1].clone();
+                    window.click(SharedString::from(format!("manual-edit-{}", entry.id)), cx);
+                    let amount = view.read(cx).inputs[1].clone();
+                    amount.update(cx, |input, cx| input.set_value("200", window, cx));
+                    window.click("manual-reset", cx);
+                })
+                .unwrap()
+        });
+        assert_eq!(
+            api::get_manual_holdings(&app).unwrap()[0].input.amount,
+            100.,
+            "cancel leaves the saved quantity intact"
+        );
+
+        // Begin inline edit and save.
+        cx.update(|cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    window.click(SharedString::from(format!("manual-edit-{}", entry.id)), cx);
+                    let amount = view.read(cx).inputs[1].clone();
                     amount.update(cx, |input, cx| input.set_value("200", window, cx));
                     window.click("manual-save", cx);
                 })
@@ -535,24 +644,25 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(api::get_manual_holdings(&app).unwrap()[0].input.amount, 200.);
+
+        // Delete with cancel, then confirm.
         cx.update(|cx| {
             window
                 .update(cx, |_, window, cx| {
-                    window.click(SharedString::from(format!("manual-delete-{id}")), cx);
-                    window.click(SharedString::from(format!("manual-keep-{id}")), cx);
+                    window.click(SharedString::from(format!("manual-delete-{}", entry.id)), cx);
+                    window.click(SharedString::from(format!("manual-keep-{}", entry.id)), cx);
                 })
                 .unwrap()
         });
-        assert_eq!(api::get_manual_holdings(&app).unwrap().len(), 1, "cancel keeps the record");
+        assert_eq!(api::get_manual_holdings(&app).unwrap().len(), 1);
         cx.update(|cx| {
             window
                 .update(cx, |_, window, cx| {
-                    window.click(SharedString::from(format!("manual-delete-{id}")), cx);
-                    window.click(SharedString::from(format!("manual-confirm-{id}")), cx);
+                    window.click(SharedString::from(format!("manual-delete-{}", entry.id)), cx);
+                    window.click(SharedString::from(format!("manual-confirm-{}", entry.id)), cx);
                 })
                 .unwrap()
         });
-        cx.run_until_parked();
         assert!(api::get_manual_holdings(&app).unwrap().is_empty());
     }
 }

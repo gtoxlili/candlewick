@@ -66,7 +66,7 @@ pub fn tiles(portfolio: &Portfolio, figures: &summary::Figures, palette: Palette
             .min_w_0()
             .rounded(px(12.))
             .bg(palette.fill)
-            .px(px(12.))
+            .px(px(10.))
             .py(px(8.))
             .flex()
             .flex_col()
@@ -76,6 +76,7 @@ pub fn tiles(portfolio: &Portfolio, figures: &summary::Figures, palette: Palette
             )
             .child(crate::ui::tabular(
                 div()
+                    .text_size(px(13.))
                     .font_weight(FontWeight::MEDIUM)
                     .whitespace_nowrap()
                     .truncate()

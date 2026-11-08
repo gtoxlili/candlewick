@@ -60,6 +60,8 @@ struct Glide {
 #[derive(Clone, Debug)]
 pub struct Viewport {
     pub view: View,
+    /// Wall clock for gesture inertia, independent of the last observation time.
+    clock: f64,
     /// Seconds per candle.
     secs: f64,
     /// Epoch seconds of the oldest loaded candle; infinite while unknown.
@@ -85,6 +87,7 @@ impl Viewport {
                 now,
                 buffer: 0.0,
             },
+            clock: now,
             secs,
             oldest: f64::INFINITY,
             exhausted: true,
@@ -94,9 +97,9 @@ impl Viewport {
         }
     }
 
-    /// The chart's clock for this frame, epoch seconds.
-    pub fn set_now(&mut self, now: f64) {
-        self.view.now = now;
+    pub fn set_time(&mut self, clock: f64, data_time: f64) {
+        self.clock = clock;
+        self.view.now = data_time;
     }
 
     pub fn live(&self) -> bool {
@@ -158,18 +161,18 @@ impl Viewport {
     pub fn drag_end(&mut self, velocity: f64) -> bool {
         self.drag_from = None;
         if velocity.abs() >= GLIDE_MIN {
-            self.glide = Some(Glide { velocity, last: self.view.now });
+            self.glide = Some(Glide { velocity, last: self.clock });
             return true;
         }
         false
     }
 
     /// Advances a released fling by the time since the frame before. Call once
-    /// per frame after [`set_now`]; true while another frame is needed.
+    /// per frame after [`Self::set_time`]; true while another frame is needed.
     pub fn glide_tick(&mut self) -> bool {
         let Some(mut glide) = self.glide else { return false };
-        let dt_ms = ((self.view.now - glide.last) * 1000.0).max(0.0);
-        glide.last = self.view.now;
+        let dt_ms = ((self.clock - glide.last) * 1000.0).max(0.0);
+        glide.last = self.clock;
         glide.velocity *= (-dt_ms / GLIDE_MS).exp();
         let before = self.view.end;
         if glide.velocity.abs() >= GLIDE_MIN / 4.0 && before.is_some() {
@@ -209,6 +212,14 @@ impl Viewport {
             _ => self.view.span = span,
         }
         self.events.push(ViewportEvent::Zoom(span / self.secs));
+        self.want_older();
+    }
+
+    /// A calendar range for a valuation/commodity overview, independent of trading zoom.
+    pub fn show_span(&mut self, span: f64) {
+        self.stop_glide();
+        self.view.span = span;
+        self.set_end(None, true);
         self.want_older();
     }
 
@@ -416,12 +427,29 @@ mod tests {
         vp.drag_to(0.0);
         assert!(vp.drag_end(0.5));
         // Six seconds per pixel: 3600 / 600.
-        vp.set_now(NOW + 0.016);
+        vp.set_time(NOW + 0.016, NOW + 0.016);
         assert!(vp.glide_tick());
         assert!((vp.view.end.unwrap() - 1_699_999_354.305_851_7).abs() < 1e-3);
-        vp.set_now(NOW + 0.032);
+        vp.set_time(NOW + 0.032, NOW + 0.032);
         assert!(vp.glide_tick());
         assert!((vp.view.end.unwrap() - 1_699_999_310.806_785_3).abs() < 1e-3);
+    }
+
+    // Regression: a daily valuation's fixed observation time must not freeze a fling.
+    #[test]
+    fn gesture_inertia_uses_wall_time_while_the_series_date_stays_fixed() {
+        let mut vp = viewport();
+        vp.set_history(Some(NOW - 10_000.), true);
+        drawn(&mut vp, 3600., NOW - 600.);
+        vp.view.end = Some(NOW - 600.);
+        vp.drag_start();
+        vp.drag_to(0.);
+        assert!(vp.drag_end(0.5));
+        let before = vp.view.end.unwrap();
+        vp.set_time(NOW + 0.016, NOW);
+        assert!(vp.glide_tick());
+        assert!(vp.view.end.unwrap() < before);
+        assert_eq!(vp.view.now, NOW);
     }
 
     #[test]
@@ -429,7 +457,7 @@ mod tests {
         let mut vp = viewport();
         vp.drag_start();
         assert!(!vp.drag_end(GLIDE_MIN / 2.0));
-        vp.set_now(NOW + 0.016);
+        vp.set_time(NOW + 0.016, NOW + 0.016);
         assert!(!vp.glide_tick());
     }
 
@@ -443,7 +471,7 @@ mod tests {
         vp.drag_start();
         vp.drag_to(0.0);
         assert!(vp.drag_end(-5.0));
-        vp.set_now(NOW + 0.016);
+        vp.set_time(NOW + 0.016, NOW + 0.016);
         assert!(!vp.glide_tick());
         assert!(vp.live());
         assert_eq!(vp.take_events(), vec![ViewportEvent::Live(true)]);

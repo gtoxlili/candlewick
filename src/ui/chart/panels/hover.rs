@@ -95,7 +95,12 @@ impl Render for HoverCard {
         let pointer = model.analysis().pointer;
         match (candle, pointer, frame) {
             (Some(candle), Some(pointer), Some(frame)) => {
-                let (w, h) = card_size(window, &time_label, candle, decimals, &readings);
+                let nav = model.presentation() == crate::market::Presentation::NetAssetValue;
+                let (w, h) = if nav {
+                    (220., 64.)
+                } else {
+                    card_size(window, &time_label, candle, decimals, &readings)
+                };
                 let (x, y) = place(
                     pointer,
                     (w, h),
@@ -114,7 +119,21 @@ impl Render for HoverCard {
                     .py_2()
                     .text_size(px(12.))
                     .shadow_sm()
-                    .child(content(time_label, candle, decimals, &readings, palette))
+                    .child(if nav {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(div().text_color(palette.muted).child(time_label))
+                            .child(figure(
+                                t!("chart.overview.unitNav"),
+                                format::price(candle.close, decimals),
+                                None,
+                                palette,
+                            ))
+                    } else {
+                        content(time_label, candle, decimals, &readings, palette)
+                    })
             }
             _ => div(),
         }

@@ -113,7 +113,8 @@ impl Pair {
             high,
             low,
             volume: None,
-            turnover: self.volume.as_ref().and_then(|v| v.h24).unwrap_or(0.0),
+            turnover: self.volume.as_ref().and_then(|v| v.h24),
+            source_time: None,
             change: Some(change),
             change_pct: Some(if open > 0.0 { change / open * 100.0 } else { 0.0 }),
             onchain: Some(Onchain {
@@ -165,7 +166,7 @@ mod tests {
         assert!((open - 0.2175 / 1.0288).abs() < 1e-9);
         let stats = pair.stats(Some(0.23), None).unwrap();
         assert!((stats.change_pct.unwrap() - 2.88).abs() < 1e-9);
-        assert_eq!(stats.turnover, 289_043.58);
+        assert_eq!(stats.turnover, Some(289_043.58));
         assert_eq!((stats.high, stats.low, stats.volume), (Some(0.23), None, None));
         let onchain = stats.onchain.unwrap();
         assert_eq!((onchain.buys, onchain.sells), (743, 684));

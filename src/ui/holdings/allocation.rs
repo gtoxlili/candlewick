@@ -103,8 +103,6 @@ pub fn allocation(
                 .flex()
                 .flex_wrap()
                 .gap(px(10.))
-                .h(px(16.))
-                .overflow_hidden()
                 .text_size(px(10.))
                 .text_color(palette.muted)
                 .children(labeled.iter().map(|share| {

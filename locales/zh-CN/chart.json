@@ -68,6 +68,20 @@
       "close": "收盘"
     },
     "bars": "%{count} 根",
-    "barsOne": "%{count} 根"
+    "barsOne": "%{count} 根",
+    "overview": {
+      "perUnit": "份",
+      "perGram": "克",
+      "unitNav": "单位净值",
+      "navDate": "净值日期",
+      "quoteTime": "行情时间",
+      "previousNav": "较前值",
+      "previousValue": "前次净值",
+      "month": "近 1 月",
+      "quarter": "近 3 月",
+      "year": "近 1 年",
+      "rangeHigh": "区间最高",
+      "rangeLow": "区间最低"
+    }
   }
 }

@@ -98,17 +98,44 @@ pub fn aside(
         .child(content)
 }
 
-/// Each exchange: its total, what the day did to it, and where it sits.
+/// Each exchange or manual account: its total, what the day did to it, and where it sits.
 fn accounts(portfolio: &Portfolio, palette: Palette) -> AnyElement {
+    struct ManualPlatform<'a> {
+        total: Option<f64>,
+        change: Option<f64>,
+        items: Vec<(&'a str, f64)>,
+    }
     let decimals = portfolio.valuation.currency.decimals();
-    let mut manual: std::collections::BTreeMap<&str, Option<f64>> =
+    let mut manual: std::collections::BTreeMap<&str, ManualPlatform<'_>> =
         std::collections::BTreeMap::new();
     for holding in &portfolio.manual_holdings {
-        let total = manual.entry(&holding.holding.input.platform).or_default();
+        let entry = manual.entry(&holding.holding.input.platform).or_insert(ManualPlatform {
+            total: None,
+            change: None,
+            items: Vec::new(),
+        });
         if let Some(value) = holding.value {
-            *total = Some(total.unwrap_or(0.) + value);
+            entry.total = Some(entry.total.unwrap_or(0.) + value);
+            let label = holding
+                .holding
+                .input
+                .instrument
+                .name
+                .as_deref()
+                .unwrap_or(&holding.holding.input.instrument.base);
+            entry.items.push((label, value));
+        }
+        if let Some(change) = holding.change {
+            entry.change = Some(entry.change.unwrap_or(0.) + change);
         }
     }
+    let tone = move |value: f64| {
+        if format::direction(value) == format::Direction::Down {
+            palette.down
+        } else {
+            palette.up
+        }
+    };
     div()
         .id("accounts")
         .min_h_0()
@@ -244,32 +271,106 @@ fn accounts(portfolio: &Portfolio, palette: Palette) -> AnyElement {
             }
             section
         }))
-        .children(manual.into_iter().map(|(platform, total)| {
-            div()
+        .children(manual.into_iter().map(|(platform, group)| {
+            let before = match (group.total, group.change) {
+                (Some(total), Some(change)) => Some(total - change),
+                _ => None,
+            };
+            let pct = match (before, group.change) {
+                (Some(before), Some(change)) if before > 0. => Some(change / before * 100.),
+                _ => None,
+            };
+            let widest = group.items.iter().map(|(_, v)| *v).fold(0., f64::max).max(1.);
+            let total = group
+                .total
+                .map(|total| format::price(total, decimals))
+                .unwrap_or_else(|| "—".to_owned());
+            let mut section = div()
                 .px(px(12.))
                 .py(px(10.))
+                .flex()
+                .flex_col()
                 .border_b_1()
                 .border_color(palette.border)
                 .child(
                     div()
                         .flex()
+                        .items_baseline()
                         .justify_between()
                         .gap(px(8.))
-                        .child(div().min_w_0().truncate().child(platform.to_owned()))
                         .child(
-                            div().whitespace_nowrap().child(
-                                total
-                                    .map(|total| format::price(total, decimals))
-                                    .unwrap_or_else(|| "—".to_owned()),
-                            ),
-                        ),
-                )
-                .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(platform.to_owned()),
+                        )
+                        .child(crate::ui::tabular(
+                            div().font_weight(FontWeight::MEDIUM).whitespace_nowrap().child(total),
+                        )),
+                );
+            if let (Some(pct), Some(change)) = (pct, group.change) {
+                section = section.child(
                     div()
+                        .mt(px(2.))
+                        .flex()
+                        .items_baseline()
+                        .justify_end()
                         .text_size(px(10.))
-                        .text_color(palette.muted)
-                        .child(t!("holdings.manual.label")),
-                )
+                        .child(crate::ui::tabular(
+                            div().whitespace_nowrap().text_color(tone(pct)).child(format!(
+                                "{} · {}",
+                                format::change_signed(pct),
+                                format::signed(change, decimals),
+                            )),
+                        )),
+                );
+            }
+            if !group.items.is_empty() {
+                section = section.child(div().mt(px(8.)).flex().flex_col().gap(px(4.)).children(
+                    group.items.into_iter().map(move |(name, value)| {
+                        crate::ui::tabular(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .text_size(px(10.))
+                                .child(
+                                    div()
+                                        .w(px(88.))
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_color(palette.muted)
+                                        .child(name.to_owned()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .h(px(4.))
+                                        .rounded_full()
+                                        .overflow_hidden()
+                                        .bg(palette.fill_strong)
+                                        .child(
+                                            div()
+                                                .h_full()
+                                                .rounded_full()
+                                                .bg(palette.glow)
+                                                .opacity(0.7)
+                                                .w(gpui_kit::DefiniteLength::Fraction(
+                                                    (value / widest) as f32,
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .whitespace_nowrap()
+                                        .child(format::price(value, decimals)),
+                                ),
+                        )
+                    }),
+                ));
+            }
+            section
         }))
         .into_any_element()
 }

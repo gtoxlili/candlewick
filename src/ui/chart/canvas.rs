@@ -280,12 +280,13 @@ impl Painter {
         let axis_width = &mut self.axis_width;
         let day_anchor = self.day_anchor;
         model.update(cx, |model, cx| {
+            model.update_clock(now);
+            let now = model.chart_now(now);
             let line_mode = model.mode() == Mode::Line;
             let tick_decimals = model.instrument().and_then(|i| i.decimals);
             let dragging = model.analysis().dragging();
             let frame = model.frame.clone();
             let (market, viewport, _) = model.parts_mut();
-            viewport.set_now(now);
             let glide = viewport.glide_tick();
             let Some(market) = market else {
                 chart.advance(

@@ -16,7 +16,7 @@ use crate::ui::{theme::Palette, widgets};
 /// Column widths as shares of the row, with and without the cost column:
 /// asset, amount, price, price move, value (, cost).
 const COLUMNS: [f32; 5] = [0.268, 0.179, 0.179, 0.161, 0.213];
-const COLUMNS_COSTED: [f32; 6] = [0.224, 0.149, 0.149, 0.134, 0.179, 0.164];
+const COLUMNS_COSTED: [f32; 6] = [0.22, 0.11, 0.18, 0.14, 0.18, 0.17];
 
 const ROW_HEIGHT: f32 = 38.;
 
@@ -76,13 +76,7 @@ impl Row {
             change: asset.change.map(|change| format::signed(change, decimals)),
             value: asset
                 .value
-                .map(|value| {
-                    if asset.partial {
-                        format!("{} *", format::price(value, decimals))
-                    } else {
-                        format::price(value, decimals)
-                    }
-                })
+                .map(|value| format::price(value, decimals))
                 .unwrap_or_else(|| "—".to_owned()),
             cost: asset.cost.map(|cost| format::price(cost, format::decimals(cost, None))),
             pnl: asset.pnl.map(|pnl| format::signed(pnl, decimals)),
@@ -109,9 +103,7 @@ pub(super) fn where_held(asset: &Asset, several: bool) -> String {
                     wallet.to_string()
                 }
             }
-            crate::portfolio::HoldingSource::Manual { platform, .. } => {
-                format!("{platform} · {}", t!("holdings.manual.label"))
-            }
+            crate::portfolio::HoldingSource::Manual { platform, .. } => platform.clone(),
         };
         if asset.held.len() == 1 {
             location
@@ -154,8 +146,13 @@ pub fn panel(
         t!("holdings.value", currency = currency.code()).into(),
     ];
     for (index, label) in labels.into_iter().enumerate() {
-        let mut cell =
-            div().w(DefiniteLength::Fraction(columns[index])).flex_none().flex().justify_end();
+        let mut cell = div()
+            .w(DefiniteLength::Fraction(columns[index]))
+            .flex_none()
+            .min_w_0()
+            .overflow_hidden()
+            .flex()
+            .justify_end();
         if index == 0 {
             cell = cell.justify_start();
         } else {
@@ -238,8 +235,13 @@ fn row_element(row: &Row, columns: &[f32], costed: bool, palette: Palette) -> gp
     let bar_color = series_color(row.series, palette);
     let tone = |down: bool| if down { palette.down } else { palette.up };
     let cell = |index: usize| {
-        let mut cell =
-            div().w(DefiniteLength::Fraction(columns[index])).flex_none().flex().justify_end();
+        let mut cell = div()
+            .w(DefiniteLength::Fraction(columns[index]))
+            .flex_none()
+            .min_w_0()
+            .overflow_hidden()
+            .flex()
+            .justify_end();
         if index > 0 {
             cell = cell.pl(px(6.));
         }
@@ -312,9 +314,11 @@ fn row_element(row: &Row, columns: &[f32], costed: bool, palette: Palette) -> gp
                 .bg(bar_color),
         )
         .child(name)
-        .child(cell(1).child(crate::ui::tabular(
-            div().text_size(px(12.)).whitespace_nowrap().child(row.amount.clone()),
-        )))
+        .child(
+            cell(1).child(crate::ui::tabular(
+                div().text_size(px(12.)).whitespace_nowrap().child(row.amount.clone()),
+            )),
+        )
         .child(
             cell(2).child(crate::ui::tabular(
                 div()
