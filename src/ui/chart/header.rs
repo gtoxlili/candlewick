@@ -230,16 +230,12 @@ impl Render for Hero {
 
         let unit_label = model.spec().and_then(|spec| match spec.presentation {
             crate::market::Presentation::Trading => None,
-            crate::market::Presentation::NetAssetValue => Some(format!(
-                "{} / {}",
-                spec.turnover_unit,
-                t!("chart.overview.perUnit")
-            )),
-            crate::market::Presentation::Commodity => Some(format!(
-                "{} / {}",
-                spec.turnover_unit,
-                t!("chart.overview.perGram")
-            )),
+            crate::market::Presentation::NetAssetValue => {
+                Some(format!("{} / {}", spec.turnover_unit, t!("chart.overview.perUnit")))
+            }
+            crate::market::Presentation::Commodity => {
+                Some(format!("{} / {}", spec.turnover_unit, t!("chart.overview.perGram")))
+            }
         });
 
         let badge = stats.and_then(|stats| stats.change_pct.zip(stats.change)).map(

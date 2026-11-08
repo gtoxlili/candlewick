@@ -50,11 +50,7 @@ impl Render for StatsGrid {
 /// Exchanges and stocks: the range, volume and turnover. Pools: the range,
 /// volume in dollars, and what the pool holds and the token is worth.
 /// Fund NAVs and daily commodities: publication date, reference/range extremes.
-fn grid_items(
-    model: &ChartModel,
-    stats: Option<Stats>,
-    decimals: usize,
-) -> Vec<(String, String)> {
+fn grid_items(model: &ChartModel, stats: Option<Stats>, decimals: usize) -> Vec<(String, String)> {
     let Some(spec) = model.spec() else { return Vec::new() };
     let span = span_suffix(spec.stats_span);
     let price = |value: Option<f64>| value.map(|v| format::price(v, decimals));
@@ -82,9 +78,7 @@ fn grid_items(
             vec![
                 (
                     t!("chart.overview.navDate").to_owned(),
-                    source_ms
-                        .map(|ms| source_date(ms, spec.day_offset, true))
-                        .unwrap_or_else(dash),
+                    source_ms.map(|ms| source_date(ms, spec.day_offset, true)).unwrap_or_else(dash),
                 ),
                 (t!("chart.overview.previousValue").to_owned(), priced(previous)),
                 (t!("chart.overview.rangeHigh").to_owned(), priced(high)),
@@ -96,8 +90,7 @@ fn grid_items(
             let source_ms = stats
                 .and_then(|s| s.source_time)
                 .or_else(|| candles.last().map(|c| c.time * 1000.));
-            let per_gram =
-                format!("{}/{}", spec.turnover_unit, t!("chart.overview.perGram"));
+            let per_gram = format!("{}/{}", spec.turnover_unit, t!("chart.overview.perGram"));
             let priced = |value: Option<f64>| {
                 value
                     .map(|v| format!("{} {per_gram}", format::price(v, decimals)))

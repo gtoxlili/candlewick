@@ -357,13 +357,7 @@ impl Render for HoldingsView {
                             ))
                             .child(tiles::tiles(&self.portfolio, &derived.figures, palette)),
                     )
-                    .child(aside::aside(
-                        &self.portfolio,
-                        self.tab,
-                        derived.several,
-                        view,
-                        palette,
-                    ))
+                    .child(aside::aside(&self.portfolio, self.tab, derived.several, view, palette))
             };
 
         div()

@@ -267,8 +267,7 @@ impl InstrumentPicker {
             } else {
                 t!("settings.watchlist.noResults")
             };
-            list =
-                list.child(div().px_3().py_2().text_xs().text_color(p.muted).child(text));
+            list = list.child(div().px_3().py_2().text_xs().text_color(p.muted).child(text));
         }
         if let Some(results) = results {
             for (index, candidate) in results.candidates.iter().enumerate() {
@@ -281,10 +280,7 @@ impl InstrumentPicker {
                     Some(t!("settings.watchlist.manual").to_owned())
                 } else {
                     candidate.liquidity.map(|value| {
-                        t!(
-                            "settings.watchlist.liquidity",
-                            value = crate::format::compact(value)
-                        )
+                        t!("settings.watchlist.liquidity", value = crate::format::compact(value))
                     })
                 };
                 let (name, sub) = candidate_labels(&item);
@@ -347,9 +343,8 @@ impl InstrumentPicker {
                 );
             }
             for note in &results.notes {
-                list = list.child(
-                    div().px_2().py_1().text_xs().text_color(p.amber).child(note.clone()),
-                );
+                list = list
+                    .child(div().px_2().py_1().text_xs().text_color(p.amber).child(note.clone()));
             }
         }
         list

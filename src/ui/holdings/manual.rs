@@ -124,7 +124,7 @@ impl ManualView {
         }
     }
 
-    #[cfg(any(test, all(target_os = "macos", feature = "test-support")))]
+    #[cfg(all(target_os = "macos", feature = "test-support"))]
     pub(crate) fn picker(&self) -> Entity<InstrumentPicker> {
         self.picker.clone()
     }
@@ -236,27 +236,28 @@ impl ManualView {
         };
         let complete =
             self.inputs[..2].iter().all(|input| !input.read(cx).value().trim().is_empty());
-        let mut body = div()
-            .px_3()
-            .pt_1()
-            .pb_3()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(field(t!("holdings.manual.platform").to_owned(), &self.inputs[0]))
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(div().flex_1().min_w_0().child(field(
-                        t!("holdings.manual.amount", unit = unit),
-                        &self.inputs[1],
-                    )))
-                    .child(div().flex_1().min_w_0().child(field(
-                        t!("holdings.manual.cost", currency = currency),
-                        &self.inputs[2],
-                    ))),
-            );
+        let mut body =
+            div()
+                .px_3()
+                .pt_1()
+                .pb_3()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(field(t!("holdings.manual.platform").to_owned(), &self.inputs[0]))
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(div().flex_1().min_w_0().child(field(
+                            t!("holdings.manual.amount", unit = unit),
+                            &self.inputs[1],
+                        )))
+                        .child(div().flex_1().min_w_0().child(field(
+                            t!("holdings.manual.cost", currency = currency),
+                            &self.inputs[2],
+                        ))),
+                );
         if let Some(error) = &self.problem {
             body = body.child(
                 div()
@@ -320,12 +321,8 @@ impl ManualView {
         }
 
         let unit = ui::widgets::quantity_unit(value.metadata.quantity_unit);
-        let mut detail = format!(
-            "{} · {} {}",
-            entry.input.platform,
-            format::amount(entry.input.amount),
-            unit
-        );
+        let mut detail =
+            format!("{} · {} {}", entry.input.platform, format::amount(entry.input.amount), unit);
         if let Some(cost) = entry.input.cost {
             let cost_str = format::price(cost, format::decimals(cost, instrument.decimals));
             detail.push_str(&format!(" · {}", t!("holdings.manual.costShort", value = cost_str)));
@@ -393,11 +390,7 @@ impl ManualView {
                                 .child(total),
                         )
                         .child(
-                            div()
-                                .text_xs()
-                                .text_color(p.muted)
-                                .whitespace_nowrap()
-                                .child(quote),
+                            div().text_xs().text_color(p.muted).whitespace_nowrap().child(quote),
                         ),
                 ))
                 .child(
@@ -470,9 +463,10 @@ fn instrument_title(instrument: &Instrument, p: Palette) -> Div {
                 .text_color(p.foreground)
                 .child(name),
         )
-        .children((!code.is_empty()).then(|| {
-            div().flex_shrink_0().text_xs().text_color(p.muted).child(code)
-        }))
+        .children(
+            (!code.is_empty())
+                .then(|| div().flex_shrink_0().text_xs().text_color(p.muted).child(code)),
+        )
 }
 
 impl Render for ManualView {

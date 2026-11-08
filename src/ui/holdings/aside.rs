@@ -130,11 +130,7 @@ fn accounts(portfolio: &Portfolio, palette: Palette) -> AnyElement {
         }
     }
     let tone = move |value: f64| {
-        if format::direction(value) == format::Direction::Down {
-            palette.down
-        } else {
-            palette.up
-        }
+        if format::direction(value) == format::Direction::Down { palette.down } else { palette.up }
     };
     div()
         .id("accounts")
@@ -362,9 +358,7 @@ fn accounts(portfolio: &Portfolio, palette: Palette) -> AnyElement {
                                         ),
                                 )
                                 .child(
-                                    div()
-                                        .whitespace_nowrap()
-                                        .child(format::price(value, decimals)),
+                                    div().whitespace_nowrap().child(format::price(value, decimals)),
                                 ),
                         )
                     }),

@@ -314,11 +314,9 @@ fn row_element(row: &Row, columns: &[f32], costed: bool, palette: Palette) -> gp
                 .bg(bar_color),
         )
         .child(name)
-        .child(
-            cell(1).child(crate::ui::tabular(
-                div().text_size(px(12.)).whitespace_nowrap().child(row.amount.clone()),
-            )),
-        )
+        .child(cell(1).child(crate::ui::tabular(
+            div().text_size(px(12.)).whitespace_nowrap().child(row.amount.clone()),
+        )))
         .child(
             cell(2).child(crate::ui::tabular(
                 div()

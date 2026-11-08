@@ -499,10 +499,7 @@ fn holdings(portfolio: &crate::portfolio::Portfolio) -> Holdings {
                 .iter()
                 .filter_map(|a| a.updated)
                 .chain(
-                    portfolio
-                        .manual_holdings
-                        .iter()
-                        .filter_map(|h| h.received.or(h.price_updated)),
+                    portfolio.manual_holdings.iter().filter_map(|h| h.received.or(h.price_updated)),
                 )
                 .fold(0.0, f64::max);
             (latest > 0.0).then(|| t!("common.holdings.updated", time = format::clock(latest)))

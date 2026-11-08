@@ -24,7 +24,9 @@ use gpui_kit::{
     AppContext, Context, Entity, Global, InteractiveElement as _, IntoElement, KeyBinding,
     ParentElement, Render, SharedString, Styled, Task, TestSupportExt as _, Window,
     component::{Sizable as _, TitleBar},
-    div, prelude::FluentBuilder as _, px,
+    div,
+    prelude::FluentBuilder as _,
+    px,
 };
 use header::{Hero, InstrumentPicker, LiveBadge, ModeToggle};
 use model::DrawingKind;
