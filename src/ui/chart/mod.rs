@@ -277,7 +277,7 @@ impl Render for ChartView {
                     )
                     .child(
                         div()
-                            .w(px(112.))
+                            .w(px(if presentation == Presentation::Trading { 112. } else { 140. }))
                             .h_full()
                             .flex()
                             .items_center()

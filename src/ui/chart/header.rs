@@ -266,7 +266,22 @@ impl Render for Hero {
             })
             .flatten();
         let onchain = (!has_book).then(|| stats.and_then(|stats| stats.onchain)).flatten();
-        let insight = insight_line(model.visible_stats(), book, onchain.as_ref());
+        let insight = if model.presentation() == crate::market::Presentation::NetAssetValue {
+            model.visible_stats().map(|stats| {
+                let stretch = if stats.live {
+                    t!("chart.lastSpan", span = format::duration(stats.span)).to_owned()
+                } else {
+                    format::range(stats.from, stats.to)
+                };
+                t!(
+                    "chart.overview.navChange",
+                    span = stretch,
+                    change = format::change_signed(stats.change_pct)
+                )
+            })
+        } else {
+            insight_line(model.visible_stats(), book, onchain.as_ref())
+        };
 
         div()
             .id("Hero")
@@ -369,7 +384,14 @@ impl Render for LiveBadge {
         let model = self.model.read(cx);
         let state = model.market().map_or(FeedState::Connecting, Market::feed);
         let (status, label) = match state {
-            FeedState::Live => (widgets::Status::Live, t!("chart.live")),
+            FeedState::Live => (
+                widgets::Status::Live,
+                match model.presentation() {
+                    crate::market::Presentation::Trading => t!("chart.live"),
+                    crate::market::Presentation::NetAssetValue => t!("chart.overview.published"),
+                    crate::market::Presentation::Commodity => t!("chart.overview.latestQuote"),
+                },
+            ),
             FeedState::Connecting => (widgets::Status::Busy, t!("chart.connecting")),
             FeedState::Offline => (widgets::Status::Error, t!("chart.reconnecting")),
         };

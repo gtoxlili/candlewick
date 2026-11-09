@@ -81,7 +81,10 @@
       "quarter": "近 3 月",
       "year": "近 1 年",
       "rangeHigh": "区间最高",
-      "rangeLow": "区间最低"
+      "rangeLow": "区间最低",
+      "published": "已公布净值",
+      "latestQuote": "最新报价",
+      "navChange": "%{span} 净值变化 %{change}"
     }
   }
 }

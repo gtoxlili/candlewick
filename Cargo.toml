@@ -20,6 +20,12 @@ path = "tests/macos_bar.rs"
 harness = false
 required-features = ["test-support"]
 
+[[test]]
+name = "asset_ui"
+path = "tests/asset_ui.rs"
+harness = false
+required-features = ["test-support"]
+
 [build-dependencies]
 ureq = "3"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

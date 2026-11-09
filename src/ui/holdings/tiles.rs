@@ -13,10 +13,10 @@ struct Figure {
     up: Option<bool>,
 }
 
-/// ` · 26`-style share of the total, appended to a tile's value.
+/// Whole-percent share, displayed beside the tile label.
 pub(super) fn share(value: f64, total: Option<f64>) -> String {
     match total {
-        Some(total) if total > 0. => format!(" · {:.0}%", value / total * 100.),
+        Some(total) if total > 0. => format!("{:.0}%", value / total * 100.),
         _ => String::new(),
     }
 }
@@ -35,17 +35,11 @@ pub fn tiles(portfolio: &Portfolio, figures: &summary::Figures, palette: Palette
     };
     let crypto = match total {
         None => Figure { text: unknown.clone(), up: None },
-        Some(_) => Figure {
-            text: format::price(figures.risk, decimals) + &share(figures.risk, total),
-            up: None,
-        },
+        Some(_) => Figure { text: format::price(figures.risk, decimals), up: None },
     };
     let stablecoins = match total {
         None => Figure { text: unknown, up: None },
-        Some(_) => Figure {
-            text: format::price(figures.cash, decimals) + &share(figures.cash, total),
-            up: None,
-        },
+        Some(_) => Figure { text: format::price(figures.cash, decimals), up: None },
     };
     let unrealized = match (total, figures.positions_pnl) {
         (None, _) => Figure { text: "—".to_owned(), up: None },
@@ -55,7 +49,7 @@ pub fn tiles(portfolio: &Portfolio, figures: &summary::Figures, palette: Palette
             up: Some(format::direction(pnl) != format::Direction::Down),
         },
     };
-    let tile = |label: &'static str, figure: &Figure| {
+    let tile = |label: &'static str, figure: &Figure, share: String| {
         let color = match figure.up {
             Some(true) => palette.up,
             Some(false) => palette.down,
@@ -72,7 +66,15 @@ pub fn tiles(portfolio: &Portfolio, figures: &summary::Figures, palette: Palette
             .flex_col()
             .gap(px(2.))
             .child(
-                div().text_size(px(10.)).text_color(palette.muted).whitespace_nowrap().child(label),
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_1()
+                    .text_size(px(10.))
+                    .text_color(palette.muted)
+                    .child(div().flex_1().min_w_0().truncate().child(label))
+                    .children((!share.is_empty()).then(|| div().flex_shrink_0().child(share))),
             )
             .child(crate::ui::tabular(
                 div()
@@ -88,8 +90,8 @@ pub fn tiles(portfolio: &Portfolio, figures: &summary::Figures, palette: Palette
         .flex()
         .gap(px(8.))
         .px(px(16.))
-        .child(tile(t!("common.holdings.dayPnl"), &day_pnl))
-        .child(tile(t!("holdings.crypto"), &crypto))
-        .child(tile(t!("holdings.stablecoins"), &stablecoins))
-        .child(tile(t!("holdings.unrealized"), &unrealized))
+        .child(tile(t!("common.holdings.dayPnl"), &day_pnl, String::new()))
+        .child(tile(t!("holdings.crypto"), &crypto, share(figures.risk, total)))
+        .child(tile(t!("holdings.stablecoins"), &stablecoins, share(figures.cash, total)))
+        .child(tile(t!("holdings.unrealized"), &unrealized, String::new()))
 }

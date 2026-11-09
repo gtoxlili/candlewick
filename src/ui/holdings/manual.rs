@@ -141,8 +141,8 @@ impl ManualView {
         self.picker.update(cx, |picker, cx| picker.set_selection(None, window, cx));
         let values = [
             entry.input.platform.clone(),
-            format::amount(entry.input.amount),
-            entry.input.cost.map(format::amount).unwrap_or_default(),
+            entry.input.amount.to_string(),
+            entry.input.cost.map(|cost| cost.to_string()).unwrap_or_default(),
         ];
         for (input, value) in self.inputs.iter().zip(values) {
             input.update(cx, |input, cx| input.set_value(value, window, cx));
@@ -458,6 +458,8 @@ fn instrument_title(instrument: &Instrument, p: Palette) -> Div {
         .whitespace_nowrap()
         .child(
             div()
+                .min_w_0()
+                .truncate()
                 .text_size(px(13.))
                 .font_weight(gpui_kit::FontWeight::MEDIUM)
                 .text_color(p.foreground)
@@ -607,6 +609,40 @@ mod tests {
         cx.run_until_parked();
         let entry = api::get_manual_holdings(&app).unwrap().remove(0);
         assert_eq!((entry.input.amount, entry.input.cost), (100., Some(3.5)));
+
+        // Regression: opening and saving an existing record must preserve the
+        // exact quantity and cost, including grouped amounts and tiny unit costs.
+        let precise = api::replace_manual_holding(
+            &app,
+            &entry.id,
+            Input {
+                platform: "Broker".into(),
+                instrument: instrument.clone(),
+                amount: 12000.512345,
+                cost: Some(0.000012345678),
+            },
+        )
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    window.click(SharedString::from(format!("manual-edit-{}", entry.id)), cx);
+                    let platform = view.read(cx).inputs[0].clone();
+                    platform.update(cx, |input, cx| input.set_value("Broker updated", window, cx));
+                    window.click("manual-save", cx);
+                })
+                .unwrap()
+        });
+        cx.run_until_parked();
+        let kept = api::get_manual_holdings(&app).unwrap().remove(0);
+        assert_eq!(kept.input.platform, "Broker updated", "the edit must save successfully");
+        assert_eq!(
+            (kept.input.amount, kept.input.cost),
+            (precise.input.amount, precise.input.cost)
+        );
+        api::replace_manual_holding(&app, &entry.id, entry.input.clone()).unwrap();
+        cx.run_until_parked();
 
         // Begin inline edit and cancel: saved quantity stays intact.
         cx.update(|cx| {

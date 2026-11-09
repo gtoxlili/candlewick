@@ -131,7 +131,9 @@ pub fn registered_samples(
         model::Quote,
         ui,
     };
-    use gpui_kit::{AppContext as _, Bounds, WindowBounds, px, size, test::TestWindowExt as _};
+    use gpui_kit::{
+        AppContext as _, Bounds, InputEvent as _, WindowBounds, px, size, test::TestWindowExt as _,
+    };
     let instrument = |source: ProviderId, symbol: &str, name: &str| {
         let mut instrument = source.provider().bare(symbol).unwrap();
         instrument.name = Some(name.to_owned());
@@ -336,8 +338,26 @@ pub fn registered_samples(
         }
         cx.update_window(window, |_, window, cx| {
             picker.update(cx, |picker, cx| picker.set_selection(None, window, cx));
-            window.remove_window();
+            // Scroll the real surface after the search popover closes. The
+            // Scrollable wrapper's ID is a scope, not an observed test target.
+            window.render_frame(cx);
+            let viewport = window.viewport_size();
+            window.dispatch_event(
+                gpui_kit::ScrollEvent {
+                    position: gpui_kit::point(viewport.width / 2., viewport.height / 2.),
+                    delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-3000.))),
+                    modifiers: window.modifiers(),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
         })
         .unwrap();
+        for (theme, dark) in [("light", false), ("dark", true)] {
+            cx.update(|cx| ui::theme::apply(app, dark, cx));
+            render(cx, window, &format!("settings-agent-{tag}-{theme}"));
+        }
+        cx.update_window(window, |_, window, _| window.remove_window()).unwrap();
     }
 }

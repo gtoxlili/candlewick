@@ -81,7 +81,10 @@
       "quarter": "3M",
       "year": "1Y",
       "rangeHigh": "Period high",
-      "rangeLow": "Period low"
+      "rangeLow": "Period low",
+      "published": "Published NAV",
+      "latestQuote": "Latest quote",
+      "navChange": "%{span} NAV change %{change}"
     }
   }
 }

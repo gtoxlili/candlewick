@@ -61,3 +61,22 @@ fn verify_topics(app: &crate::app::App) {
 /// Nothing to check off macOS.
 #[cfg(not(target_os = "macos"))]
 pub fn run_native_checks() {}
+
+/// Render only the asset feature's affected windows. No menu bar, user state,
+/// credentials, provider workers, or other native regression checks are started.
+#[cfg(target_os = "macos")]
+pub fn run_asset_ui_checks() {
+    let config = std::env::temp_dir().join(format!(
+        "candlewick-asset-ui-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir_all(&config).unwrap();
+    // SAFETY: this standalone test starts on the main thread before workers.
+    unsafe { std::env::set_var("CANDLEWICK_CONFIG_DIR", &config) };
+    crate::ui::testing::run_asset_ui_checks();
+    std::fs::remove_dir_all(config).unwrap();
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn run_asset_ui_checks() {}

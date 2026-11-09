@@ -1666,6 +1666,27 @@ fn display_samples(cx: &mut HeadlessAppContext, app: &App) {
     crate::ui::settings::display_samples(cx, app, &render_png);
 }
 
+/// A separate entry point keeps visual checks for this feature focused.
+pub fn run_asset_ui_checks() {
+    let mut cx = HeadlessAppContext::with_platform(
+        gpui_kit::platform::current_platform(true).text_system(),
+        Arc::new(Assets),
+        gpui_kit::platform::current_headless_renderer,
+    );
+    cx.update(gpui_kit::init);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let config = crate::app::config_dir();
+    let (shared, _) = Shared::new(
+        Settings::default(),
+        config.join("settings.json"),
+        Default::default(),
+        config.join("credentials.json"),
+    );
+    let app = cx.update(|cx| App::new(cx, runtime.handle().clone(), shared));
+    asset_overview_samples(&mut cx, &app);
+    println!("asset_ui: focused detail, registration, portfolio and search checks passed");
+}
+
 /// The asset overview's real render and input boundary. Prepared source samples
 /// keep the check offline; no provider workers or production settings are opened.
 fn asset_overview_samples(cx: &mut HeadlessAppContext, app: &App) {
@@ -1708,7 +1729,7 @@ fn asset_overview_samples(cx: &mut HeadlessAppContext, app: &App) {
                     low: (!nav).then_some(865.),
                     volume: None,
                     turnover: (!nav).then_some(343430928.),
-                    source_time: Some(last_time * 1000.),
+                    source_time: Some((last_time + if nav { 0. } else { 10. * 3600. }) * 1000.),
                     change: Some(if nav { 0.002 } else { 5.43 }),
                     change_pct: Some(if nav { 0.0666 } else { 0.625 }),
                     onchain: None,
@@ -1730,6 +1751,22 @@ fn asset_overview_samples(cx: &mut HeadlessAppContext, app: &App) {
                     assert!(window.try_find("chart-mode-candle").is_some() != nav);
                 })
                 .unwrap();
+            }
+            if width == 980. {
+                for (tag, locale) in
+                    [("en", crate::i18n::Locale::En), ("ja", crate::i18n::Locale::Ja)]
+                {
+                    crate::i18n::set(locale);
+                    app.notify(crate::app::Topic::Locale);
+                    cx.run_until_parked();
+                    for (theme, dark) in [("light", false), ("dark", true)] {
+                        cx.update(|cx| ui::theme::apply(app, dark, cx));
+                        chart_png(cx, window, &format!("overview-{label}-{tag}-{theme}"));
+                    }
+                }
+                crate::i18n::set(crate::i18n::Locale::ZhCn);
+                app.notify(crate::app::Topic::Locale);
+                cx.run_until_parked();
             }
             // Real keyboard routing cannot enable hidden drawing tools.
             cx.update_window(window, |_, window, cx| window.press("alt-t", cx)).unwrap();

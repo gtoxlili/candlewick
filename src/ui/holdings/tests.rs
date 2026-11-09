@@ -59,7 +59,7 @@ fn the_day_is_a_percent_of_yesterdays_worth() {
 
 #[test]
 fn tile_shares_round_to_whole_percent() {
-    assert_eq!(tiles::share(26.0, Some(100.0)), " · 26%");
+    assert_eq!(tiles::share(26.0, Some(100.0)), "26%");
     assert_eq!(tiles::share(0.5, Some(0.0)), "");
     assert_eq!(tiles::share(1.0, None), "");
 }

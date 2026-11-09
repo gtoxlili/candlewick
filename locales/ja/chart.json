@@ -81,7 +81,10 @@
       "quarter": "3か月",
       "year": "1年",
       "rangeHigh": "期間高値",
-      "rangeLow": "期間安値"
+      "rangeLow": "期間安値",
+      "published": "公表済み基準価額",
+      "latestQuote": "最新価格",
+      "navChange": "%{span} 基準価額変化 %{change}"
     }
   }
 }
