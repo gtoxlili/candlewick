@@ -434,6 +434,7 @@ mod tests {
             scrub: 0.0,
             line_mode: 0.0,
             hover: None,
+            settled: 1.0,
         }
     }
 

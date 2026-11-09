@@ -139,6 +139,7 @@ fn overlay_sample(cx: &mut HeadlessAppContext, app: &App) {
         scrub: 0.,
         line_mode: 0.,
         hover: None,
+        settled: 1.,
     };
     let handle = app.clone();
     let options = cx.update(|cx| {
@@ -651,6 +652,7 @@ fn panels_model(
                     scrub: 1.0,
                     line_mode: 0.0,
                     hover: Some(last),
+                    settled: 1.0,
                 }));
                 model.analysis_mut().pointer =
                     Some(ui::chart::geometry::Point { x: pointer.0, y: pointer.1 });
@@ -934,6 +936,7 @@ fn hover_frame_sample(cx: &mut HeadlessAppContext, app: &App) {
         scrub: 1.0,
         line_mode: 0.0,
         hover: Some(last),
+        settled: 1.0,
     };
     model.update(cx, |model, cx| {
         model.frame.set(Some(frame(600.0)));
@@ -1301,6 +1304,114 @@ fn chart_live_samples(cx: &mut HeadlessAppContext, app: &App) {
     cx.run_until_parked();
 }
 
+/// Switching the candle interval re-forms the chart in place: the window asks
+/// for frames until the new bars have landed, the price axis never leaves the
+/// span of the two ranges on the way, and the drawings step aside meanwhile.
+/// With `CANDLEWICK_RENDER_DIR` set, each switch is written as a filmstrip.
+fn chart_reform_samples(cx: &mut HeadlessAppContext, app: &App) {
+    use crate::market::{Candle, LiveEvent};
+    use ui::chart::{model::Drawing, model_state::ChartModel};
+
+    let id = crate::api::get_chart_instrument(app).expect("a chart instrument");
+    let instrument = crate::api::chart_instrument(app, id.clone()).expect("the instrument");
+    let spec = crate::api::chart_spec(app, id).expect("a chart spec");
+    let (mut market, _) = live_market(&spec);
+    let minute = market.current().interval();
+    let five = spec
+        .intervals
+        .iter()
+        .copied()
+        .find(|interval| interval.secs == 300)
+        .expect("a five-minute interval");
+    // The five-minute history is already there, so the switch does not wait.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    let end = (now / 300.0).floor() * 300.0;
+    let fives: Vec<Candle> = (0..200)
+        .map(|i| {
+            let i = f64::from(i);
+            let at = |i: f64| 84_000.0 + (i * 0.23).sin() * 520.0 + (i * 0.05).cos() * 260.0;
+            let (open, close) = (at(i), at(i + 1.0));
+            Candle {
+                time: end - 300.0 * (200.0 - i),
+                open,
+                high: open.max(close) + 60.0 + (i % 4.0) * 15.0,
+                low: open.min(close) - 55.0 - (i % 3.0) * 12.0,
+                close,
+            }
+        })
+        .collect();
+    market.select_interval(five);
+    let token = market.begin_history();
+    market.finish_history(token, fives);
+    market.select_interval(minute);
+    let price = market.current().live().map_or(84_000.0, |live| live.close);
+    market.apply(LiveEvent::Tick { price, time: now * 1000.0 });
+    let handle = app.clone();
+    let model = cx.update(move |cx| {
+        cx.new(move |_| ChartModel::with_market(handle, Some(instrument), spec, market))
+    });
+    let window = chart_live_window(cx, app, 980.0, 640.0, model.clone());
+    cx.update(|cx| ui::theme::apply(app, true, cx));
+    assert!(chart_settle(cx, window, 400));
+    let level = cx.update(|cx| model.read(cx).frame.get()).map(|f| (f.min + f.max) / 2.0);
+    cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            model.analysis_mut().drawings =
+                vec![Drawing::Level { id: "level".to_owned(), price: level.unwrap_or(price) }];
+            cx.notify();
+        });
+    });
+    assert!(chart_settle(cx, window, 400));
+
+    for (name, secs, mode) in [
+        ("candle", five.secs, ui::prefs::Mode::Candle),
+        ("line", minute.secs, ui::prefs::Mode::Line),
+    ] {
+        // Both intervals in the mode under test, settled.
+        for interval in [minute.secs, five.secs, minute.secs, five.secs] {
+            cx.update(|cx| {
+                model.update(cx, |model, cx| {
+                    model.select_interval(interval, cx);
+                    model.set_mode(mode, cx);
+                })
+            });
+            assert!(chart_settle(cx, window, 400));
+        }
+        if secs == five.secs {
+            cx.update(|cx| model.update(cx, |model, cx| model.select_interval(minute.secs, cx)));
+            assert!(chart_settle(cx, window, 400));
+        }
+        let before = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame");
+        render_png(cx, window, &format!("chart-reform-{name}-000"));
+        cx.update(|cx| model.update(cx, |model, cx| model.select_interval(secs, cx)));
+        let mut ranges = Vec::new();
+        for frame in 1..=40 {
+            assert!(chart_frame(cx, window) >= 1, "a re-form asks for frame {frame}");
+            cx.run_until_parked();
+            let drawn = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame");
+            if frame <= 3 {
+                assert!(drawn.settled < 0.05, "the drawings step aside");
+            }
+            ranges.push((drawn.min, drawn.max));
+            if [2, 5, 8, 12, 16, 22, 30].contains(&frame) {
+                render_png(cx, window, &format!("chart-reform-{name}-{:03}", frame * 16));
+            }
+        }
+        assert!(chart_settle(cx, window, 400), "the re-form settles");
+        assert_eq!(chart_frame(cx, window), 0, "and then asks for nothing");
+        let after = cx.update(|cx| model.read(cx).frame.get()).expect("a painted frame");
+        assert_eq!(after.settled, 1.0, "the drawings come back");
+        let hull = (before.min.min(after.min), before.max.max(after.max));
+        for (lo, hi) in ranges {
+            assert!(lo >= hull.0 - 1e-6 && hi <= hull.1 + 1e-6, "the axis stays between ranges");
+        }
+        render_png(cx, window, &format!("chart-reform-{name}-end"));
+    }
+    cx.update(|cx| ui::theme::apply(app, false, cx));
+}
+
 pub fn run() {
     let mut cx = HeadlessAppContext::with_platform(
         gpui_kit::platform::current_platform(true).text_system(),
@@ -1510,6 +1621,7 @@ pub fn run() {
     panels_samples(&mut cx, &app);
     hover_frame_sample(&mut cx, &app);
     chart_live_samples(&mut cx, &app);
+    chart_reform_samples(&mut cx, &app);
     display_samples(&mut cx, &app);
     picker_sample(&mut cx, &app, &windows);
     asset_overview_samples(&mut cx, &app);

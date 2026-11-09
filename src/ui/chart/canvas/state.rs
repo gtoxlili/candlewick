@@ -2,8 +2,9 @@
 
 use super::super::{geometry::Frame, market::LinePoint, viewport::View};
 use super::math::{
-    candle_range, cosine, ease_range, grid_interval, lerp, morph_width, spline, time_interval,
+    candle_range, cosine, ease_range, grid_interval, lerp, ramp, smoothstep, spline, time_interval,
 };
+use super::reform::{self, Picture, Scene};
 use crate::market::Candle;
 
 const LEFT: f64 = 14.0;
@@ -17,6 +18,9 @@ pub(super) struct Input<'a> {
     pub live: Option<Candle>,
     pub line: &'a [LinePoint],
     pub price: Option<f64>,
+    /// The feed the data comes from. Another feed is another chart, which the
+    /// picture on screen does not re-form into.
+    pub series: u64,
     pub candle_width: f64,
     pub now: f64,
     pub day_anchor: f64,
@@ -118,6 +122,11 @@ pub(super) struct State {
     pub candles: Vec<CandleShape>,
     pub grid: Vec<Tick>,
     pub times: Vec<Tick>,
+    /// The span `times` read for.
+    pub times_span: f64,
+    /// The time labels of a picture the chart is leaving, each with the span
+    /// it reads for.
+    pub ghosts: Vec<(Tick, f64)>,
     pub points: Vec<(f64, f64)>,
     pub controls: Vec<[(f64, f64); 3]>,
     pub wave_points: Vec<(f64, f64)>,
@@ -127,6 +136,9 @@ pub(super) struct State {
     pub reveal: f64,
     pub loading: f64,
     pub scrub: f64,
+    /// The share of their ink the marks show: below 1 while a held picture
+    /// waits for the interval it is leaving for.
+    pub dim: f64,
     pub hover_x: Option<f64>,
     pub close_y: Option<f64>,
     pub tip: Option<(f64, f64)>,
@@ -136,7 +148,6 @@ pub(super) struct State {
     /// Candles whose geometry this frame built, for tests.
     pub candles_visited: usize,
     pub moving: bool,
-    pub display_width: f64,
     pub bull: f64,
     pub badge_value: Option<f64>,
     pub badge_y: f64,
@@ -160,23 +171,21 @@ pub(super) struct State {
     density_from: f64,
     density_target: f64,
     density_elapsed: f64,
+    /// Seconds per candle; 0 before the first frame.
     width: f64,
-    width_from: f64,
-    width_elapsed: f64,
-    morph_from: Option<(f64, f64)>,
-    morph_to: Option<(f64, f64)>,
-    stash: Vec<Candle>,
-    stash_live: Option<Candle>,
-    stash_price: Option<f64>,
-    stash_line: Vec<LinePoint>,
-    old: Vec<Candle>,
-    old_live: Option<Candle>,
+    series: Option<u64>,
+    scene: Scene,
+    /// How much of the layers drawn in the frame's coordinates to show.
+    marks: f64,
     coarse: Option<f64>,
     grid_fades: Vec<Fade>,
     time_fades: Vec<Fade>,
     slopes: Vec<f64>,
     close_points: Vec<(f64, f64)>,
     last_hover: Option<Candle>,
+    /// Where a re-form writes, kept between frames.
+    reformed_candles: Vec<CandleShape>,
+    reformed_points: Vec<(f64, f64)>,
 }
 
 impl Default for State {
@@ -186,6 +195,8 @@ impl Default for State {
             candles: Vec::new(),
             grid: Vec::new(),
             times: Vec::new(),
+            times_span: 0.0,
+            ghosts: Vec::new(),
             points: Vec::new(),
             controls: Vec::new(),
             wave_points: Vec::new(),
@@ -195,13 +206,13 @@ impl Default for State {
             reveal: 0.0,
             loading: 0.0,
             scrub: 0.0,
+            dim: 1.0,
             hover_x: None,
             close_y: None,
             tip: None,
             off_plot: false,
             candles_visited: 0,
             moving: false,
-            display_width: 0.0,
             bull: 0.5,
             badge_value: None,
             badge_y: 0.0,
@@ -226,22 +237,17 @@ impl Default for State {
             density_target: 0.0,
             density_elapsed: 350.0,
             width: 0.0,
-            width_from: 0.0,
-            width_elapsed: 300.0,
-            morph_from: None,
-            morph_to: None,
-            stash: Vec::new(),
-            stash_live: None,
-            stash_price: None,
-            stash_line: Vec::new(),
-            old: Vec::new(),
-            old_live: None,
+            series: None,
+            scene: Scene::Live,
+            marks: 0.0,
             coarse: None,
             grid_fades: Vec::new(),
             time_fades: Vec::new(),
             slopes: Vec::new(),
             close_points: Vec::new(),
             last_hover: None,
+            reformed_candles: Vec::new(),
+            reformed_points: Vec::new(),
         }
     }
 }
@@ -262,13 +268,6 @@ fn approaching(
 }
 fn flag(value: bool) -> f64 {
     if value { 1.0 } else { 0.0 }
-}
-fn smoothstep(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-fn ramp(x: f64, a: f64, b: f64) -> f64 {
-    smoothstep((x - a) / (b - a))
 }
 fn pulse(now_ms: f64, dim: f64) -> Option<(f64, f64)> {
     let t = (now_ms % 1500.0) / 900.0;
@@ -323,11 +322,15 @@ impl State {
         }
         spline(&self.wave_points, &mut self.slopes, &mut self.wave_controls);
         let has_data = input.candles.len() >= 2;
-        if self.span.is_none() && input.loading {
+        let retimed = self.follow(&input, has_data, dt, snap);
+        let holding = matches!(self.scene, Scene::Hold { .. });
+        // A held picture stands in for the data: no loading wave, no reveal.
+        let loading = input.loading && !holding;
+        if self.span.is_none() && loading {
             self.loading = 1.0;
         }
-        self.moving = approaching(&mut self.loading, flag(input.loading), 0.14, dt, 0.01, snap);
-        let reveal_target = flag(!input.loading && has_data);
+        self.moving = approaching(&mut self.loading, flag(loading), 0.14, dt, 0.01, snap);
+        let reveal_target = flag(holding || (!loading && has_data));
         self.moving |= approaching(
             &mut self.reveal,
             reveal_target,
@@ -339,7 +342,10 @@ impl State {
         if self.reveal < 0.01 {
             self.range = None;
         }
-        self.mode.set(flag(input.line_mode));
+        // A held picture keeps its mode; the new interval's starts with it.
+        if !holding {
+            self.mode.set(flag(input.line_mode));
+        }
         self.line_mode = self.mode.advance(dt, snap);
         self.moving |= self.mode.moving();
         let density_target =
@@ -360,7 +366,8 @@ impl State {
         if self.span.is_none() {
             self.end = view.end.unwrap_or(input.now + target_span * BUFFER);
         }
-        let jump = std::mem::take(&mut view.snap) || snap;
+        // Another interval re-forms in place rather than zooming.
+        let jump = std::mem::take(&mut view.snap) || snap || retimed;
         span = if jump { target_span } else { lerp(span.ln(), target_span.ln(), 0.2, dt).exp() };
         if (span.ln() - target_span.ln()).abs() < 1e-4 {
             span = target_span;
@@ -395,32 +402,6 @@ impl State {
         view.plot_w = Some(plot_w);
         view.now = input.now;
         view.buffer = BUFFER;
-        if self.width == 0.0 {
-            self.width = input.candle_width;
-            self.width_from = input.candle_width;
-        }
-        if self.width != input.candle_width {
-            self.width_from = self.display_width.max(1e-6);
-            self.width = input.candle_width;
-            self.width_elapsed = 0.0;
-            self.old.clear();
-            self.old.extend_from_slice(&self.stash);
-            self.old_live = self.stash_live;
-            self.morph_from = self.range;
-            let target_end = view.end.unwrap_or(input.now + target_span * BUFFER);
-            let target_visible =
-                select(input.candles, target_end - target_span, target_end, input.candle_width);
-            self.morph_to = Some(candle_range(
-                target_visible,
-                input.live.filter(|c| {
-                    c.time + input.candle_width >= target_end - target_span && c.time <= target_end
-                }),
-            ));
-        }
-        self.width_elapsed = if snap { 300.0 } else { (self.width_elapsed + dt).min(300.0) };
-        let morph = cosine(self.width_elapsed / 300.0);
-        self.display_width = morph_width(self.width_from, self.width, self.width_elapsed / 300.0);
-        self.moving |= self.width_elapsed < 300.0;
 
         if let Some(raw) = input.live {
             match &mut self.live {
@@ -436,14 +417,21 @@ impl State {
                     }
                 }
                 _ => {
-                    self.live = Some(Candle {
-                        open: raw.open,
-                        high: raw.open,
-                        low: raw.open,
-                        close: raw.open,
-                        time: raw.time,
+                    // A picture re-forming carries the forming candle in from
+                    // the one it showed; it is not born again.
+                    let carried = !matches!(self.scene, Scene::Live);
+                    self.live = Some(if carried {
+                        raw
+                    } else {
+                        Candle {
+                            open: raw.open,
+                            high: raw.open,
+                            low: raw.open,
+                            close: raw.open,
+                            time: raw.time,
+                        }
                     });
-                    self.birth = 0.0;
+                    self.birth = flag(carried);
                 }
             }
             self.moving |= approaching(&mut self.birth, 1.0, 0.2, dt, 0.01, snap);
@@ -453,12 +441,16 @@ impl State {
         } else if has_data {
             self.live = None;
         }
-        let use_stash = !has_data && self.reveal > 0.005 && !self.stash.is_empty();
-        if !has_data && !use_stash {
+        if matches!(self.scene, Scene::Hold { .. } | Scene::Fade(_)) {
+            self.show_picture(&input, left, target_span, plot_w, plot_h, dt, snap, now_ms);
+            return;
+        }
+        if !has_data {
             self.frame = None;
             self.candles.clear();
             self.grid.clear();
             self.times.clear();
+            self.ghosts.clear();
             self.tip = None;
             self.points.clear();
             self.controls.clear();
@@ -467,44 +459,38 @@ impl State {
             self.moving |= self.loading > 0.0;
             return;
         }
-        let (visible, live) = if use_stash {
-            (select(&self.stash, left, self.end, self.width), self.stash_live)
-        } else {
-            (select(input.candles, left, self.end, self.width), self.live)
-        };
-        let live = live.filter(|c| c.time + self.display_width >= left && c.time <= self.end);
+        let visible = select(input.candles, left, self.end, self.width);
+        let live = self.live.filter(|c| c.time + self.width >= left && c.time <= self.end);
         let raw_range = candle_range(visible, live);
-        let target_range = match (self.morph_from, self.morph_to) {
-            (Some(a), Some(b)) if self.width_elapsed < 300.0 => {
-                (a.0 + (b.0 - a.0) * morph, a.1 + (b.1 - a.1) * morph)
-            }
-            _ => raw_range,
+        let reform = match &self.scene {
+            Scene::Reform { elapsed, range, dim, .. } => Some((*elapsed, *range, *dim)),
+            _ => None,
         };
-        let range = self.range.map_or(target_range, |r| {
-            if snap
-                || (self.width_elapsed < 300.0
-                    && self.morph_from.is_some()
-                    && self.morph_to.is_some())
-            {
-                target_range
-            } else {
-                ease_range(r, target_range, plot_h, dt)
-            }
-        });
+        // The live edge's clock: the axis and everything not tied to one mark.
+        let settled = reform.map_or(1.0, |(elapsed, ..)| reform::progress(elapsed));
+        let range = match reform {
+            Some((_, Some(from), _)) => reform::range(from, raw_range, settled),
+            Some((_, None, _)) => raw_range,
+            None => self.range.map_or(raw_range, |r| {
+                if snap { raw_range } else { ease_range(r, raw_range, plot_h, dt) }
+            }),
+        };
         self.range = Some(range);
-        self.moving |= range != target_range;
+        self.moving |= range != raw_range || reform.is_some();
+        self.dim = reform.map_or(1.0, |(_, _, dim)| dim + (1.0 - dim) * settled);
         let val_range = (range.1 - range.0).max(1e-3);
         let x = |t: f64| LEFT + (t - left) / span * plot_w;
         let y = |v: f64| TOP + (1.0 - (v - range.0) / val_range) * plot_h;
-        let raw_close =
-            if use_stash { self.stash_live.map(|c| c.close) } else { input.live.map(|c| c.close) };
+        // Re-forming marks head for where the new range puts them; the axis
+        // gets there on its own clock.
+        let marks_range = if reform.is_some() { raw_range } else { range };
+        let marks_val = (marks_range.1 - marks_range.0).max(1e-3);
+        let ym = |v: f64| TOP + (1.0 - (v - marks_range.0) / marks_val) * plot_h;
+        let raw_close = input.live.map(|c| c.close);
         let close = self.close_smooth.step(raw_close, val_range, dt, true, snap);
         let line_close = self.line_smooth.step(raw_close, val_range, dt, false, snap);
-        let tick_price = if use_stash { self.stash_price } else { input.price };
         let tick = self.tick_smooth.step(
-            tick_price.filter(|_| {
-                if use_stash { !self.stash_line.is_empty() } else { !input.line.is_empty() }
-            }),
+            input.price.filter(|_| !input.line.is_empty()),
             val_range,
             dt,
             false,
@@ -512,26 +498,28 @@ impl State {
         );
         self.moving |= close.zip(raw_close).is_some_and(|(a, b)| a != b)
             || line_close.zip(raw_close).is_some_and(|(a, b)| a != b)
-            || tick.zip(tick_price).is_some_and(|(a, b)| a != b);
-        self.close_y = close.map(y);
+            || tick.zip(input.price).is_some_and(|(a, b)| a != b);
+        self.close_y = close.map(ym);
         let hovered = input.hover_x.filter(|x| *x >= LEFT && *x <= LEFT + plot_w);
         self.moving |= approaching(&mut self.scrub, flag(hovered.is_some()), 0.12, dt, 0.01, snap);
         if let Some(pos) = hovered {
             self.hover_x = Some(pos);
             let time = left + (pos - LEFT) / plot_w * span;
             let i = visible.partition_point(|c| c.time <= time);
-            self.last_hover = live
-                .filter(|c| time >= c.time && time < c.time + self.display_width)
-                .or_else(|| {
+            self.last_hover =
+                live.filter(|c| time >= c.time && time < c.time + self.width).or_else(|| {
                     i.checked_sub(1)
                         .and_then(|i| visible.get(i))
                         .copied()
-                        .filter(|c| time < c.time + self.display_width)
+                        .filter(|c| time < c.time + self.width)
                 });
         } else if self.scrub == 0.0 {
             self.hover_x = None;
             self.last_hover = None;
         }
+        // Layers in the frame's coordinates come back once the axis has landed.
+        let marks = reform.map_or(1.0, |(elapsed, ..)| flag(elapsed >= reform::SETTLE));
+        self.moving |= approaching(&mut self.marks, marks, 0.2, dt, 0.01, snap);
         self.frame = Some(Frame {
             left,
             right: self.end,
@@ -544,11 +532,12 @@ impl State {
             width: input.width,
             height: input.height,
             now: input.now,
-            candle_width: self.display_width,
+            candle_width: self.width,
             hover_x: self.last_hover.and(self.hover_x),
             scrub: self.scrub,
             line_mode: self.line_mode,
             hover: self.last_hover,
+            settled: self.marks * smoothstep(self.reveal),
         });
         self.line_presence = self.line_mode.max(if self.line_mode >= 0.99 {
             1.0 - self.reveal
@@ -558,55 +547,44 @@ impl State {
         self.candles.clear();
         let collapse = smoothstep(self.reveal) * (1.0 - self.line_mode);
         let candle_alpha = self.reveal * (1.0 - self.line_presence);
-        if self.width_elapsed < 300.0 {
-            self.candles_visited += add_candles(
-                &mut self.candles,
-                &self.old,
-                self.old_live,
-                self.width_from,
-                left,
-                self.end,
-                plot_w,
-                collapse,
-                candle_alpha * (1.0 - morph),
-                self.birth,
-                self.bull,
-                self.scrub,
-                self.hover_x,
-                &x,
-                &y,
-            );
-        }
         self.candles_visited += add_candles(
             &mut self.candles,
             visible,
             live,
-            self.display_width,
+            self.width,
             left,
             self.end,
             plot_w,
             collapse,
-            candle_alpha * if self.width_elapsed < 300.0 { morph } else { 1.0 },
+            candle_alpha,
             self.birth,
             self.bull,
             self.scrub,
             self.hover_x,
             &x,
-            &y,
+            &ym,
         );
+        if let Scene::Reform { from, elapsed, .. } = &self.scene {
+            let at = |px: f64| reform::progress(elapsed - reform::delay(px, LEFT, plot_w));
+            reform::bars(&from.candles, &self.candles, &mut self.reformed_candles, at);
+            std::mem::swap(&mut self.candles, &mut self.reformed_candles);
+            // The price line stays on the forming bar it marks.
+            if let Some(forming) = self.candles.iter().rev().find(|c| c.live) {
+                self.close_y = Some(forming.close);
+            }
+        }
         self.close_points.clear();
-        self.close_points
-            .extend(visible.iter().map(|c| (c.time + self.display_width / 2.0, c.close)));
+        self.close_points.extend(visible.iter().map(|c| (c.time + self.width / 2.0, c.close)));
         if let Some(live) = live {
             self.close_points.push((input.now, live.close));
         }
-        let line_data = if use_stash { self.stash_line.as_slice() } else { input.line };
         self.points.clear();
-        if !line_data.is_empty() && (self.density > 0.01 || self.line_mode > 0.05) {
-            let first = line_data.partition_point(|p| p.time <= left).saturating_sub(1);
-            let last = (line_data.partition_point(|p| p.time <= self.end) + 1).min(line_data.len());
+        if !input.line.is_empty() && (self.density > 0.01 || self.line_mode > 0.05) {
+            let first = input.line.partition_point(|p| p.time <= left).saturating_sub(1);
+            let last =
+                (input.line.partition_point(|p| p.time <= self.end) + 1).min(input.line.len());
             let mut i = 0;
-            for p in &line_data[first.min(last)..last] {
+            for p in &input.line[first.min(last)..last] {
                 while i + 1 < self.close_points.len() && self.close_points[i + 1].0 < p.time {
                     i += 1;
                 }
@@ -622,12 +600,12 @@ impl State {
                 };
                 self.points.push((
                     x(p.time),
-                    y(base + (p.value - base) * self.density).clamp(TOP, TOP + plot_h),
+                    ym(base + (p.value - base) * self.density).clamp(TOP, TOP + plot_h),
                 ));
             }
         } else {
             self.points.extend(
-                self.close_points.iter().map(|p| (x(p.0), y(p.1).clamp(TOP, TOP + plot_h))),
+                self.close_points.iter().map(|p| (x(p.0), ym(p.1).clamp(TOP, TOP + plot_h))),
             );
         }
         let tip_value = line_close.map(|v| v + (tick.unwrap_or(v) - v) * self.density);
@@ -637,7 +615,7 @@ impl State {
         if tip_x <= LEFT + plot_w + 1.0
             && let (Some(value), Some(last)) = (tip_value, self.points.last_mut())
         {
-            last.1 = y(value).clamp(TOP, TOP + plot_h);
+            last.1 = ym(value).clamp(TOP, TOP + plot_h);
             let tip_x = tip_x + (LEFT + plot_w - tip_x) * (1.0 - self.reveal);
             let append = (tip_x > last.0).then_some((tip_x, last.1));
             if let Some(point) = append {
@@ -645,40 +623,33 @@ impl State {
             }
             self.tip = self.points.last().copied();
         }
-        if self.reveal < 1.0
-            && let Some(first) = self.points.first().copied()
-        {
-            let step = plot_w / 32.0;
-            if first.0 > LEFT + plot_w * 0.05 {
-                let mut next = first.0 - step;
-                while next >= LEFT - step {
-                    self.points.insert(0, (next, first.1));
-                    next -= step;
-                }
-            }
-        }
-        if self.reveal < 1.0 {
-            for p in &mut self.points {
-                let u = ((p.0 - LEFT) / plot_w).clamp(0.0, 1.0);
-                let local = ((self.reveal - (u - 0.5).abs() * 2.0 * 0.4) / 0.6).clamp(0.0, 1.0);
-                let wy = wave(u, input.now * 1000.0, plot_h);
-                p.1 = wy + (p.1 - wy) * local;
-            }
-        }
+        self.reveal_line(plot_w, plot_h, now_ms);
         if self.tip.is_some() {
             self.tip = self.points.last().copied();
         }
         spline(&self.points, &mut self.slopes, &mut self.controls);
-        if self.tip.is_some() && self.line_presence > 0.5 {
-            self.dot_alpha =
-                (self.line_presence - 0.5) * 2.0 * ((self.reveal - 0.3) / 0.7).clamp(0.0, 1.0);
-            if self.line_presence > 0.8 && self.reveal > 0.6 && self.scrub < 0.3 {
-                self.ring = pulse(now_ms, self.scrub);
+        if let Scene::Reform { from, elapsed, .. } = &self.scene {
+            let at = |px: f64| reform::progress(elapsed - reform::delay(px, LEFT, plot_w));
+            reform::line(
+                (from.points.as_slice(), from.controls.as_slice()),
+                (self.points.as_slice(), self.controls.as_slice()),
+                &mut self.reformed_points,
+                at,
+            );
+            std::mem::swap(&mut self.points, &mut self.reformed_points);
+            if self.tip.is_some() {
+                self.tip = self.points.last().copied();
             }
+            spline(&self.points, &mut self.slopes, &mut self.controls);
         }
+        self.dot(now_ms);
         self.badge_value = tip_value;
         if let Some(v) = tip_value {
-            let target = y(v).clamp(TOP, TOP + plot_h);
+            // A re-forming badge rides its dot.
+            let target = match (reform, self.tip) {
+                (Some(_), Some(tip)) => tip.1,
+                _ => y(v).clamp(TOP, TOP + plot_h),
+            };
             if self.badge_y == 0.0 {
                 self.badge_y = target;
             }
@@ -699,6 +670,258 @@ impl State {
             };
             self.moving |= approaching(&mut self.momentum, target, 0.12, dt, 0.01, snap);
         }
+        self.update_grid(range, plot_h, dt, snap);
+        // The new interval's time labels take over from the picture's as the
+        // axis lands.
+        let gate = reform.map_or(1.0, |_| ramp(settled, 0.35, 1.0));
+        self.update_times(left, span, target_span, plot_w, input.day_anchor, dt, snap, gate);
+        self.ghosts.clear();
+        if let Scene::Reform { from, .. } = &self.scene {
+            let fade = 1.0 - ramp(settled, 0.0, 0.5);
+            self.ghosts.extend(
+                from.times
+                    .iter()
+                    .map(|(tick, span)| (Tick { alpha: tick.alpha * fade, ..*tick }, *span)),
+            );
+        }
+    }
+
+    /// Keep up with what the input shows, changing scene when it changes.
+    /// Returns whether the interval changed.
+    fn follow(&mut self, input: &Input<'_>, has_data: bool, dt: f64, snap: bool) -> bool {
+        let interval = self.width != 0.0 && self.width != input.candle_width;
+        let feed = self.series.is_some_and(|series| series != input.series);
+        // Something worth carrying over is on screen.
+        let shown = self.frame.is_some() && self.reveal > 0.05;
+        // Time passes for a running scene first; one that starts now shows its
+        // first frame as it was left.
+        let scene = match std::mem::replace(&mut self.scene, Scene::Live) {
+            Scene::Hold { from, held } => Scene::Hold { from, held: held + dt },
+            Scene::Reform { from, elapsed, range, dim } => {
+                Scene::Reform { from, elapsed: elapsed + dt, range, dim }
+            }
+            scene => scene,
+        };
+        let scene = if feed {
+            match scene {
+                Scene::Hold { from, .. } | Scene::Fade(from) => Scene::Fade(from),
+                _ if shown => Scene::Fade(self.capture()),
+                _ => Scene::Live,
+            }
+        } else if interval {
+            match scene {
+                // Still waiting: keep the dim where it is, and wait afresh.
+                Scene::Hold { from, held } => Scene::Hold { from, held: held.min(reform::DIMMED) },
+                Scene::Fade(from) => Scene::Fade(from),
+                _ if shown => Scene::Hold { from: self.capture(), held: 0.0 },
+                _ => Scene::Live,
+            }
+        } else {
+            scene
+        };
+        self.scene = match scene {
+            Scene::Hold { from, .. } if has_data => {
+                Scene::Reform { range: Some(from.range), from, elapsed: 0.0, dim: self.dim }
+            }
+            Scene::Hold { from, held } if !input.loading || held >= reform::PATIENCE => {
+                Scene::Fade(from)
+            }
+            Scene::Reform { .. } if !has_data => Scene::Fade(self.capture()),
+            Scene::Reform { elapsed, .. } if snap || elapsed >= reform::DURATION => Scene::Live,
+            // Data again before the picture has sunk: it re-forms into the data.
+            Scene::Fade(from) if has_data && self.reveal > 0.05 && !snap => {
+                let same = from.series == input.series;
+                let from = self.capture();
+                Scene::Reform {
+                    range: same.then_some(from.range),
+                    from,
+                    elapsed: 0.0,
+                    dim: self.dim,
+                }
+            }
+            Scene::Fade(_) if has_data || self.reveal < 0.005 => Scene::Live,
+            Scene::Live if !has_data && self.frame.is_some() && self.reveal > 0.005 => {
+                Scene::Fade(self.capture())
+            }
+            scene => scene,
+        };
+        if interval || feed {
+            // Another interval's forming candle is another candle.
+            self.live = None;
+        }
+        self.width = input.candle_width;
+        self.series = Some(input.series);
+        interval
+    }
+
+    /// What the last frame drew, frozen, for a scene to start from. Its
+    /// buffers move into the picture, and the layers drawn in the frame's
+    /// coordinates hide until the chart is back on data.
+    fn capture(&mut self) -> Picture {
+        let mut times: Vec<(Tick, f64)> =
+            self.times.iter().map(|tick| (*tick, self.times_span)).collect();
+        times.append(&mut self.ghosts);
+        times.sort_by(|a, b| a.0.pos.total_cmp(&b.0.pos));
+        self.times.clear();
+        self.time_fades.clear();
+        self.marks = 0.0;
+        Picture {
+            candles: std::mem::take(&mut self.candles),
+            points: std::mem::take(&mut self.points),
+            controls: std::mem::take(&mut self.controls),
+            tip: self.tip,
+            close_y: self.close_y,
+            badge: self.badge_value,
+            times,
+            range: self.frame.map_or((0.0, 1.0), |frame| (frame.min, frame.max)),
+            series: self.series.unwrap_or_default(),
+        }
+    }
+
+    /// Draw a picture in place of the data: held while the interval it waits
+    /// for loads, or sinking into the loading wave as the reveal runs out.
+    #[allow(clippy::too_many_arguments)]
+    fn show_picture(
+        &mut self,
+        input: &Input<'_>,
+        left: f64,
+        target_span: f64,
+        plot_w: f64,
+        plot_h: f64,
+        dt: f64,
+        snap: bool,
+        now_ms: f64,
+    ) {
+        let (from, held) = match &self.scene {
+            Scene::Hold { from, held } => (from, Some(*held)),
+            Scene::Fade(from) => (from, None),
+            _ => return,
+        };
+        let range = from.range;
+        self.range = Some(range);
+        if let Some(held) = held {
+            self.dim = reform::dim(held);
+            // Waiting on the history, and on the patience running out.
+            self.moving = true;
+        }
+        self.moving |= approaching(&mut self.scrub, 0.0, 0.12, dt, 0.01, snap);
+        if self.scrub == 0.0 {
+            self.hover_x = None;
+            self.last_hover = None;
+        }
+        self.marks = 0.0;
+        self.frame = Some(Frame {
+            left,
+            right: self.end,
+            min: range.0,
+            max: range.1,
+            plot_x: LEFT,
+            plot_y: TOP,
+            plot_w,
+            plot_h,
+            width: input.width,
+            height: input.height,
+            now: input.now,
+            candle_width: self.width,
+            hover_x: None,
+            scrub: self.scrub,
+            line_mode: self.line_mode,
+            hover: None,
+            settled: 0.0,
+        });
+        self.line_presence = self.line_mode.max(if self.line_mode >= 0.99 {
+            1.0 - self.reveal
+        } else {
+            (1.0 - self.reveal).powi(3)
+        });
+        // Held, the picture stays as drawn. Sinking, its bars fold onto their
+        // closes and its line settles into the wave, as a revealed chart's do
+        // in reverse.
+        let sinking = held.is_none();
+        let collapse = if sinking { smoothstep(self.reveal) * (1.0 - self.line_mode) } else { 1.0 };
+        let fade = if sinking { self.reveal * (1.0 - self.line_presence) } else { 1.0 };
+        self.candles.clear();
+        self.candles.extend(from.candles.iter().map(|c| {
+            let fold = |v: f64| c.close + (v - c.close) * collapse;
+            CandleShape {
+                open: fold(c.open),
+                high: fold(c.high),
+                low: fold(c.low),
+                alpha: c.alpha * fade,
+                ..*c
+            }
+        }));
+        self.points.clear();
+        self.points.extend_from_slice(&from.points);
+        self.tip = from.tip;
+        self.close_y = from.close_y;
+        self.badge_value = from.badge;
+        self.off_plot = false;
+        let label = if sinking { ramp(self.reveal, 0.25, 0.6) } else { 1.0 };
+        self.ghosts.clear();
+        self.ghosts.extend(
+            from.times
+                .iter()
+                .map(|(tick, span)| (Tick { alpha: tick.alpha * label, ..*tick }, *span)),
+        );
+        self.times.clear();
+        self.times_span = target_span;
+        if sinking {
+            self.reveal_line(plot_w, plot_h, now_ms);
+            if self.tip.is_some() {
+                self.tip = self.points.last().copied();
+            }
+            spline(&self.points, &mut self.slopes, &mut self.controls);
+        } else if let Scene::Hold { from, .. } = &self.scene {
+            self.controls.clear();
+            self.controls.extend_from_slice(&from.controls);
+        }
+        self.dot(now_ms);
+        if let Some(tip) = self.tip {
+            self.moving |= approaching(&mut self.badge_y, tip.1, 0.35, dt, 0.5, snap);
+        }
+        self.update_grid(range, plot_h, dt, snap);
+    }
+
+    /// While the chart is not fully revealed, the line reaches across the plot
+    /// and settles into the loading wave, from the edges in.
+    fn reveal_line(&mut self, plot_w: f64, plot_h: f64, now_ms: f64) {
+        if self.reveal >= 1.0 {
+            return;
+        }
+        if let Some(first) = self.points.first().copied() {
+            let step = plot_w / 32.0;
+            if first.0 > LEFT + plot_w * 0.05 {
+                let mut next = first.0 - step;
+                while next >= LEFT - step {
+                    self.points.insert(0, (next, first.1));
+                    next -= step;
+                }
+            }
+        }
+        for p in &mut self.points {
+            let u = ((p.0 - LEFT) / plot_w).clamp(0.0, 1.0);
+            let local = ((self.reveal - (u - 0.5).abs() * 2.0 * 0.4) / 0.6).clamp(0.0, 1.0);
+            let wy = wave(u, now_ms, plot_h);
+            p.1 = wy + (p.1 - wy) * local;
+        }
+    }
+
+    /// The live dot at the line's tip, and its ring.
+    fn dot(&mut self, now_ms: f64) {
+        if self.tip.is_some() && self.line_presence > 0.5 {
+            self.dot_alpha =
+                (self.line_presence - 0.5) * 2.0 * ((self.reveal - 0.3) / 0.7).clamp(0.0, 1.0);
+            if self.line_presence > 0.8 && self.reveal > 0.6 && self.scrub < 0.3 {
+                self.ring = pulse(now_ms, self.scrub);
+            }
+        }
+    }
+
+    /// Price gridlines for `range`, fading in and out as they come and go.
+    fn update_grid(&mut self, range: (f64, f64), plot_h: f64, dt: f64, snap: bool) {
+        let val_range = (range.1 - range.0).max(1e-3);
+        let y = |v: f64| TOP + (1.0 - (v - range.0) / val_range) * plot_h;
         let coarse = grid_interval(val_range, plot_h, self.coarse);
         self.coarse = Some(coarse);
         let fine = coarse / 2.0;
@@ -739,12 +962,30 @@ impl State {
             });
         }
         self.grid_fades.retain(|t| t.target != 0.0 || t.alpha >= 0.01);
+        self.grid.sort_by(|a, b| a.pos.total_cmp(&b.pos));
+    }
+
+    /// Time labels for the stretch from `left`, spaced for `target_span`.
+    /// `gate` holds them back while another picture's labels hand over.
+    #[allow(clippy::too_many_arguments)]
+    fn update_times(
+        &mut self,
+        left: f64,
+        span: f64,
+        target_span: f64,
+        plot_w: f64,
+        day_anchor: f64,
+        dt: f64,
+        snap: bool,
+        gate: f64,
+    ) {
+        let x = |t: f64| LEFT + (t - left) / span * plot_w;
         let step = time_interval(target_span, plot_w);
         for tick in &mut self.time_fades {
             tick.target = 0.0;
         }
         // Epoch anchor for sub-day intervals; a local-midnight anchor is supplied for day ticks by the caller's time zone.
-        let anchor = if step >= 86400.0 { input.day_anchor } else { 0.0 };
+        let anchor = if step >= 86400.0 { day_anchor } else { 0.0 };
         let first = (left - step - anchor) / step;
         let mut t = if step >= 86400.0 { first.floor() } else { first.ceil() } * step + anchor;
         for _ in 0..30 {
@@ -762,22 +1003,12 @@ impl State {
             self.times.push(Tick {
                 value: tick.key,
                 pos: x(tick.key),
-                alpha: tick.alpha * ramp(self.reveal, 0.25, 0.6),
+                alpha: tick.alpha * ramp(self.reveal, 0.25, 0.6) * gate,
             });
         }
         self.time_fades.retain(|t| t.target != 0.0 || t.alpha >= 0.01);
         self.times.sort_by(|a, b| a.pos.total_cmp(&b.pos));
-        if !use_stash {
-            self.stash.clear();
-            self.stash.extend_from_slice(select(input.candles, left, self.end, self.width));
-            self.stash_live = live;
-            self.stash_price = input.price;
-            self.stash_line.clear();
-            let first = input.line.partition_point(|p| p.time <= left).saturating_sub(1);
-            let last =
-                (input.line.partition_point(|p| p.time <= self.end) + 1).min(input.line.len());
-            self.stash_line.extend_from_slice(&input.line[first.min(last)..last]);
-        }
+        self.times_span = target_span;
     }
 }
 
@@ -840,6 +1071,7 @@ mod tests {
             live: None,
             line: &[],
             price: None,
+            series: 0,
             candle_width: 60.0,
             now: 3600.0,
             day_anchor: 1_704_067_200.0,
@@ -1028,5 +1260,240 @@ mod tests {
         }
         assert_eq!(state.line_mode, 1.0);
         assert_eq!(state.candles[1].open, state.candles[1].close);
+    }
+
+    /// `count` closed candles of `secs` each, the last one closing at `now`,
+    /// each priced by `price`.
+    fn history(secs: f64, count: u32, price: impl Fn(u32) -> f64) -> Vec<Candle> {
+        (0..count).map(|i| candle(3600.0 - f64::from(count - i) * secs, price(i))).collect()
+    }
+
+    fn settle(state: &mut State, data: Input<'_>, view: &mut View) {
+        for _ in 0..300 {
+            state.advance(16.67, data, view);
+        }
+        assert!(!state.moving, "the chart settles");
+    }
+
+    fn shapes(candles: &[CandleShape]) -> Vec<(f64, f64, f64, f64, f64, f64)> {
+        candles.iter().map(|c| (c.x, c.width, c.open, c.close, c.high, c.low)).collect()
+    }
+
+    /// The geometry a chart that only ever showed `data` settles on.
+    fn settled_on(data: Input<'_>, secs: f64) -> State {
+        let mut state = State::default();
+        let mut view = Viewport::new(3600.0, secs, 60.0).view;
+        settle(&mut state, data, &mut view);
+        state
+    }
+
+    fn range(state: &State) -> (f64, f64) {
+        state.frame.map(|frame| (frame.min, frame.max)).expect("a frame")
+    }
+
+    #[test]
+    fn another_interval_re_forms_the_picture_in_place() {
+        let minutes = history(60.0, 120, |i| 100.0 + f64::from(i % 7));
+        let fives = history(300.0, 120, |i| 60.0 + f64::from(i % 11) * 8.0);
+        let mut state = State::default();
+        let mut viewport = Viewport::new(3600.0, 60.0, 60.0);
+        let mut data = input(&minutes);
+        settle(&mut state, data, &mut viewport.view);
+        let before = shapes(&state.candles);
+        let old_range = range(&state);
+        assert_eq!(state.frame.unwrap().settled, 1.0);
+
+        viewport.select_interval(300.0);
+        data.candles = &fives;
+        data.candle_width = 300.0;
+        state.advance(16.67, data, &mut viewport.view);
+        // The first frame is the picture that was on screen, over the span the
+        // new interval shows: no zoom between them.
+        assert_eq!(shapes(&state.candles), before);
+        assert_eq!(range(&state), old_range);
+        assert_eq!(viewport.view.right.unwrap() - viewport.view.left.unwrap(), 18_000.0);
+        assert_eq!(state.frame.unwrap().settled, 0.0);
+
+        let target = settled_on(data, 300.0);
+        let new_range = range(&target);
+        let hull = (old_range.0.min(new_range.0), old_range.1.max(new_range.1));
+        let plot = (TOP, TOP + target.frame.unwrap().plot_h);
+        let mut previous_live = f64::INFINITY;
+        for frame in 1..=40 {
+            state.advance(16.67, data, &mut viewport.view);
+            let (lo, hi) = range(&state);
+            assert!(
+                lo >= hull.0 - 1e-9 && hi <= hull.1 + 1e-9,
+                "the axis stays between the ranges"
+            );
+            for c in &state.candles {
+                assert!(c.high >= plot.0 - 1e-9 && c.low <= plot.1 + 1e-9, "bars stay on the plot");
+            }
+            // The live edge leads the sweep: the right side is further along.
+            let along = |c: &CandleShape, i: usize| {
+                let (from, to) = (
+                    before[before.len() - 1 - i].3,
+                    target.candles[target.candles.len() - 1 - i].close,
+                );
+                if (to - from).abs() < 1e-9 { 1.0 } else { (c.close - from) / (to - from) }
+            };
+            let n = state.candles.len();
+            if frame < 20 {
+                let right = along(&state.candles[n - 1], 0);
+                let left = along(&state.candles[0], n - 1);
+                assert!(right >= left - 1e-9, "frame {frame}: {right} behind {left}");
+                assert!(right <= previous_live + 1.0);
+                previous_live = right;
+            }
+        }
+        // Landed: exactly what a chart that only ever showed five-minute bars draws.
+        assert!(matches!(state.scene, Scene::Live));
+        assert_eq!(shapes(&state.candles), shapes(&target.candles));
+        assert_eq!(range(&state), new_range);
+        assert_eq!(state.dim, 1.0);
+        settle(&mut state, data, &mut viewport.view);
+        assert_eq!(state.frame.unwrap().settled, 1.0);
+    }
+
+    #[test]
+    fn an_interval_that_has_to_load_holds_the_picture_until_its_history_arrives() {
+        let minutes = history(60.0, 120, |i| 100.0 + f64::from(i % 7));
+        let fives = history(300.0, 120, |i| 60.0 + f64::from(i % 11) * 8.0);
+        let mut state = State::default();
+        let mut viewport = Viewport::new(3600.0, 60.0, 60.0);
+        let mut data = input(&minutes);
+        settle(&mut state, data, &mut viewport.view);
+        let before = shapes(&state.candles);
+        let old_range = range(&state);
+
+        viewport.select_interval(300.0);
+        data.candles = &[];
+        data.candle_width = 300.0;
+        data.loading = true;
+        for _ in 0..30 {
+            state.advance(16.67, data, &mut viewport.view);
+            // Held as drawn: no placeholder range, no loading wave, no reveal.
+            assert_eq!(shapes(&state.candles), before);
+            assert_eq!(range(&state), old_range);
+            assert_eq!((state.reveal, state.loading), (1.0, 0.0));
+            assert!(state.moving, "the wait keeps time");
+        }
+        assert!(state.dim < 0.6, "a wait that shows dims the picture: {}", state.dim);
+
+        data.candles = &fives;
+        data.loading = false;
+        state.advance(16.67, data, &mut viewport.view);
+        assert_eq!(shapes(&state.candles), before, "it re-forms from the held picture");
+        for _ in 0..40 {
+            state.advance(16.67, data, &mut viewport.view);
+        }
+        let target = settled_on(data, 300.0);
+        assert_eq!(shapes(&state.candles), shapes(&target.candles));
+        assert_eq!(state.dim, 1.0);
+    }
+
+    #[test]
+    fn a_history_that_takes_too_long_lets_the_picture_sink_into_the_loading_wave() {
+        let minutes = history(60.0, 120, |i| 100.0 + f64::from(i % 7));
+        let mut state = State::default();
+        let mut viewport = Viewport::new(3600.0, 60.0, 60.0);
+        let mut data = input(&minutes);
+        settle(&mut state, data, &mut viewport.view);
+        let old_range = range(&state);
+        viewport.select_interval(300.0);
+        data.candles = &[];
+        data.candle_width = 300.0;
+        data.loading = true;
+        let patience = (reform::PATIENCE / 16.67).ceil() as usize;
+        for _ in 0..patience {
+            state.advance(16.67, data, &mut viewport.view);
+            assert_eq!(state.reveal, 1.0);
+        }
+        let mut sunk = false;
+        for _ in 0..120 {
+            state.advance(16.67, data, &mut viewport.view);
+            match state.frame {
+                // On its way down, the picture keeps the range it was drawn in.
+                Some(frame) => assert_eq!((frame.min, frame.max), old_range),
+                None => sunk = true,
+            }
+        }
+        assert!(sunk && state.loading == 1.0, "the loading wave takes over");
+    }
+
+    #[test]
+    fn switching_again_mid_way_starts_from_what_is_on_screen() {
+        let minutes = history(60.0, 120, |i| 100.0 + f64::from(i % 7));
+        let fives = history(300.0, 120, |i| 60.0 + f64::from(i % 11) * 8.0);
+        let fifteens = history(900.0, 120, |i| 140.0 - f64::from(i % 5) * 9.0);
+        let mut state = State::default();
+        let mut viewport = Viewport::new(3600.0, 60.0, 60.0);
+        let mut data = input(&minutes);
+        settle(&mut state, data, &mut viewport.view);
+        viewport.select_interval(300.0);
+        data.candles = &fives;
+        data.candle_width = 300.0;
+        for _ in 0..8 {
+            state.advance(16.67, data, &mut viewport.view);
+        }
+        let midway = shapes(&state.candles);
+        let midway_range = range(&state);
+        viewport.select_interval(900.0);
+        data.candles = &fifteens;
+        data.candle_width = 900.0;
+        state.advance(16.67, data, &mut viewport.view);
+        assert_eq!(shapes(&state.candles), midway);
+        assert_eq!(range(&state), midway_range);
+    }
+
+    #[test]
+    fn a_line_re_forms_from_its_tip() {
+        let minutes = history(60.0, 120, |i| 100.0 + f64::from(i % 7));
+        let fives = history(300.0, 120, |i| 60.0 + f64::from(i % 11) * 8.0);
+        let mut state = State::default();
+        let mut viewport = Viewport::new(3600.0, 60.0, 60.0);
+        let mut data = input(&minutes);
+        data.live = Some(candle(3600.0, 104.0));
+        data.line_mode = true;
+        settle(&mut state, data, &mut viewport.view);
+        let (points, controls) = (state.points.clone(), state.controls.clone());
+        let tip = state.tip.expect("a tip");
+        viewport.select_interval(300.0);
+        data.candles = &fives;
+        data.candle_width = 300.0;
+        data.live = Some(candle(3600.0, 104.0));
+        state.advance(16.67, data, &mut viewport.view);
+        // The first frame traces the drawn curve, ending on the same tip.
+        assert_eq!(state.tip, Some(tip));
+        let mut probe = Vec::new();
+        reform::line(
+            (&points[..], &controls[..]),
+            (&points[..], &controls[..]),
+            &mut probe,
+            |_| 0.0,
+        );
+        assert_eq!(state.points, probe);
+        for _ in 0..40 {
+            state.advance(16.67, data, &mut viewport.view);
+        }
+        let target = settled_on(data, 300.0);
+        assert_eq!(state.points, target.points);
+    }
+
+    #[test]
+    fn another_feed_sinks_the_picture_instead_of_re_forming_it() {
+        let minutes = history(60.0, 120, |i| 100.0 + f64::from(i % 7));
+        let mut state = State::default();
+        let mut viewport = Viewport::new(3600.0, 60.0, 60.0);
+        let mut data = input(&minutes);
+        settle(&mut state, data, &mut viewport.view);
+        let old_range = range(&state);
+        data.series = 1;
+        data.candles = &[];
+        data.loading = true;
+        state.advance(16.67, data, &mut viewport.view);
+        assert!(matches!(state.scene, Scene::Fade(_)));
+        assert!(state.reveal < 1.0);
+        assert_eq!(range(&state), old_range);
     }
 }

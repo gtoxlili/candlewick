@@ -10,8 +10,14 @@ pub(super) fn cosine(t: f64) -> f64 {
     (1.0 - (t.clamp(0.0, 1.0) * std::f64::consts::PI).cos()) / 2.0
 }
 
-pub(super) fn morph_width(from: f64, to: f64, t: f64) -> f64 {
-    (from.ln() + (to.ln() - from.ln()) * cosine(t)).exp()
+pub(super) fn smoothstep(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// `x`'s way from `a` to `b`, smoothed.
+pub(super) fn ramp(x: f64, a: f64, b: f64) -> f64 {
+    smoothstep((x - a) / (b - a))
 }
 
 pub(super) fn candle_range(candles: &[Candle], live: Option<Candle>) -> (f64, f64) {
@@ -166,13 +172,6 @@ mod tests {
             n = lerp(n, 1.0, 0.2, 16.67);
         }
         assert!((n - 1.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn width_transition_is_cosine_in_log_space() {
-        assert!((morph_width(60.0, 600.0, 0.0) - 60.0).abs() < 1e-9);
-        assert!((morph_width(60.0, 600.0, 0.5) - 36000f64.sqrt()).abs() < 1e-9);
-        assert!((morph_width(60.0, 600.0, 1.0) - 600.0).abs() < 1e-9);
     }
 
     #[test]

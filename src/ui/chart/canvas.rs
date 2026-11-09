@@ -7,6 +7,7 @@
 //! per value, so a settled chart paints without allocating.
 
 mod math;
+mod reform;
 mod state;
 
 use std::{
@@ -32,6 +33,8 @@ use state::{Input, State};
 
 /// How far the left edge erases what it covers, in CSS pixels.
 const LEFT_FADE: f64 = 40.0;
+/// The least room between two price labels: one line of axis text.
+const GRID_LABEL_GAP: f64 = 14.0;
 /// The label cache keys text by what it shows, in one of these roles.
 const LABEL_GRID: u8 = 0;
 const LABEL_TIME: u8 = 1;
@@ -211,7 +214,10 @@ struct Painter {
     last: Option<Instant>,
     text: TextCache,
     dark: bool,
-    visible_times: Vec<(state::Tick, f64)>,
+    /// The price labels drawn this frame.
+    visible_grid: Vec<state::Tick>,
+    /// The time labels drawn this frame: tick, text width, and the span it reads for.
+    visible_times: Vec<(state::Tick, f64, f64)>,
     badge_width: f64,
     dt: f64,
     day_anchor: f64,
@@ -229,6 +235,7 @@ impl Painter {
             last: None,
             text: TextCache::default(),
             dark: false,
+            visible_grid: Vec::new(),
             visible_times: Vec::new(),
             badge_width: 0.0,
             dt: 16.67,
@@ -284,6 +291,7 @@ impl Painter {
             let now = model.chart_now(now);
             let line_mode = model.mode() == Mode::Line;
             let tick_decimals = model.instrument().and_then(|i| i.decimals);
+            let series = model.generation();
             let dragging = model.analysis().dragging();
             let frame = model.frame.clone();
             let (market, viewport, _) = model.parts_mut();
@@ -296,6 +304,7 @@ impl Painter {
                         live: None,
                         line: &[],
                         price: None,
+                        series,
                         candle_width: 60.0,
                         now,
                         day_anchor,
@@ -331,6 +340,7 @@ impl Painter {
                 live: data.live,
                 line: data.line,
                 price: data.price,
+                series,
                 candle_width: f64::from(data.interval),
                 now,
                 day_anchor,
@@ -431,6 +441,18 @@ fn square(
         gpui_kit::transparent_black(),
         Default::default(),
     ));
+}
+
+/// Which format a time label takes over `span`, as `labels::axis_label`
+/// chooses it: seconds, minutes, or dates. Part of the label's cache key.
+fn label_kind(span: f64) -> usize {
+    if span <= 300.0 {
+        0
+    } else if span <= 172_800.0 {
+        1
+    } else {
+        2
+    }
 }
 
 /// The share of a mark at `x` the left edge leaves visible.
@@ -551,11 +573,10 @@ fn draw(
     window: &mut Window,
     cx: &mut GpuiApp,
 ) {
-    let (decimals, span) = {
+    let decimals = {
         let model = model.read(cx);
         let price = model.market().and_then(|m| m.stats()).map_or(0.0, |s| s.last);
-        let decimals = format::decimals(price, model.instrument().and_then(|i| i.decimals));
-        (decimals, model.viewport().view.span)
+        format::decimals(price, model.instrument().and_then(|i| i.decimals))
     };
     let ink = Ink::new(dark);
     let state = &painter.chart;
@@ -567,11 +588,24 @@ fn draw(
     let py = frame.plot_y;
     let pw = frame.plot_w;
     let ph = frame.plot_h;
+    painter.visible_grid.clear();
     for tick in &state.grid {
         if tick.alpha <= 0.0 || tick.pos < py - 10.0 || tick.pos > py + ph + 10.0 {
             continue;
         }
         dashed(window, bounds, px0, tick.pos, pw, 1.0, 3.0, rgba(ink.grid, tick.alpha), true, px0);
+        // Labels closer than a line apart, as when the range grows fast, give
+        // way to the more visible one.
+        match painter.visible_grid.last_mut() {
+            Some(previous) if tick.pos - previous.pos < GRID_LABEL_GAP => {
+                if tick.alpha > previous.alpha {
+                    *previous = *tick;
+                }
+            }
+            _ => painter.visible_grid.push(*tick),
+        }
+    }
+    for tick in &painter.visible_grid {
         let shaped = painter.text.line(
             LABEL_GRID,
             tick.value,
@@ -602,6 +636,7 @@ fn draw(
                 let fill_alpha = state.line_presence
                     * state.line_mode
                     * state.reveal
+                    * state.dim
                     * if dark { 0.12 } else { 0.08 };
                 let gradient = |alpha| {
                     linear_gradient(
@@ -657,7 +692,7 @@ fn draw(
                 } else {
                     1.0
                 };
-                let alpha = state.line_presence * breath;
+                let alpha = state.line_presence * breath * state.dim;
                 if let Some(hover) = state.hover_x.filter(|_| state.scrub > 0.0) {
                     let split = hover.clamp(px0, px0 + pw);
                     window.with_content_mask(
@@ -711,7 +746,7 @@ fn draw(
                 4.0,
                 rgba(
                     mix(palette.down, palette.up, state.bull),
-                    alpha * (1.0 - state.line_presence) * 0.4,
+                    alpha * (1.0 - state.line_presence) * 0.4 * state.dim,
                 ),
                 true,
                 px0,
@@ -727,7 +762,7 @@ fn draw(
                     4.0,
                     rgba(
                         palette.glow,
-                        alpha * state.line_presence * 0.4 * (1.0 - 0.2 * state.scrub),
+                        alpha * state.line_presence * 0.4 * (1.0 - 0.2 * state.scrub) * state.dim,
                     ),
                     true,
                     px0,
@@ -737,7 +772,7 @@ fn draw(
         for candle in &state.candles {
             let color =
                 mix(mix(palette.down, palette.up, candle.bull), palette.glow, state.line_presence);
-            let alpha = candle.alpha * fade_at(candle.x, px0);
+            let alpha = candle.alpha * fade_at(candle.x, px0) * state.dim;
             if alpha <= 0.0 {
                 continue;
             }
@@ -804,7 +839,7 @@ fn draw(
         if let Some((x, y)) = state.tip
             && state.line_presence > 0.5
         {
-            let alpha = state.dot_alpha;
+            let alpha = state.dot_alpha * state.dim;
             if let Some((radius, ring_alpha)) = state.ring {
                 let mut p = PathBuilder::stroke(px(1.5));
                 p.move_to(at(bounds, (x + radius, y)));
@@ -857,22 +892,25 @@ fn draw(
         ));
     }
     window.paint_quad(fill(rect(bounds, px0 + LEFT_FADE, py + ph, pw - LEFT_FADE, 1.0), ink.grid));
+    // The time labels, merged in order with those of a picture the chart is
+    // leaving. Where two would overlap, the more visible one is drawn, so a
+    // handover swaps them rather than piling them up.
     painter.visible_times.clear();
-    for tick in &state.times {
+    let mut current = state.times.iter().map(|tick| (*tick, state.times_span)).peekable();
+    let mut ghosts = state.ghosts.iter().copied().peekable();
+    let merged = std::iter::from_fn(|| match (current.peek(), ghosts.peek()) {
+        (Some(a), Some(b)) if b.0.pos < a.0.pos => ghosts.next(),
+        (Some(_), _) => current.next(),
+        (None, _) => ghosts.next(),
+    });
+    for (tick, span) in merged {
         if tick.alpha <= 0.0 || tick.pos < px0 || tick.pos > px0 + pw {
             continue;
         }
-        let extra = if span <= 300.0 {
-            0
-        } else if span <= 172_800.0 {
-            1
-        } else {
-            2
-        };
         let shaped = painter.text.line(
             LABEL_TIME,
             tick.value,
-            extra,
+            label_kind(span),
             tick.alpha,
             ink.time,
             11.0,
@@ -881,25 +919,19 @@ fn draw(
         );
         let Some(shaped) = shaped else { continue };
         let tw = f64::from(f32::from(shaped.width()));
-        if let Some((previous, previous_width)) = painter.visible_times.last_mut()
+        if let Some((previous, previous_width, previous_span)) = painter.visible_times.last_mut()
             && tick.pos - tw / 2.0 < previous.pos + *previous_width / 2.0 + 8.0
         {
             if tick.alpha > previous.alpha {
-                *previous = *tick;
+                *previous = tick;
                 *previous_width = tw;
+                *previous_span = span;
             }
             continue;
         }
-        painter.visible_times.push((*tick, tw));
+        painter.visible_times.push((tick, tw, span));
     }
-    for (tick, tw) in &painter.visible_times {
-        let extra = if span <= 300.0 {
-            0
-        } else if span <= 172_800.0 {
-            1
-        } else {
-            2
-        };
+    for (tick, tw, span) in &painter.visible_times {
         window.paint_quad(fill(
             rect(bounds, tick.pos, py + ph, 1.0, 5.0),
             rgba(ink.grid, tick.alpha),
@@ -907,12 +939,12 @@ fn draw(
         if let Some(shaped) = painter.text.line(
             LABEL_TIME,
             tick.value,
-            extra,
+            label_kind(*span),
             tick.alpha,
             ink.time,
             11.0,
             window,
-            || labels::axis_label(tick.value, span),
+            || labels::axis_label(tick.value, *span),
         ) {
             let _ = shaped.paint(
                 at(bounds, (tick.pos - tw / 2.0, py + ph + 7.0)),
@@ -929,7 +961,8 @@ fn draw(
         && state.tip.is_some()
     {
         let alpha = ((state.line_mode - 0.5) * 2.0).clamp(0.0, 1.0)
-            * ((state.reveal - 0.25) / 0.25).clamp(0.0, 1.0);
+            * ((state.reveal - 0.25) / 0.25).clamp(0.0, 1.0)
+            * state.dim;
         let color = mix(palette.down, palette.up, state.momentum);
         let template_width = painter
             .text

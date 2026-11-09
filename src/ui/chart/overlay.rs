@@ -298,11 +298,15 @@ impl Render for Overlay {
         let panning = self.pan.as_ref().is_some_and(|p| p.dragging);
         let pressed = self.pan.is_some() || state.analysis().dragging();
         let free = self.free;
+        // Drawings and indicators sit in the frame's coordinates: they step
+        // aside while the chart re-forms into another interval.
+        let settled = state.frame.get().map_or(1.0, |frame| frame.settled) as f32;
         let weak = cx.weak_entity();
         div()
             .id("Overlay")
             .test_support()
             .size_full()
+            .opacity(settled)
             .track_focus(&self.focus)
             .cursor(cursor)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::down))

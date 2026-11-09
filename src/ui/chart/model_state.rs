@@ -130,7 +130,7 @@ impl ChartModel {
     pub fn app(&self) -> &App {
         &self.app
     }
-    #[cfg(any(test, all(target_os = "macos", feature = "test-support")))]
+    /// Changes whenever the chart follows another instrument's feed.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }

@@ -53,7 +53,7 @@ pub struct Frame {
     pub width: f64,
     pub height: f64,
     pub now: f64,
-    /// Displayed candle interval, which can be between two selected intervals.
+    /// Seconds per candle.
     pub candle_width: f64,
     /// Pointer x and fade while the hovered candle remains visible.
     pub hover_x: Option<f64>,
@@ -61,6 +61,10 @@ pub struct Frame {
     pub line_mode: f64,
     /// The candle under the pointer; `None` while not hovering.
     pub hover: Option<Candle>,
+    /// How far the chart shows its data in these coordinates, 0 to 1: lower
+    /// while it re-forms from another interval's picture or reveals itself.
+    /// Layers drawn in the frame's coordinates fade with it.
+    pub settled: f64,
 }
 
 impl Frame {
@@ -89,6 +93,7 @@ impl Frame {
             && self.hover_x.zip(other.hover_x).is_none_or(|(a, b)| near(a, b, 0.05))
             && near(self.scrub, other.scrub, 0.002)
             && near(self.line_mode, other.line_mode, 0.002)
+            && near(self.settled, other.settled, 0.002)
             && candle(self.hover) == candle(other.hover)
     }
 }
@@ -111,6 +116,7 @@ impl PartialEq for Frame {
             && self.hover_x == other.hover_x
             && self.scrub == other.scrub
             && self.line_mode == other.line_mode
+            && self.settled == other.settled
             && candle(self.hover) == candle(other.hover)
     }
 }
@@ -327,6 +333,7 @@ mod tests {
             scrub: 0.0,
             line_mode: 0.0,
             hover: None,
+            settled: 1.0,
         }
     }
 
